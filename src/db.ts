@@ -37,6 +37,17 @@ export async function getOpenPositions(db: D1Database): Promise<Position[]> {
   return result.results ?? [];
 }
 
+export async function getOpenPositionByPair(
+  db: D1Database,
+  pair: string
+): Promise<Position | null> {
+  const row = await db
+    .prepare("SELECT * FROM positions WHERE status = 'OPEN' AND pair = ? LIMIT 1")
+    .bind(pair)
+    .first<Position>();
+  return row ?? null;
+}
+
 export async function insertDecision(
   db: D1Database,
   record: DecisionRecord
@@ -70,9 +81,9 @@ export async function closePosition(
   db: D1Database,
   id: number,
   closeRate: number,
-  reason: string
+  reason: string,
+  pnl: number
 ): Promise<void> {
-  // BUY: (close - entry) * 100 pip, SELL: (entry - close) * 100 pip
   await db
     .prepare(
       `UPDATE positions
@@ -80,13 +91,10 @@ export async function closePosition(
            close_rate   = ?,
            close_reason = ?,
            closed_at    = ?,
-           pnl          = CASE direction
-                            WHEN 'BUY'  THEN (? - entry_rate) * 100
-                            WHEN 'SELL' THEN (entry_rate - ?) * 100
-                          END
+           pnl          = ?
        WHERE id = ?`
     )
-    .bind(closeRate, reason, new Date().toISOString(), closeRate, closeRate, id)
+    .bind(closeRate, reason, new Date().toISOString(), pnl, id)
     .run();
 }
 
@@ -99,6 +107,22 @@ export async function getCacheValue(
     .bind(key)
     .first<{ value: string }>();
   return row?.value ?? null;
+}
+
+export async function insertSystemLog(
+  db: D1Database,
+  level: 'INFO' | 'WARN' | 'ERROR',
+  category: string,
+  message: string,
+  detail?: string
+): Promise<void> {
+  await db
+    .prepare(
+      `INSERT INTO system_logs (level, category, message, detail, created_at)
+       VALUES (?, ?, ?, ?, ?)`
+    )
+    .bind(level, category, message, detail ?? null, new Date().toISOString())
+    .run();
 }
 
 export async function setCacheValue(

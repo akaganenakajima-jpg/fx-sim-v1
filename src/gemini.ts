@@ -3,6 +3,7 @@
 import type { MarketIndicators } from './indicators';
 import type { NewsItem } from './news';
 import type { RedditSignal } from './reddit';
+import type { InstrumentConfig } from './instruments';
 
 export interface GeminiDecision {
   decision: 'BUY' | 'SELL' | 'HOLD';
@@ -14,29 +15,37 @@ export interface GeminiDecision {
 const GEMINI_ENDPOINT =
   'https://generativelanguage.googleapis.com/v1beta/models/gemini-3.1-pro-preview:generateContent';
 
-const SYSTEM_INSTRUCTION =
-  `あなたはFXデイトレーダーのAIアシスタントです。` +
-  `以下のデータを分析し USD/JPY の売買判断を JSON で返してください。` +
-  `既にオープンポジションがある場合は原則 HOLD を返すこと。` +
-  `TP/SL は現在レートから ±0.3〜1.0円 の範囲で設定すること。` +
-  `必ず以下のフォーマットのみで返答してください:\n` +
-  `{"decision":"BUY"|"SELL"|"HOLD","tp_rate":number|null,"sl_rate":number|null,"reasoning":"日本語100文字以内"}`;
+function buildSystemInstruction(instrument: InstrumentConfig): string {
+  return (
+    `あなたはトレーダーのAIアシスタントです。` +
+    `以下のデータを分析し ${instrument.pair} の売買判断を JSON で返してください。` +
+    `既にオープンポジションがある場合は原則 HOLD を返すこと。` +
+    `TP/SL は${instrument.tpSlHint}の範囲で設定すること。` +
+    `必ず以下のフォーマットのみで返答してください:\n` +
+    `{"decision":"BUY"|"SELL"|"HOLD","tp_rate":number|null,"sl_rate":number|null,"reasoning":"日本語100文字以内"}`
+  );
+}
 
 function buildUserMessage(params: {
+  instrument: InstrumentConfig;
   rate: number;
   indicators: MarketIndicators;
   news: NewsItem[];
   redditSignal: RedditSignal;
   hasOpenPosition: boolean;
 }): string {
-  const { rate, indicators, news, redditSignal, hasOpenPosition } = params;
+  const { instrument, rate, indicators, news, redditSignal, hasOpenPosition } = params;
 
   const newsText = news
     .map((n, i) => `  ${i + 1}. ${n.title}`)
     .join('\n');
 
   return [
-    `現在のUSD/JPY: ${rate.toFixed(3)}円`,
+    `取引対象: ${instrument.pair}`,
+    `現在値: ${rate.toFixed(instrument.pair === 'USD/JPY' ? 3 : 2)}`,
+    ``,
+    `【市場コンテキスト（USD/JPY相関指標）】`,
+    `USD/JPY: ${instrument.pair === 'USD/JPY' ? rate.toFixed(3) : '参照値として使用'}`,
     `米10年債利回り: ${indicators.us10y != null ? indicators.us10y.toFixed(2) + '%' : 'N/A'}`,
     `VIX: ${indicators.vix != null ? indicators.vix.toFixed(2) : 'N/A'}`,
     `日経平均: ${indicators.nikkei != null ? indicators.nikkei.toFixed(0) : 'N/A'}`,
@@ -55,6 +64,7 @@ interface GeminiResponse {
 }
 
 export async function getDecision(params: {
+  instrument: InstrumentConfig;
   rate: number;
   indicators: MarketIndicators;
   news: NewsItem[];
@@ -62,16 +72,15 @@ export async function getDecision(params: {
   hasOpenPosition: boolean;
   apiKey: string;
 }): Promise<GeminiDecision> {
-  const { apiKey, ...rest } = params;
-  const userMessage = buildUserMessage(rest);
+  const { apiKey, instrument, ...rest } = params;
+  const userMessage = buildUserMessage({ instrument, ...rest });
 
   const res = await fetch(`${GEMINI_ENDPOINT}?key=${apiKey}`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
-      // system prompt を systemInstruction で分離（Gemini API 推奨構造）
       systemInstruction: {
-        parts: [{ text: SYSTEM_INSTRUCTION }],
+        parts: [{ text: buildSystemInstruction(instrument) }],
       },
       contents: [
         { role: 'user', parts: [{ text: userMessage }] },
@@ -89,7 +98,6 @@ export async function getDecision(params: {
   const text = data.candidates[0].content.parts[0].text;
   const parsed = JSON.parse(text) as GeminiDecision;
 
-  // decision の値を正規化
   const decision = (['BUY', 'SELL', 'HOLD'] as const).includes(
     parsed.decision as 'BUY' | 'SELL' | 'HOLD'
   )

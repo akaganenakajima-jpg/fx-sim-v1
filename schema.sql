@@ -31,6 +31,15 @@ CREATE TABLE IF NOT EXISTS decisions (
   created_at    TEXT    NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS system_logs (
+  id         INTEGER PRIMARY KEY AUTOINCREMENT,
+  level      TEXT NOT NULL DEFAULT 'INFO',   -- 'INFO' | 'WARN' | 'ERROR'
+  category   TEXT NOT NULL,                  -- 'CRON' | 'API_ERROR' | 'POSITION' | 'GEMINI' | 'RATE'
+  message    TEXT NOT NULL,
+  detail     TEXT,                           -- JSON文字列
+  created_at TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS market_cache (
   key        TEXT PRIMARY KEY,             -- 'us10y' など
   value      TEXT NOT NULL,               -- JSON文字列

@@ -1,11 +1,20 @@
 // 仮想ポジション管理（TP/SL チェック）
-// 同時オープンポジションは最大1件に制限
-// pnl計算:
-//   BUY  → (close_rate - entry_rate) * 100（pip）
-//   SELL → (entry_rate - close_rate) * 100（pip）
+// 同時オープンポジションは銘柄ごとに最大1件
 
-import { getOpenPositions, closePosition } from './db';
+import { getOpenPositions, getOpenPositionByPair, closePosition, insertSystemLog } from './db';
 import type { Position } from './db';
+import type { InstrumentConfig } from './instruments';
+
+function calcPnl(
+  direction: 'BUY' | 'SELL',
+  entryRate: number,
+  closeRate: number,
+  pnlMultiplier: number
+): number {
+  return direction === 'BUY'
+    ? (closeRate - entryRate) * pnlMultiplier
+    : (entryRate - closeRate) * pnlMultiplier;
+}
 
 function shouldTriggerTP(pos: Position, currentRate: number): boolean {
   if (pos.tp_rate == null) return false;
@@ -21,34 +30,51 @@ function shouldTriggerSL(pos: Position, currentRate: number): boolean {
     : currentRate >= pos.sl_rate;
 }
 
-export async function checkAndClosePositions(
+/** 全銘柄のオープンポジションを一括チェック（instrument map で PnL乗数を解決） */
+export async function checkAndCloseAllPositions(
   db: D1Database,
-  currentRate: number
+  prices: Map<string, number | null>,
+  instruments: InstrumentConfig[]
 ): Promise<void> {
   const positions = await getOpenPositions(db);
+  const instrMap = new Map(instruments.map((i) => [i.pair, i]));
 
   for (const pos of positions) {
+    const currentRate = prices.get(pos.pair);
+    if (currentRate == null) continue;
+
+    const instr = instrMap.get(pos.pair);
+    const multiplier = instr?.pnlMultiplier ?? 100;
+
     if (shouldTriggerTP(pos, currentRate)) {
-      console.log(`[position] TP hit: id=${pos.id} rate=${currentRate}`);
-      await closePosition(db, pos.id, currentRate, 'TP');
+      const pnl = calcPnl(pos.direction, pos.entry_rate, currentRate, multiplier);
+      console.log(`[position] TP hit: ${pos.pair} id=${pos.id} pnl=${pnl.toFixed(2)}`);
+      await closePosition(db, pos.id, currentRate, 'TP', pnl);
+      await insertSystemLog(db, 'INFO', 'POSITION',
+        `TP決済: ${pos.pair} ${pos.direction} PnL ${pnl >= 0 ? '+' : ''}${pnl.toFixed(2)}`,
+        JSON.stringify({ id: pos.id, entry: pos.entry_rate, close: currentRate, pnl }));
     } else if (shouldTriggerSL(pos, currentRate)) {
-      console.log(`[position] SL hit: id=${pos.id} rate=${currentRate}`);
-      await closePosition(db, pos.id, currentRate, 'SL');
+      const pnl = calcPnl(pos.direction, pos.entry_rate, currentRate, multiplier);
+      console.log(`[position] SL hit: ${pos.pair} id=${pos.id} pnl=${pnl.toFixed(2)}`);
+      await closePosition(db, pos.id, currentRate, 'SL', pnl);
+      await insertSystemLog(db, 'WARN', 'POSITION',
+        `SL決済: ${pos.pair} ${pos.direction} PnL ${pnl >= 0 ? '+' : ''}${pnl.toFixed(2)}`,
+        JSON.stringify({ id: pos.id, entry: pos.entry_rate, close: currentRate, pnl }));
     }
   }
 }
 
 export async function openPosition(
   db: D1Database,
+  pair: string,
   direction: 'BUY' | 'SELL',
   entryRate: number,
   tpRate: number | null,
   slRate: number | null
 ): Promise<void> {
-  // 既存オープンポジション確認（最大1件制限）
-  const existing = await getOpenPositions(db);
-  if (existing.length > 0) {
-    console.log('[position] Already has open position, skipping openPosition');
+  const existing = await getOpenPositionByPair(db, pair);
+  if (existing) {
+    console.log(`[position] Already has open position for ${pair}, skipping`);
     return;
   }
 
@@ -56,12 +82,10 @@ export async function openPosition(
     .prepare(
       `INSERT INTO positions
          (pair, direction, entry_rate, tp_rate, sl_rate, lot, status, entry_at)
-       VALUES ('USD/JPY', ?, ?, ?, ?, 1.0, 'OPEN', ?)`
+       VALUES (?, ?, ?, ?, ?, 1.0, 'OPEN', ?)`
     )
-    .bind(direction, entryRate, tpRate, slRate, new Date().toISOString())
+    .bind(pair, direction, entryRate, tpRate, slRate, new Date().toISOString())
     .run();
 
-  console.log(
-    `[position] Opened ${direction} @ ${entryRate} TP=${tpRate} SL=${slRate}`
-  );
+  console.log(`[position] Opened ${pair} ${direction} @ ${entryRate} TP=${tpRate} SL=${slRate}`);
 }

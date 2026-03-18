@@ -1,4 +1,5 @@
 // Reddit r/Forex の新着投稿を取得しキーワード検出
+// 2023年以降JSON APIは403のため、RSSフィードを利用
 
 export interface RedditSignal {
   hasSignal: boolean;
@@ -6,7 +7,8 @@ export interface RedditSignal {
   topPosts: string[]; // 上位3件のタイトル
 }
 
-const REDDIT_URL = 'https://www.reddit.com/r/Forex/new.json';
+// 2023年以降JSON APIは403。RSS endpointはより緩い制限
+const REDDIT_URL = 'https://www.reddit.com/r/Forex/new/.rss';
 
 const KEYWORDS = [
   'intervention',
@@ -22,19 +24,27 @@ const KEYWORDS = [
   'CPI',
 ];
 
-interface RedditChild {
-  data: { title: string };
-}
-
-interface RedditResponse {
-  data: { children: RedditChild[] };
+/** Atom/RSSの<title>要素を抽出 */
+function extractTitles(xml: string): string[] {
+  const titles: string[] = [];
+  // Atom形式: <entry><title>...</title></entry>
+  const entryRe = /<entry[\s>]([\s\S]*?)<\/entry>/gi;
+  let m: RegExpExecArray | null;
+  while ((m = entryRe.exec(xml)) !== null) {
+    const block = m[1];
+    const titleMatch = /<title[^>]*>(?:<!\[CDATA\[)?([\s\S]*?)(?:\]\]>)?<\/title>/i.exec(block);
+    if (titleMatch) titles.push(titleMatch[1].trim());
+  }
+  return titles;
 }
 
 export async function fetchRedditSignal(): Promise<RedditSignal> {
   try {
     const res = await fetch(REDDIT_URL, {
       headers: {
-        'User-Agent': 'fx-sim-v1/1.0 (by fx-sim-bot)',
+        'User-Agent':
+          'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        Accept: 'application/rss+xml, application/atom+xml, text/xml, */*',
       },
     });
     if (!res.ok) {
@@ -42,8 +52,8 @@ export async function fetchRedditSignal(): Promise<RedditSignal> {
       return { hasSignal: false, keywords: [], topPosts: [] };
     }
 
-    const data = await res.json<RedditResponse>();
-    const posts = data.data.children.map((c) => c.data.title);
+    const xml = await res.text();
+    const posts = extractTitles(xml);
     const topPosts = posts.slice(0, 3);
 
     const foundKeywords: string[] = [];
