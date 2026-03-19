@@ -1000,7 +1000,7 @@ export const JS = `
     var roiEl = el('roi-value');
     var roi = totalPnl / INITIAL_CAPITAL * 100;
     if (roiEl) {
-      roiEl.textContent = (roi >= 0 ? '+' : '') + roi.toFixed(1) + '%';
+      roiEl.textContent = (roi >= 0 ? '+' : '') + roi.toFixed(2) + '%';
       roiEl.className = 'hero-sub-value ' + (roi > 0 ? 'positive' : roi < 0 ? 'negative' : 'neutral');
     }
     el('win-rate').textContent     = perf.winRate.toFixed(1) + '%';
@@ -1290,7 +1290,8 @@ export const JS = `
     btn.addEventListener('click', function() {
       btn.classList.add('spinning');
       setTimeout(function() { btn.classList.remove('spinning'); }, 700);
-      refresh();
+      // ページ自体をハードリロード（キャッシュ無効化）
+      location.reload();
     });
   }
 
