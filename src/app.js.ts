@@ -14,17 +14,22 @@ export const JS = `
 
   // 銘柄設定（表示用）
   var INSTRUMENTS = [
+    // 為替
     { pair: 'USD/JPY',   label: 'USD / JPY', unit: '円', multiplier: 100 },
-    { pair: 'Nikkei225', label: '日経225',   unit: '円', multiplier: 1 },
-    { pair: 'S&P500',    label: 'S&P 500',  unit: '円', multiplier: 10 },
-    { pair: 'US10Y',     label: '米10年債',  unit: '円', multiplier: 5000 },
-    { pair: 'BTC/USD',   label: 'BTC',      unit: '円', multiplier: 1 },
-    { pair: 'Gold',      label: 'Gold',     unit: '円', multiplier: 10 },
     { pair: 'EUR/USD',   label: 'EUR / USD', unit: '円', multiplier: 10000 },
+    // 株式指数
+    { pair: 'S&P500',    label: 'S&P 500',  unit: '円', multiplier: 10 },
+    { pair: 'Nikkei225', label: '日経225',   unit: '円', multiplier: 1 },
+    // 暗号資産
+    { pair: 'BTC/USD',   label: 'BTC',      unit: '円', multiplier: 1 },
     { pair: 'ETH/USD',   label: 'ETH',      unit: '円', multiplier: 1 },
+    // コモディティ
+    { pair: 'Gold',      label: 'Gold',     unit: '円', multiplier: 10 },
     { pair: 'CrudeOil',  label: '原油',     unit: '円', multiplier: 100 },
     { pair: 'NatGas',    label: '天然ガス',  unit: '円', multiplier: 1000 },
     { pair: 'Copper',    label: '銅',       unit: '円', multiplier: 1000 },
+    // 債券
+    { pair: 'US10Y',     label: '米10年債',  unit: '円', multiplier: 5000 },
   ];
 
   var INITIAL_CAPITAL = 10000; // 元手¥10,000
