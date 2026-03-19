@@ -35,8 +35,9 @@ function buildUserMessage(params: {
   hasOpenPosition: boolean;
   recentTrades?: Array<{ pair: string; direction: string; pnl: number; close_reason: string }>;
   allPositionDirections?: string[];
+  sparkRates?: number[];
 }): string {
-  const { instrument, rate, indicators, news, redditSignal, hasOpenPosition, recentTrades, allPositionDirections } = params;
+  const { instrument, rate, indicators, news, redditSignal, hasOpenPosition, recentTrades, allPositionDirections, sparkRates } = params;
 
   const newsText = news
     .map((n, i) => `  ${i + 1}. ${n.title}`)
@@ -81,6 +82,22 @@ function buildUserMessage(params: {
         ? '⚠️ 全ポジションがBUYに偏っています。SELLも検討すること。'
         : '',
     ] : []),
+    ...(sparkRates && sparkRates.length >= 5 ? [
+      ``,
+      `【トレンド分析】`,
+      (() => {
+        const mid = sparkRates;
+        const short = mid.slice(-5);
+        const midFirst = mid[0]; const midLast = mid[mid.length - 1];
+        const shortFirst = short[0]; const shortLast = short[short.length - 1];
+        const midTrend = midLast > midFirst ? '上昇' : midLast < midFirst ? '下落' : '横ばい';
+        const shortTrend = shortLast > shortFirst ? '上昇' : shortLast < shortFirst ? '下落' : '横ばい';
+        const midPct = ((midLast - midFirst) / midFirst * 100).toFixed(2);
+        const shortPct = ((shortLast - shortFirst) / shortFirst * 100).toFixed(2);
+        return `中期トレンド（${mid.length}件）: ${midTrend}（${midPct}%）\n短期トレンド（${short.length}件）: ${shortTrend}（${shortPct}%）`;
+      })(),
+      `中期と短期のトレンドが一致している場合はその方向に、乖離している場合は反転リスクを考慮すること。`,
+    ] : []),
   ].join('\n');
 }
 
@@ -99,6 +116,7 @@ export async function getDecision(params: {
   hasOpenPosition: boolean;
   recentTrades?: Array<{ pair: string; direction: string; pnl: number; close_reason: string }>;
   allPositionDirections?: string[];
+  sparkRates?: number[];
   apiKey: string;
 }): Promise<GeminiDecision> {
   const { apiKey, instrument, ...rest } = params;
@@ -151,6 +169,7 @@ export async function getDecisionGPT(params: {
   hasOpenPosition: boolean;
   recentTrades?: Array<{ pair: string; direction: string; pnl: number; close_reason: string }>;
   allPositionDirections?: string[];
+  sparkRates?: number[];
   apiKey: string;
 }): Promise<GeminiDecision> {
   const { apiKey, instrument, ...rest } = params;
@@ -164,7 +183,7 @@ export async function getDecisionGPT(params: {
       'Authorization': `Bearer ${apiKey}`,
     },
     body: JSON.stringify({
-      model: 'gpt-4o-mini',
+      model: 'gpt-4.1-mini',
       messages: [
         { role: 'system', content: systemPrompt },
         { role: 'user', content: userMessage },

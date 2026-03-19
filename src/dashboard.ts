@@ -123,6 +123,12 @@ export function getDashboardHtml(): string {
     <!-- ─── 統計 タブ ─── -->
     <div id="tab-stats" class="content tab-panel" role="region" aria-label="統計">
 
+      <!-- 資産推移グラフ -->
+      <div class="card" style="padding:12px 16px">
+        <div class="section-title" style="margin-bottom:8px">資産推移</div>
+        <div id="equity-chart" style="height:120px;position:relative"></div>
+      </div>
+
       <div class="list-header-row" style="padding-top:8px">
         <span class="list-header">銘柄別成績</span>
       </div>

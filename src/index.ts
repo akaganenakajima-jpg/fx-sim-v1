@@ -26,16 +26,19 @@ interface Env {
   DB: D1Database;
   GEMINI_API_KEY: string;
   GEMINI_API_KEY_2?: string;
+  GEMINI_API_KEY_3?: string;
+  GEMINI_API_KEY_4?: string;
+  GEMINI_API_KEY_5?: string;
   OPENAI_API_KEY?: string;
+  OPENAI_API_KEY_2?: string;
 }
 
-let _keyToggle = false;
+let _keyIndex = 0;
 function getApiKey(env: Env): string {
-  _keyToggle = !_keyToggle;
-  if (env.GEMINI_API_KEY_2 && _keyToggle) {
-    return env.GEMINI_API_KEY_2;
-  }
-  return env.GEMINI_API_KEY;
+  const keys = [env.GEMINI_API_KEY, env.GEMINI_API_KEY_2, env.GEMINI_API_KEY_3, env.GEMINI_API_KEY_4, env.GEMINI_API_KEY_5].filter(Boolean) as string[];
+  const key = keys[_keyIndex % keys.length];
+  _keyIndex++;
+  return key;
 }
 
 const PREV_NEWS_HASH_KEY = 'prev_news_hash';
@@ -211,7 +214,7 @@ async function run(env: Env): Promise<void> {
     if (isInCooldown) console.log(`[fx-sim] Gemini cooldown until ${new Date(cooldownUntil).toISOString()}`);
 
     let geminiCallsThisRun = (newsAnalysisRan || isInCooldown) ? 99 : 0; // クールダウン中は全スキップ
-    const MAX_GEMINI_PER_RUN = hasAttentionNews ? 3 : 1;
+    const MAX_GEMINI_PER_RUN = hasAttentionNews ? 5 : 3; // 5キーローテーション
     for (const instrument of INSTRUMENTS) {
       const currentRate = prices.get(instrument.pair);
       if (currentRate == null) {
@@ -288,6 +291,13 @@ async function run(env: Env): Promise<void> {
         .all<{ pair: string; direction: string }>();
       const allPositionDirections = (allOpenRaw.results ?? []).map(p => `${p.pair}:${p.direction}`);
 
+      // スパークラインデータ取得（トレンド分析用）
+      const sparkRaw = await env.DB
+        .prepare(`SELECT rate FROM decisions WHERE pair = ? ORDER BY id DESC LIMIT 20`)
+        .bind(instrument.pair)
+        .all<{ rate: number }>();
+      const sparkRates = (sparkRaw.results ?? []).map(r => r.rate).reverse();
+
       // Gemini 判定
       geminiCallsThisRun++;
       let geminiResult;
@@ -301,6 +311,7 @@ async function run(env: Env): Promise<void> {
           hasOpenPosition,
           recentTrades,
           allPositionDirections,
+          sparkRates,
           apiKey: getApiKey(env),
         });
       } catch (e) {
@@ -311,8 +322,8 @@ async function run(env: Env): Promise<void> {
             console.log(`[fx-sim] Falling back to GPT-4o-mini for ${instrument.pair}`);
             geminiResult = await getDecisionGPT({
               instrument, rate: currentRate, indicators, news, redditSignal,
-              hasOpenPosition, recentTrades, allPositionDirections,
-              apiKey: env.OPENAI_API_KEY,
+              hasOpenPosition, recentTrades, allPositionDirections, sparkRates,
+              apiKey: (_keyIndex % 2 === 0 ? env.OPENAI_API_KEY : env.OPENAI_API_KEY_2) || env.OPENAI_API_KEY!,
             });
             await insertSystemLog(env.DB, 'INFO', 'GPT', `GPTフォールバック成功 (${instrument.pair}) → ${geminiResult.decision}`, null);
           } catch (gptErr) {

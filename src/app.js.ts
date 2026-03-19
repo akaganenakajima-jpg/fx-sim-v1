@@ -757,8 +757,57 @@ export const JS = `
     });
   }
 
+  // ── 資産推移グラフ描画 ──
+  function renderEquityChart(data) {
+    var chart = el('equity-chart');
+    if (!chart) return;
+    var closes = (data.recentCloses || []).slice().reverse();
+    if (closes.length < 2) {
+      chart.innerHTML = '<div style="text-align:center;color:var(--label-secondary);font-size:12px;padding:40px 0">取引データ蓄積中...</div>';
+      return;
+    }
+    // 資産推移を計算
+    var equity = [INITIAL_CAPITAL];
+    var cumPnl = 0;
+    closes.forEach(function(c) {
+      cumPnl += (c.pnl || 0);
+      equity.push(INITIAL_CAPITAL + cumPnl);
+    });
+    var w = chart.offsetWidth || 300;
+    var h = 120;
+    var min = Math.min.apply(null, equity);
+    var max = Math.max.apply(null, equity);
+    var range = max - min || 1;
+    var pad = 4;
+    var step = (w - pad * 2) / (equity.length - 1);
+    var pts = equity.map(function(v, i) {
+      var x = pad + i * step;
+      var y = h - pad - ((v - min) / range) * (h - pad * 2);
+      return x.toFixed(1) + ',' + y.toFixed(1);
+    });
+    var lastVal = equity[equity.length - 1];
+    var color = lastVal >= INITIAL_CAPITAL ? 'var(--green)' : 'var(--red)';
+    // グラデーション塗りつぶし
+    var fillPts = pts.join(' ') + ' ' + (w - pad) + ',' + (h - pad) + ' ' + pad + ',' + (h - pad);
+    chart.innerHTML =
+      '<svg width="' + w + '" height="' + h + '" viewBox="0 0 ' + w + ' ' + h + '">' +
+        '<defs><linearGradient id="eqGrad" x1="0" y1="0" x2="0" y2="1">' +
+          '<stop offset="0%" stop-color="' + color + '" stop-opacity="0.2"/>' +
+          '<stop offset="100%" stop-color="' + color + '" stop-opacity="0.02"/>' +
+        '</linearGradient></defs>' +
+        '<polygon points="' + fillPts + '" fill="url(#eqGrad)"/>' +
+        '<polyline points="' + pts.join(' ') + '" fill="none" stroke="' + color + '" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>' +
+        '<line x1="' + pad + '" y1="' + (h - pad - ((INITIAL_CAPITAL - min) / range) * (h - pad * 2)).toFixed(1) + '" x2="' + (w - pad) + '" y2="' + (h - pad - ((INITIAL_CAPITAL - min) / range) * (h - pad * 2)).toFixed(1) + '" stroke="var(--label-tertiary)" stroke-width="0.5" stroke-dasharray="4,4"/>' +
+      '</svg>' +
+      '<div style="display:flex;justify-content:space-between;font-size:10px;color:var(--label-secondary);margin-top:2px">' +
+        '<span>' + fmtYen(INITIAL_CAPITAL) + '</span>' +
+        '<span style="color:' + color + ';font-weight:600">' + fmtYen(lastVal) + '</span>' +
+      '</div>';
+  }
+
   // ── 統計タブ描画 ──
   function renderStats(data) {
+    renderEquityChart(data);
     var container = el('stats-pairs');
     if (!container) return;
     var byPair = data.performanceByPair || {};
