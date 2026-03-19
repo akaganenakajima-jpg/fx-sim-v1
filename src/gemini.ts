@@ -210,6 +210,61 @@ export async function getDecisionGPT(params: {
   };
 }
 
+// ── Anthropic Claude フォールバック ──
+export async function getDecisionClaude(params: {
+  instrument: InstrumentConfig;
+  rate: number;
+  indicators: MarketIndicators;
+  news: NewsItem[];
+  redditSignal: RedditSignal;
+  hasOpenPosition: boolean;
+  recentTrades?: Array<{ pair: string; direction: string; pnl: number; close_reason: string }>;
+  allPositionDirections?: string[];
+  sparkRates?: number[];
+  apiKey: string;
+}): Promise<GeminiDecision> {
+  const { apiKey, instrument, ...rest } = params;
+  const userMessage = buildUserMessage({ instrument, ...rest });
+  const systemPrompt = buildSystemInstruction(instrument);
+
+  const res = await fetch('https://api.anthropic.com/v1/messages', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'x-api-key': apiKey,
+      'anthropic-version': '2023-06-01',
+    },
+    body: JSON.stringify({
+      model: 'claude-sonnet-4-20250514',
+      max_tokens: 256,
+      system: systemPrompt,
+      messages: [
+        { role: 'user', content: userMessage },
+      ],
+      temperature: 0.3,
+    }),
+  });
+
+  if (!res.ok) {
+    const body = await res.text();
+    throw new Error(`Anthropic API error ${res.status}: ${body}`);
+  }
+
+  const data = await res.json<{ content: Array<{ type: string; text: string }> }>();
+  const text = data.content[0].text;
+  // JSON部分を抽出（Claudeはマークダウンで囲む場合がある）
+  const jsonMatch = text.match(/\{[\s\S]*\}/);
+  if (!jsonMatch) throw new Error('Claude response has no JSON');
+  const parsed = JSON.parse(jsonMatch[0]) as GeminiDecision;
+
+  return {
+    decision: (['BUY', 'SELL', 'HOLD'] as const).includes(parsed.decision as 'BUY' | 'SELL' | 'HOLD') ? parsed.decision : 'HOLD',
+    tp_rate: parsed.tp_rate ?? null,
+    sl_rate: parsed.sl_rate ?? null,
+    reasoning: parsed.reasoning ?? '',
+  };
+}
+
 // ── ニュース注目フラグ分析 ──
 
 export interface NewsAnalysisItem {
@@ -255,4 +310,91 @@ export async function analyzeNews(params: {
   const data = await res.json<GeminiResponse>();
   const text = data.candidates[0].content.parts[0].text;
   return JSON.parse(text) as NewsAnalysisItem[];
+}
+
+const NEWS_ANALYSIS_SYSTEM_PROMPT =
+  'あなたは金融マーケットアナリストです。以下のニュース一覧を分析し、' +
+  'マーケット（為替・株式・債券・暗号資産・コモディティ）に影響がありそうなニュースに注目フラグを付けてください。' +
+  '必ず以下のJSON配列のみで返答してください:\n' +
+  '[{"index":0,"attention":true,"impact":"円安要因。日銀政策への影響で...","title_ja":"日本語タイトル"},{"index":1,"attention":false,"impact":null,"title_ja":null},...]\n' +
+  'impactは注目ニュースのみ日本語50文字以内で市場への影響を説明。注目でなければnull。\n' +
+  'title_jaは英語タイトルの場合のみ日本語訳を返す。日本語タイトルはnull。';
+
+function buildNewsList(news: NewsItem[]): string {
+  return news.slice(0, 12).map((n, i) =>
+    `[${i}] ${n.title}${n.description ? ' — ' + n.description.slice(0, 100) : ''}`
+  ).join('\n');
+}
+
+export async function analyzeNewsGPT(params: {
+  news: NewsItem[];
+  apiKey: string;
+}): Promise<NewsAnalysisItem[]> {
+  const { news, apiKey } = params;
+  if (news.length === 0) return [];
+
+  const res = await fetch('https://api.openai.com/v1/chat/completions', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${apiKey}`,
+    },
+    body: JSON.stringify({
+      model: 'gpt-4.1-mini',
+      messages: [
+        { role: 'system', content: NEWS_ANALYSIS_SYSTEM_PROMPT },
+        { role: 'user', content: buildNewsList(news) },
+      ],
+      response_format: { type: 'json_object' },
+      temperature: 0.3,
+    }),
+  });
+
+  if (!res.ok) {
+    const body = await res.text();
+    throw new Error(`OpenAI news analysis error ${res.status}: ${body}`);
+  }
+
+  const data = await res.json<{ choices: Array<{ message: { content: string } }> }>();
+  const text = data.choices[0].message.content;
+  const parsed = JSON.parse(text);
+  // GPTはjson_objectモードで配列を返せないことがある（ラッパーオブジェクト）
+  return Array.isArray(parsed) ? parsed : (parsed.items ?? parsed.results ?? parsed.analysis ?? []);
+}
+
+export async function analyzeNewsClaude(params: {
+  news: NewsItem[];
+  apiKey: string;
+}): Promise<NewsAnalysisItem[]> {
+  const { news, apiKey } = params;
+  if (news.length === 0) return [];
+
+  const res = await fetch('https://api.anthropic.com/v1/messages', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'x-api-key': apiKey,
+      'anthropic-version': '2023-06-01',
+    },
+    body: JSON.stringify({
+      model: 'claude-sonnet-4-20250514',
+      max_tokens: 1024,
+      system: NEWS_ANALYSIS_SYSTEM_PROMPT,
+      messages: [
+        { role: 'user', content: buildNewsList(news) },
+      ],
+      temperature: 0.3,
+    }),
+  });
+
+  if (!res.ok) {
+    const body = await res.text();
+    throw new Error(`Anthropic news analysis error ${res.status}: ${body}`);
+  }
+
+  const data = await res.json<{ content: Array<{ type: string; text: string }> }>();
+  const text = data.content[0].text;
+  const jsonMatch = text.match(/\[[\s\S]*\]/);
+  if (!jsonMatch) throw new Error('Claude news analysis: no JSON array');
+  return JSON.parse(jsonMatch[0]) as NewsAnalysisItem[];
 }

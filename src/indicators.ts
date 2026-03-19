@@ -49,7 +49,7 @@ async function fetchYahoo(symbol: string): Promise<number | null> {
 }
 
 export async function getMarketIndicators(): Promise<MarketIndicators> {
-  const [vix, nikkei, sp500, us10y, usdjpy, btcusd, gold, eurusd, ethusd, crudeoil, natgas, copper] = await Promise.all([
+  const [vix, nikkei, sp500, us10y, usdjpy, btcusd, gold, eurusd, ethusd, crudeoil, natgas, copper, silver, gbpusd, audusd, solusd, dax, nasdaq] = await Promise.all([
     fetchYahoo('^VIX'),
     fetchYahoo('^N225'),
     fetchYahoo('^GSPC'),

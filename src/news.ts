@@ -11,20 +11,30 @@ const SOURCES = [
   // === 日本語ソース ===
   // NHK 経済ニュース
   'https://www3.nhk.or.jp/rss/news/cat6.xml',
-  // Google News JP — 為替・株
+  // Google News JP — 為替・株・日経
   'https://news.google.com/rss/search?q=%E7%82%BA%E6%9B%BF+%E3%83%89%E3%83%AB%E5%86%86+%E6%97%A5%E9%8A%80&hl=ja&gl=JP&ceid=JP%3Aja',
+  // Google News JP — 日経平均・東証
+  'https://news.google.com/rss/search?q=%E6%97%A5%E7%B5%8C%E5%B9%B3%E5%9D%87+%E6%A0%AA%E4%BE%A1+%E6%9D%B1%E8%A8%BC&hl=ja&gl=JP&ceid=JP%3Aja',
 
   // === 英語ソース（グローバル市場） ===
-  // Google News EN — Fed, rates, markets
-  'https://news.google.com/rss/search?q=Federal+Reserve+interest+rates+markets&hl=en&gl=US&ceid=US%3Aen',
-  // Google News EN — Gold, oil, commodities
-  'https://news.google.com/rss/search?q=gold+price+oil+commodities+market&hl=en&gl=US&ceid=US%3Aen',
-  // Google News EN — Bitcoin, crypto
-  'https://news.google.com/rss/search?q=bitcoin+crypto+market&hl=en&gl=US&ceid=US%3Aen',
+  // Google News EN — Fed, rates, bonds, Treasury
+  'https://news.google.com/rss/search?q=Federal+Reserve+interest+rates+Treasury+bond+yield&hl=en&gl=US&ceid=US%3Aen',
+  // Google News EN — US stocks, S&P500, NASDAQ
+  'https://news.google.com/rss/search?q=S%26P500+NASDAQ+stock+market+Wall+Street&hl=en&gl=US&ceid=US%3Aen',
+  // Google News EN — Gold, silver, copper, metals
+  'https://news.google.com/rss/search?q=gold+silver+copper+price+metals+market&hl=en&gl=US&ceid=US%3Aen',
+  // Google News EN — Oil, natural gas, energy, OPEC
+  'https://news.google.com/rss/search?q=crude+oil+natural+gas+OPEC+energy+price&hl=en&gl=US&ceid=US%3Aen',
+  // Google News EN — Bitcoin, Ethereum, Solana, crypto
+  'https://news.google.com/rss/search?q=bitcoin+ethereum+solana+crypto+market&hl=en&gl=US&ceid=US%3Aen',
   // Google News EN — Geopolitics, Iran, trade war
   'https://news.google.com/rss/search?q=geopolitics+Iran+trade+war+sanctions&hl=en&gl=US&ceid=US%3Aen',
-  // Google News EN — Euro, ECB, European markets
-  'https://news.google.com/rss/search?q=euro+ECB+european+markets+EUR+USD&hl=en&gl=US&ceid=US%3Aen',
+  // Google News EN — Euro, ECB, DAX, European markets
+  'https://news.google.com/rss/search?q=ECB+euro+DAX+European+markets&hl=en&gl=US&ceid=US%3Aen',
+  // Google News EN — GBP, BOE, UK economy
+  'https://news.google.com/rss/search?q=Bank+of+England+GBP+pound+UK+economy&hl=en&gl=US&ceid=US%3Aen',
+  // Google News EN — AUD, RBA, Australian economy
+  'https://news.google.com/rss/search?q=Reserve+Bank+Australia+AUD+Australian+dollar&hl=en&gl=US&ceid=US%3Aen',
 ];
 
 function extractCdata(tag: string, xml: string): string {
@@ -83,10 +93,10 @@ export async function fetchNews(): Promise<NewsItem[]> {
       if (!seen.has(item.title)) {
         seen.add(item.title);
         merged.push(item);
-        if (merged.length >= 16) break;
+        if (merged.length >= 20) break;
       }
     }
-    if (merged.length >= 16) break;
+    if (merged.length >= 20) break;
   }
   return merged;
 }

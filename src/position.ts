@@ -65,8 +65,12 @@ export async function checkAndCloseAllPositions(
           : newSl < pos.sl_rate;
 
         if (shouldUpdate) {
+          const oldSl = pos.sl_rate;
           await db.prepare('UPDATE positions SET sl_rate = ? WHERE id = ?').bind(newSl, pos.id).run();
-          console.log(`[position] Trailing SL: ${pos.pair} id=${pos.id} SL ${pos.sl_rate.toFixed(4)} → ${newSl.toFixed(4)}`);
+          console.log(`[position] Trailing SL: ${pos.pair} id=${pos.id} SL ${oldSl.toFixed(4)} → ${newSl.toFixed(4)}`);
+          await insertSystemLog(db, 'INFO', 'TRAILING',
+            `トレイリングSL: ${pos.pair} ${oldSl.toFixed(4)} → ${newSl.toFixed(4)}`,
+            JSON.stringify({ id: pos.id, direction: pos.direction, entry: pos.entry_rate, oldSl, newSl, currentRate }));
           pos.sl_rate = newSl; // 以降のSLチェックで新しいSLを使う
         }
       }
@@ -86,6 +90,23 @@ export async function checkAndCloseAllPositions(
       await insertSystemLog(db, 'WARN', 'POSITION',
         `SL決済: ${pos.pair} ${pos.direction} PnL ${pnl >= 0 ? '+' : ''}${pnl.toFixed(2)}`,
         JSON.stringify({ id: pos.id, entry: pos.entry_rate, close: currentRate, pnl }));
+
+      // ドローダウン検知: 直近3件がすべてSLなら警告
+      try {
+        const recent = await db.prepare(
+          `SELECT close_reason FROM positions WHERE status = 'CLOSED' ORDER BY closed_at DESC LIMIT 3`
+        ).all<{ close_reason: string }>();
+        const reasons = (recent.results ?? []).map(r => r.close_reason);
+        if (reasons.length >= 3 && reasons.every(r => r === 'SL')) {
+          const totalSlPnl = await db.prepare(
+            `SELECT COALESCE(SUM(pnl), 0) AS slLoss FROM positions WHERE status = 'CLOSED' AND close_reason = 'SL' ORDER BY closed_at DESC LIMIT 3`
+          ).first<{ slLoss: number }>();
+          await insertSystemLog(db, 'WARN', 'DRAWDOWN',
+            `⚠️ 3連続SL損切 — 累計損失 ¥${Math.round(totalSlPnl?.slLoss ?? 0)}`,
+            null);
+          console.warn(`[position] ⚠️ DRAWDOWN: 3 consecutive SL hits`);
+        }
+      } catch {}
     }
   }
 }

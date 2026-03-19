@@ -19,7 +19,7 @@ export interface InstrumentConfig {
 export const INSTRUMENTS: InstrumentConfig[] = [
   {
     pair: 'USD/JPY',
-    rateChangeTh: 0.03,
+    rateChangeTh: 0.015,
     tpSlHint: '現在レートから±0.3〜1.0円',
     pnlUnit: '円',
     pnlMultiplier: 100,
@@ -28,7 +28,7 @@ export const INSTRUMENTS: InstrumentConfig[] = [
   },
   {
     pair: 'Nikkei225',
-    rateChangeTh: 30,
+    rateChangeTh: 15,
     tpSlHint: '現在値から±100〜500ポイント',
     pnlUnit: '円',
     pnlMultiplier: 1,
@@ -37,7 +37,7 @@ export const INSTRUMENTS: InstrumentConfig[] = [
   },
   {
     pair: 'S&P500',
-    rateChangeTh: 3,
+    rateChangeTh: 1.5,
     tpSlHint: '現在値から±10〜50ポイント',
     pnlUnit: '円',
     pnlMultiplier: 10,
@@ -46,7 +46,7 @@ export const INSTRUMENTS: InstrumentConfig[] = [
   },
   {
     pair: 'US10Y',
-    rateChangeTh: 0.03,
+    rateChangeTh: 0.015,
     tpSlHint: '現在利回りから±0.1〜0.3%',
     pnlUnit: '円',
     pnlMultiplier: 5000,
@@ -55,7 +55,7 @@ export const INSTRUMENTS: InstrumentConfig[] = [
   },
   {
     pair: 'BTC/USD',
-    rateChangeTh: 50,
+    rateChangeTh: 25,
     tpSlHint: '現在価格から±$300〜$1,500',
     pnlUnit: '円',
     pnlMultiplier: 1,
@@ -64,7 +64,7 @@ export const INSTRUMENTS: InstrumentConfig[] = [
   },
   {
     pair: 'Gold',
-    rateChangeTh: 3,
+    rateChangeTh: 1.5,
     tpSlHint: '現在価格から±$10〜$40',
     pnlUnit: '円',
     pnlMultiplier: 10,
@@ -73,7 +73,7 @@ export const INSTRUMENTS: InstrumentConfig[] = [
   },
   {
     pair: 'EUR/USD',
-    rateChangeTh: 0.002,
+    rateChangeTh: 0.001,
     tpSlHint: '現在レートから±0.005〜0.015',
     pnlUnit: '円',
     pnlMultiplier: 10000,
@@ -82,7 +82,7 @@ export const INSTRUMENTS: InstrumentConfig[] = [
   },
   {
     pair: 'ETH/USD',
-    rateChangeTh: 15,
+    rateChangeTh: 8,
     tpSlHint: '現在価格から±$30〜$100',
     pnlUnit: '円',
     pnlMultiplier: 1,
@@ -91,7 +91,7 @@ export const INSTRUMENTS: InstrumentConfig[] = [
   },
   {
     pair: 'CrudeOil',
-    rateChangeTh: 0.3,
+    rateChangeTh: 0.15,
     tpSlHint: '現在価格から±$0.5〜$2.0',
     pnlUnit: '円',
     pnlMultiplier: 100,        // $0.01変動 = ¥1
@@ -100,7 +100,7 @@ export const INSTRUMENTS: InstrumentConfig[] = [
   },
   {
     pair: 'NatGas',
-    rateChangeTh: 0.03,
+    rateChangeTh: 0.015,
     tpSlHint: '現在価格から±$0.05〜$0.2',
     pnlUnit: '円',
     pnlMultiplier: 1000,       // $0.01変動 = ¥10
@@ -109,7 +109,7 @@ export const INSTRUMENTS: InstrumentConfig[] = [
   },
   {
     pair: 'Copper',
-    rateChangeTh: 0.02,
+    rateChangeTh: 0.01,
     tpSlHint: '現在価格から±$0.03〜$0.1',
     pnlUnit: '円',
     pnlMultiplier: 1000,       // $0.01変動 = ¥10
@@ -118,7 +118,7 @@ export const INSTRUMENTS: InstrumentConfig[] = [
   },
   {
     pair: 'Silver',
-    rateChangeTh: 0.15,
+    rateChangeTh: 0.08,
     tpSlHint: '現在価格から±$0.3〜$1.0',
     pnlUnit: '円',
     pnlMultiplier: 100,
@@ -127,7 +127,7 @@ export const INSTRUMENTS: InstrumentConfig[] = [
   },
   {
     pair: 'GBP/USD',
-    rateChangeTh: 0.002,
+    rateChangeTh: 0.001,
     tpSlHint: '現在レートから±0.005〜0.015',
     pnlUnit: '円',
     pnlMultiplier: 10000,
@@ -136,7 +136,7 @@ export const INSTRUMENTS: InstrumentConfig[] = [
   },
   {
     pair: 'AUD/USD',
-    rateChangeTh: 0.002,
+    rateChangeTh: 0.001,
     tpSlHint: '現在レートから±0.005〜0.015',
     pnlUnit: '円',
     pnlMultiplier: 10000,
@@ -145,7 +145,7 @@ export const INSTRUMENTS: InstrumentConfig[] = [
   },
   {
     pair: 'SOL/USD',
-    rateChangeTh: 1,
+    rateChangeTh: 0.5,
     tpSlHint: '現在価格から±$2〜$8',
     pnlUnit: '円',
     pnlMultiplier: 10,
@@ -154,7 +154,7 @@ export const INSTRUMENTS: InstrumentConfig[] = [
   },
   {
     pair: 'DAX',
-    rateChangeTh: 30,
+    rateChangeTh: 15,
     tpSlHint: '現在値から±50〜200ポイント',
     pnlUnit: '円',
     pnlMultiplier: 1,
@@ -163,7 +163,7 @@ export const INSTRUMENTS: InstrumentConfig[] = [
   },
   {
     pair: 'NASDAQ',
-    rateChangeTh: 30,
+    rateChangeTh: 15,
     tpSlHint: '現在値から±50〜200ポイント',
     pnlUnit: '円',
     pnlMultiplier: 1,

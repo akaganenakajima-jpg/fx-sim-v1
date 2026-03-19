@@ -1,5 +1,5 @@
 // Reddit r/Forex の新着投稿を取得しキーワード検出
-// 2023年以降JSON APIは403のため、RSSフィードを利用
+// OAuth API（client_credentials フロー）で正規アクセス
 
 export interface RedditSignal {
   hasSignal: boolean;
@@ -7,57 +7,101 @@ export interface RedditSignal {
   topPosts: string[]; // 上位3件のタイトル
 }
 
-// 2023年以降JSON APIは403。RSS endpointはより緩い制限
-const REDDIT_URL = 'https://www.reddit.com/r/Forex/new/.rss';
+const SUBREDDITS = ['Forex', 'wallstreetbets', 'stocks', 'CryptoCurrency'];
 
 const KEYWORDS = [
-  'intervention',
-  'BOJ',
-  'Fed',
-  'rate hike',
-  'rate cut',
-  '日銀',
-  '介入',
-  '利上げ',
-  '利下げ',
-  'FOMC',
-  'CPI',
+  // 為替・中央銀行
+  'intervention', 'BOJ', 'Fed', 'rate hike', 'rate cut',
+  '日銀', '介入', '利上げ', '利下げ', 'FOMC', 'CPI',
+  'ECB', 'BOE', 'RBA',
+  // エネルギー・コモディティ
+  'OPEC', 'oil price', 'crude oil', 'natural gas', 'gold price',
+  'copper', 'silver',
+  // 暗号資産
+  'bitcoin', 'ethereum', 'solana', 'crypto crash', 'ETF approval',
+  'halving', 'SEC',
+  // 地政学・マクロ
+  'tariff', 'sanctions', 'trade war', 'recession',
 ];
 
-/** Atom/RSSの<title>要素を抽出 */
-function extractTitles(xml: string): string[] {
-  const titles: string[] = [];
-  // Atom形式: <entry><title>...</title></entry>
-  const entryRe = /<entry[\s>]([\s\S]*?)<\/entry>/gi;
-  let m: RegExpExecArray | null;
-  while ((m = entryRe.exec(xml)) !== null) {
-    const block = m[1];
-    const titleMatch = /<title[^>]*>(?:<!\[CDATA\[)?([\s\S]*?)(?:\]\]>)?<\/title>/i.exec(block);
-    if (titleMatch) titles.push(titleMatch[1].trim());
+// トークンキャッシュ（インメモリ — Worker再起動まで有効）
+let cachedToken: { token: string; expiresAt: number } | null = null;
+
+/** OAuth client_credentials でアクセストークン取得 */
+async function getAccessToken(clientId: string, clientSecret: string): Promise<string> {
+  // キャッシュが有効なら再利用（5分余裕を持たせる）
+  if (cachedToken && Date.now() < cachedToken.expiresAt - 300_000) {
+    return cachedToken.token;
   }
-  return titles;
+
+  const credentials = btoa(`${clientId}:${clientSecret}`);
+  const res = await fetch('https://www.reddit.com/api/v1/access_token', {
+    method: 'POST',
+    headers: {
+      Authorization: `Basic ${credentials}`,
+      'Content-Type': 'application/x-www-form-urlencoded',
+      'User-Agent': 'fx-sim-v1/1.0 (by /u/fx-sim-bot)',
+    },
+    body: 'grant_type=client_credentials',
+  });
+
+  if (!res.ok) {
+    throw new Error(`Reddit OAuth failed: ${res.status}`);
+  }
+
+  const data = await res.json() as { access_token: string; expires_in: number };
+  cachedToken = {
+    token: data.access_token,
+    expiresAt: Date.now() + data.expires_in * 1000,
+  };
+  return data.access_token;
 }
 
-export async function fetchRedditSignal(): Promise<RedditSignal> {
+/** OAuth API で subreddit の新着投稿タイトルを取得 */
+async function fetchSubredditPosts(token: string, subreddit: string): Promise<string[]> {
+  const res = await fetch(`https://oauth.reddit.com/r/${subreddit}/new?limit=10`, {
+    headers: {
+      Authorization: `Bearer ${token}`,
+      'User-Agent': 'fx-sim-v1/1.0 (by /u/fx-sim-bot)',
+    },
+  });
+
+  if (!res.ok) {
+    console.warn(`[reddit] /r/${subreddit} ${res.status}`);
+    return [];
+  }
+
+  const data = await res.json() as {
+    data: { children: Array<{ data: { title: string } }> };
+  };
+  return data.data.children.map(c => c.data.title);
+}
+
+export async function fetchRedditSignal(
+  clientId?: string,
+  clientSecret?: string,
+): Promise<RedditSignal> {
+  // credentials がなければスキップ（後方互換）
+  if (!clientId || !clientSecret) {
+    return { hasSignal: false, keywords: [], topPosts: [] };
+  }
+
   try {
-    const res = await fetch(REDDIT_URL, {
-      headers: {
-        'User-Agent':
-          'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-        Accept: 'application/rss+xml, application/atom+xml, text/xml, */*',
-      },
-    });
-    if (!res.ok) {
-      console.error(`[reddit] fetch failed: ${res.status}`);
-      return { hasSignal: false, keywords: [], topPosts: [] };
+    const token = await getAccessToken(clientId, clientSecret);
+
+    // 全 subreddit を並列取得
+    const results = await Promise.allSettled(
+      SUBREDDITS.map(sub => fetchSubredditPosts(token, sub)),
+    );
+    const allPosts: string[] = [];
+    for (const r of results) {
+      if (r.status === 'fulfilled') allPosts.push(...r.value);
     }
 
-    const xml = await res.text();
-    const posts = extractTitles(xml);
-    const topPosts = posts.slice(0, 3);
+    const topPosts = allPosts.slice(0, 3);
 
     const foundKeywords: string[] = [];
-    for (const post of posts) {
+    for (const post of allPosts) {
       const lower = post.toLowerCase();
       for (const kw of KEYWORDS) {
         if (lower.includes(kw.toLowerCase()) && !foundKeywords.includes(kw)) {
@@ -72,7 +116,7 @@ export async function fetchRedditSignal(): Promise<RedditSignal> {
       topPosts,
     };
   } catch (e) {
-    console.error('[reddit] error:', e);
+    console.warn(`[reddit] OAuth error: ${e}`);
     return { hasSignal: false, keywords: [], topPosts: [] };
   }
 }

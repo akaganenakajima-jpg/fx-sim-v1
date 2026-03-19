@@ -43,6 +43,7 @@ export interface LogStats {
   geminiCalls: number;
   holdCount: number;
   errorCount: number;
+  warnCount: number;
   lastRun: string | null;
 }
 
@@ -237,6 +238,7 @@ export async function getApiStatus(db: D1Database): Promise<StatusResponse> {
       geminiCalls: logStatsRaw?.geminiCalls ?? 0,
       holdCount: logStatsRaw?.holdCount ?? 0,
       errorCount: sysLogs.filter(l => l.level === 'ERROR').length,
+      warnCount: sysLogs.filter(l => l.level === 'WARN').length,
       lastRun: logStatsRaw?.lastRun ?? null,
     },
   };
