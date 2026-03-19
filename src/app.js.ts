@@ -228,7 +228,7 @@ export const JS = `
         var dec = pairDecisions[0];
         body.innerHTML += '<div style="margin-top:12px;padding-top:12px;border-top:1px solid var(--separator)">' +
           '<div style="font-size:12px;color:var(--label-secondary);margin-bottom:6px;font-weight:600">直近のAI判断</div>' +
-          '<div style="font-size:13px;line-height:1.5;color:var(--label-primary)">' + escHtml(dec.reasoning || '') + '</div>' +
+          '<div style="font-size:13px;line-height:1.5;color:var(--label)">' + escHtml(dec.reasoning || '') + '</div>' +
           '<div style="font-size:11px;color:var(--label-secondary);margin-top:4px">' + fmtTime(dec.created_at) + '</div></div>';
       }
 
@@ -357,7 +357,7 @@ export const JS = `
               '<span class="badge ' + badgeCls + '" style="font-size:10px;padding:2px 6px">' + dec.decision + '</span>' +
               '<span style="font-size:11px;color:var(--label-secondary)">' + fmtTime(dec.created_at) + '</span>' +
             '</div>' +
-            '<div style="font-size:13px;line-height:1.5;color:var(--label-primary)">' + escHtml(dec.reasoning || '') + '</div>' +
+            '<div style="font-size:13px;line-height:1.5;color:var(--label)">' + escHtml(dec.reasoning || '') + '</div>' +
           '</div>';
         }).join('') +
       '</div>';
@@ -598,7 +598,7 @@ export const JS = `
       if (ana && ana.attention && ana.impact) {
         impactHtml = '<div style="background:rgba(255,149,0,0.1);border-left:3px solid #FF9500;padding:10px 12px;border-radius:8px;margin-bottom:12px">' +
           '<div style="font-size:11px;font-weight:600;color:#FF9500;margin-bottom:4px">AI マーケットインパクト</div>' +
-          '<div style="font-size:13px;line-height:1.5;color:var(--label-primary)">' + escHtml(ana.impact) + '</div>' +
+          '<div style="font-size:13px;line-height:1.5;color:var(--label)">' + escHtml(ana.impact) + '</div>' +
         '</div>';
       }
       el('sheet-body').innerHTML =
@@ -735,7 +735,15 @@ export const JS = `
       }
     });
 
-    var html = INSTRUMENTS.map(function(instr) {
+    // 銘柄を「保有中」「待機中」にセクション分離（Cognitive Load 軽減）
+    var activeInstr = [];
+    var holdInstr = [];
+    INSTRUMENTS.forEach(function(instr) {
+      if (posMap[instr.pair]) { activeInstr.push(instr); }
+      else { holdInstr.push(instr); }
+    });
+
+    function buildRow(instr) {
       var pos         = posMap[instr.pair];
       var currentRate = rateMap[instr.pair];
 
@@ -773,7 +781,13 @@ export const JS = `
           '<div class="watch-pnl-badge ' + badgeCls + '">' + pnlFmt.text + '</div>' +
         '</div>' +
       '</div>';
-    }).join('');
+    }
+
+    var html = activeInstr.map(buildRow).join('');
+    if (holdInstr.length > 0) {
+      html += '<div class="watch-section-divider" style="font-size:11px;font-weight:600;color:var(--label-tertiary);letter-spacing:0.8px;text-transform:uppercase;padding:12px 16px 4px">待機中</div>';
+      html += holdInstr.map(buildRow).join('');
+    }
 
     container.innerHTML = html;
 
@@ -823,35 +837,90 @@ export const JS = `
       equity.push(INITIAL_CAPITAL + missingPnl + cumPnl);
     });
     var w = chart.offsetWidth || 300;
-    var h = 120;
+    var h = 160;
     var min = Math.min.apply(null, equity);
     var max = Math.max.apply(null, equity);
     var range = max - min || 1;
-    var pad = 4;
-    var step = (w - pad * 2) / (equity.length - 1);
+    var padL = range > 5000 ? 42 : 56; // Y軸ラベル用（レンジ狭い時は実数表示で幅広く）
+    var padR = 10;
+    var padT = 16; // 最終値ラベル用余白
+    var padB = 22; // X軸ラベル用
+    var chartW = w - padL - padR;
+    var chartH = h - padT - padB;
+    var step = chartW / (equity.length - 1);
     var pts = equity.map(function(v, i) {
-      var x = pad + i * step;
-      var y = h - pad - ((v - min) / range) * (h - pad * 2);
+      var x = padL + i * step;
+      var y = padT + chartH - ((v - min) / range) * chartH;
       return x.toFixed(1) + ',' + y.toFixed(1);
     });
     var lastVal = equity[equity.length - 1];
     var color = lastVal >= INITIAL_CAPITAL ? 'var(--green)' : 'var(--red)';
+
+    // グリッド色（カード背景上で見えるように明示指定）
+    var gridColor = 'var(--label-quaternary, rgba(128,128,128,0.2))';
+
+    // Y軸目盛り（4本）— 上下端はボーダーと重なるので省略
+    var yGridLines = '';
+    var yLabels = '';
+    var yTicks = 4;
+    for (var yi = 0; yi <= yTicks; yi++) {
+      var yVal = min + (range * yi / yTicks);
+      var yPos = padT + chartH - (chartH * yi / yTicks);
+      if (yi > 0 && yi < yTicks) {
+        yGridLines += '<line x1="' + padL + '" y1="' + yPos.toFixed(1) + '" x2="' + (w - padR) + '" y2="' + yPos.toFixed(1) + '" stroke="' + gridColor + '" stroke-width="1"/>';
+      }
+      var yLabel = yVal >= 10000 ? '¥' + (range > 5000 ? (yVal / 10000).toFixed(1) + '万' : Math.round(yVal).toLocaleString()) : '¥' + Math.round(yVal).toLocaleString();
+      yLabels += '<text x="' + (padL - 6) + '" y="' + (yPos + 3).toFixed(1) + '" text-anchor="end" fill="var(--label-secondary)" font-size="9" font-family="-apple-system,system-ui,sans-serif">' + yLabel + '</text>';
+    }
+
+    // X軸目盛り（最大5本）— 左右端は省略
+    var xGridLines = '';
+    var xLabels = '';
+    var xTicks = Math.min(equity.length - 1, 5);
+    for (var xi = 0; xi <= xTicks; xi++) {
+      var idx = Math.round((equity.length - 1) * xi / xTicks);
+      var xPos = padL + idx * step;
+      if (xi > 0 && xi < xTicks) {
+        xGridLines += '<line x1="' + xPos.toFixed(1) + '" y1="' + padT + '" x2="' + xPos.toFixed(1) + '" y2="' + (padT + chartH) + '" stroke="' + gridColor + '" stroke-width="1"/>';
+      }
+      xLabels += '<text x="' + xPos.toFixed(1) + '" y="' + (h - 4) + '" text-anchor="middle" fill="var(--label-secondary)" font-size="9" font-family="-apple-system,system-ui,sans-serif">#' + idx + '</text>';
+    }
+
+    // 元本ライン
+    var capitalY = padT + chartH - ((INITIAL_CAPITAL - min) / range) * chartH;
+
     // グラデーション塗りつぶし
-    var fillPts = pts.join(' ') + ' ' + (w - pad) + ',' + (h - pad) + ' ' + pad + ',' + (h - pad);
+    var fillPts = pts.join(' ') + ' ' + (w - padR) + ',' + (padT + chartH) + ' ' + padL + ',' + (padT + chartH);
     chart.innerHTML =
       '<svg width="' + w + '" height="' + h + '" viewBox="0 0 ' + w + ' ' + h + '">' +
         '<defs><linearGradient id="eqGrad" x1="0" y1="0" x2="0" y2="1">' +
           '<stop offset="0%" stop-color="' + color + '" stop-opacity="0.2"/>' +
           '<stop offset="100%" stop-color="' + color + '" stop-opacity="0.02"/>' +
         '</linearGradient></defs>' +
+        // チャート枠線
+        '<rect x="' + padL + '" y="' + padT + '" width="' + chartW + '" height="' + chartH + '" fill="none" stroke="' + gridColor + '" stroke-width="1" rx="2"/>' +
+        yGridLines + xGridLines + yLabels + xLabels +
         '<polygon points="' + fillPts + '" fill="url(#eqGrad)"/>' +
         '<polyline points="' + pts.join(' ') + '" fill="none" stroke="' + color + '" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>' +
-        '<line x1="' + pad + '" y1="' + (h - pad - ((INITIAL_CAPITAL - min) / range) * (h - pad * 2)).toFixed(1) + '" x2="' + (w - pad) + '" y2="' + (h - pad - ((INITIAL_CAPITAL - min) / range) * (h - pad * 2)).toFixed(1) + '" stroke="var(--label-tertiary)" stroke-width="0.5" stroke-dasharray="4,4"/>' +
-      '</svg>' +
-      '<div style="display:flex;justify-content:space-between;font-size:10px;color:var(--label-secondary);margin-top:2px">' +
-        '<span>' + fmtYen(INITIAL_CAPITAL) + '</span>' +
-        '<span style="color:' + color + ';font-weight:600">' + fmtYen(lastVal) + '</span>' +
-      '</div>';
+        // 元本ライン（表示範囲内の場合のみ）
+        (INITIAL_CAPITAL >= min && INITIAL_CAPITAL <= max
+          ? '<line x1="' + padL + '" y1="' + capitalY.toFixed(1) + '" x2="' + (w - padR) + '" y2="' + capitalY.toFixed(1) + '" stroke="var(--label-tertiary)" stroke-width="1" stroke-dasharray="3,3" opacity="0.5"/>' +
+            '<text x="' + (padL + 4) + '" y="' + (capitalY - 4).toFixed(1) + '" fill="var(--label-tertiary)" font-size="8" font-family="-apple-system,system-ui,sans-serif">元本</text>'
+          : '') +
+        // 目標ライン（Goal Gradient — 表示範囲内の場合のみ）
+        (function() {
+          var GOAL = 15000;
+          if (GOAL >= min && GOAL <= max) {
+            var goalY = padT + chartH - ((GOAL - min) / range) * chartH;
+            return '<line x1="' + padL + '" y1="' + goalY.toFixed(1) + '" x2="' + (w - padR) + '" y2="' + goalY.toFixed(1) + '" stroke="var(--blue)" stroke-width="1" stroke-dasharray="4,3" opacity="0.6"/>' +
+              '<text x="' + (w - padR - 4) + '" y="' + (goalY - 4).toFixed(1) + '" text-anchor="end" fill="var(--blue)" font-size="8" font-weight="600" font-family="-apple-system,system-ui,sans-serif" opacity="0.8">目標</text>';
+          }
+          return '';
+        })() +
+        // 最終値ドット + ラベル
+        '<circle cx="' + pts[pts.length - 1].split(',')[0] + '" cy="' + pts[pts.length - 1].split(',')[1] + '" r="3.5" fill="' + color + '"/>' +
+        '<text x="' + pts[pts.length - 1].split(',')[0] + '" y="' + (padT - 3) + '" text-anchor="middle" fill="' + color + '" font-size="11" font-weight="600" font-family="-apple-system,system-ui,sans-serif">' + fmtYen(lastVal) + '</text>' +
+      '</svg>';
   }
 
   // ── 統計タブ描画 ──
@@ -861,7 +930,7 @@ export const JS = `
     if (!container) return;
     var byPair = data.performanceByPair || {};
 
-    var html = INSTRUMENTS.map(function(instr) {
+    function buildStatsCard(instr) {
       var p = byPair[instr.pair];
       if (!p) p = { total: 0, wins: 0, totalPnl: 0 };
       var winRate = p.total > 0 ? (p.wins / p.total * 100) : 0;
@@ -879,7 +948,15 @@ export const JS = `
           '<span>' + p.wins + '勝 ' + (p.total - p.wins) + '敗（計' + p.total + '）</span>' +
         '</div>' +
       '</div>';
-    }).join('');
+    }
+    // 取引ありと取引なしにセクション分離（Cognitive Load軽減）
+    var traded = INSTRUMENTS.filter(function(i) { var p = byPair[i.pair]; return p && p.total > 0; });
+    var untraded = INSTRUMENTS.filter(function(i) { var p = byPair[i.pair]; return !p || p.total === 0; });
+    var html = traded.map(buildStatsCard).join('');
+    if (untraded.length > 0) {
+      html += '<div style="font-size:11px;font-weight:600;color:var(--label-tertiary);letter-spacing:0.8px;text-transform:uppercase;padding:12px 4px 4px">未取引</div>';
+      html += untraded.map(buildStatsCard).join('');
+    }
 
     // 全銘柄の取引数合計が0なら empty state を追加
     var totalTrades = INSTRUMENTS.reduce(function(sum, instr) {
@@ -1027,7 +1104,20 @@ export const JS = `
     var statusEl = el('ai-status');
     if (statusEl && data.systemStatus) {
       var runs = data.systemStatus.totalRuns || 0;
-      statusEl.textContent = runs.toLocaleString('ja-JP') + '回監視中 · 次のシグナル待ち';
+      // 連勝/連敗ストリーク計算（Variable Reward）
+      var recentC = (data.recentCloses || []).slice();
+      var streak = 0;
+      var streakType = '';
+      for (var si = 0; si < recentC.length; si++) {
+        var isWin = (recentC[si].pnl || 0) > 0;
+        if (si === 0) { streakType = isWin ? 'win' : 'lose'; streak = 1; }
+        else if ((isWin && streakType === 'win') || (!isWin && streakType === 'lose')) { streak++; }
+        else { break; }
+      }
+      var streakText = '';
+      if (streak >= 2 && streakType === 'win') streakText = ' · ' + streak + '連勝中';
+      else if (streak >= 3 && streakType === 'lose') streakText = ' · ' + streak + '連敗中';
+      statusEl.textContent = runs.toLocaleString('ja-JP') + '回監視中 · 次のシグナル待ち' + streakText;
     }
 
     // AI判断タブ: 従来通りlatestDecisionを表示
@@ -1049,6 +1139,9 @@ export const JS = `
 
     // ログタブ
     renderLog(data);
+
+    // タブバッジ更新（Zeigarnik効果）
+    updateTabBadges(data);
 
     // ニュースドロワー
     if (window._renderNews) window._renderNews(data.latestNews || [], data.newsAnalysis || []);
@@ -1089,10 +1182,48 @@ export const JS = `
     el('total-runs').textContent = Number(data.systemStatus.totalRuns).toLocaleString('ja-JP');
   }
 
+  // ── タブバッジ更新（Zeigarnik効果） ──
+  function updateTabBadges(data) {
+    var tabs = document.querySelectorAll('.tab-item');
+    tabs.forEach(function(tab) {
+      var old = tab.querySelector('.tab-badge');
+      if (old) old.remove();
+    });
+    // ログタブ: WARN + ERROR 件数
+    var logs = data.systemLogs || [];
+    var warnCount = logs.filter(function(l) { return l.level === 'WARN' || l.level === 'ERROR'; }).length;
+    if (warnCount > 0) {
+      var logTab = document.querySelector('[data-tab="tab-log"]');
+      if (logTab) {
+        var badge = document.createElement('span');
+        badge.className = 'tab-badge';
+        badge.textContent = warnCount > 99 ? '99+' : String(warnCount);
+        logTab.appendChild(badge);
+      }
+    }
+  }
+
   // ── ログタブ描画 ──
   function renderLog(data) {
     var stats = data.logStats || {};
     var logs  = data.systemLogs || [];
+
+    // JSON detailを人間が読める形に整形
+    function fmtLogDetail(detail) {
+      if (!detail) return '';
+      try {
+        var obj = JSON.parse(detail);
+        // キーと値をペアで表示（ネストしない）
+        return Object.keys(obj).map(function(k) {
+          var v = obj[k];
+          if (typeof v === 'number') v = Math.round(v * 10000) / 10000;
+          return k + ': ' + v;
+        }).join(' | ');
+      } catch (e) {
+        // JSONでなければそのまま（120文字に切り詰め）
+        return detail.slice(0, 120);
+      }
+    }
 
     // 統計グリッド
     var grid = el('log-stats-grid');
@@ -1102,8 +1233,8 @@ export const JS = `
       grid.innerHTML =
         statCell('総実行回数', Number(stats.totalRuns || 0).toLocaleString('ja-JP'), '回') +
         statCell('AI呼出回数', Number(stats.geminiCalls || 0).toLocaleString('ja-JP'), '回') +
-        statCell('スキップ率', skipRate, '%') +
-        statCell('エラー数', stats.errorCount || 0, '件');
+        statCell('WARN', stats.warnCount || 0, '件') +
+        statCell('ERROR', stats.errorCount || 0, '件');
     }
 
     // ログリスト
@@ -1122,7 +1253,7 @@ export const JS = `
             '<span class="log-msg">' + escHtml(log.message) + '</span>' +
             '<span class="log-time">' + fmtTime(log.created_at) + '</span>' +
           '</div>' +
-          (log.detail ? '<div class="log-detail">' + escHtml(log.detail.slice(0, 120)) + '</div>' : '') +
+          (log.detail ? '<div class="log-detail">' + escHtml(fmtLogDetail(log.detail)) + '</div>' : '') +
         '</div>' +
       '</div>';
     }).join('');
@@ -1203,7 +1334,7 @@ export const JS = `
     if (d.reasoning) {
       rows += '<div style="margin-top:12px;padding-top:12px;border-top:1px solid var(--separator)">' +
         '<div style="font-size:12px;color:var(--label-secondary);margin-bottom:6px">AI判断理由</div>' +
-        '<div style="font-size:14px;line-height:1.6;color:var(--label-primary)">' + escHtml(d.reasoning) + '</div>' +
+        '<div style="font-size:14px;line-height:1.6;color:var(--label)">' + escHtml(d.reasoning) + '</div>' +
         '</div>';
     }
 
@@ -1239,7 +1370,7 @@ export const JS = `
         rows += '<div style="margin-top:12px;padding-top:12px;border-top:1px solid var(--separator)">' +
           '<div style="font-size:12px;color:var(--label-secondary);margin-bottom:6px">参照ニュース</div>' +
           newsItems.slice(0, 5).map(function(n) {
-            return '<div style="font-size:12px;line-height:1.5;color:var(--label-primary);padding:4px 0;border-bottom:1px solid var(--separator)">• ' + escHtml(n.title || '') + '</div>';
+            return '<div style="font-size:12px;line-height:1.5;color:var(--label);padding:4px 0;border-bottom:1px solid var(--separator)">• ' + escHtml(n.title || '') + '</div>';
           }).join('') +
           '</div>';
       }
@@ -1248,7 +1379,7 @@ export const JS = `
     if (d.reddit_signal) {
       rows += '<div style="margin-top:12px;padding-top:12px;border-top:1px solid var(--separator)">' +
         '<div style="font-size:12px;color:var(--label-secondary);margin-bottom:6px">Redditシグナル</div>' +
-        '<div style="font-size:13px;color:var(--label-primary)">' + escHtml(d.reddit_signal) + '</div>' +
+        '<div style="font-size:13px;color:var(--label)">' + escHtml(d.reddit_signal) + '</div>' +
         '</div>';
     }
 
@@ -1263,7 +1394,7 @@ export const JS = `
   function sheetRow(label, val) {
     return '<div style="display:flex;justify-content:space-between;align-items:baseline;padding:8px 0;border-bottom:1px solid var(--separator)">' +
       '<span style="font-size:14px;color:var(--label-secondary)">' + label + '</span>' +
-      '<span style="font-size:14px;color:var(--label-primary)">' + val + '</span>' +
+      '<span style="font-size:14px;color:var(--label)">' + val + '</span>' +
     '</div>';
   }
 

@@ -89,7 +89,7 @@ export function getDashboardHtml(): string {
 
       <!-- 銘柄ウォッチリスト -->
       <section class="card card-watchlist" aria-label="銘柄一覧">
-        <div class="section-title" style="margin-bottom:4px">ポジション</div>
+        <div class="section-title" style="margin-bottom:4px">保有中</div>
         <div id="watchlist" class="watchlist" role="list">
           <div class="watchlist-skeleton">
             <span class="skeleton-line" style="width:100%;height:64px;border-radius:8px"></span>
