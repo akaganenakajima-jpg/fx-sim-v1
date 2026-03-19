@@ -11,6 +11,10 @@ export interface MarketIndicators {
   btcusd: number | null;
   gold: number | null;
   eurusd: number | null;
+  ethusd: number | null;
+  crudeoil: number | null;
+  natgas: number | null;
+  copper: number | null;
 }
 
 interface YahooChartResult {
@@ -39,16 +43,20 @@ async function fetchYahoo(symbol: string): Promise<number | null> {
 }
 
 export async function getMarketIndicators(): Promise<MarketIndicators> {
-  const [vix, nikkei, sp500, us10y, usdjpy, btcusd, gold, eurusd] = await Promise.all([
+  const [vix, nikkei, sp500, us10y, usdjpy, btcusd, gold, eurusd, ethusd, crudeoil, natgas, copper] = await Promise.all([
     fetchYahoo('^VIX'),
     fetchYahoo('^N225'),
     fetchYahoo('^GSPC'),
     fetchYahoo('^TNX'),
     fetchYahoo('USDJPY=X'),
     fetchYahoo('BTC-USD'),
-    fetchYahoo('GC=F'),       // Gold先物
+    fetchYahoo('GC=F'),
     fetchYahoo('EURUSD=X'),
+    fetchYahoo('ETH-USD'),
+    fetchYahoo('CL=F'),       // 原油先物
+    fetchYahoo('NG=F'),       // 天然ガス先物
+    fetchYahoo('HG=F'),       // 銅先物
   ]);
 
-  return { vix, us10y, nikkei, sp500, usdjpy, btcusd, gold, eurusd };
+  return { vix, us10y, nikkei, sp500, usdjpy, btcusd, gold, eurusd, ethusd, crudeoil, natgas, copper };
 }

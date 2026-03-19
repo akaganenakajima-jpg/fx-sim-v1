@@ -104,13 +104,27 @@ export async function openPosition(
     return;
   }
 
+  // ポジションサイジング: 銘柄別勝率に応じてlot調整
+  const perfRow = await db
+    .prepare(`SELECT COUNT(*) as total, COALESCE(SUM(CASE WHEN pnl > 0 THEN 1 ELSE 0 END), 0) as wins FROM positions WHERE pair = ? AND status = 'CLOSED'`)
+    .bind(pair)
+    .first<{ total: number; wins: number }>();
+  let lot = 1.0;
+  if (perfRow && perfRow.total >= 3) {
+    const winRate = perfRow.wins / perfRow.total;
+    if (winRate >= 0.7) lot = 2.0;       // 勝率70%以上: 2倍
+    else if (winRate >= 0.5) lot = 1.5;   // 勝率50%以上: 1.5倍
+    else if (winRate < 0.3) lot = 0.5;    // 勝率30%未満: 半分
+    console.log(`[position] Sizing: ${pair} winRate=${(winRate*100).toFixed(0)}% → lot=${lot}`);
+  }
+
   await db
     .prepare(
       `INSERT INTO positions
          (pair, direction, entry_rate, tp_rate, sl_rate, lot, status, entry_at)
-       VALUES (?, ?, ?, ?, ?, 1.0, 'OPEN', ?)`
+       VALUES (?, ?, ?, ?, ?, ?, 'OPEN', ?)`
     )
-    .bind(pair, direction, entryRate, tpRate, slRate, new Date().toISOString())
+    .bind(pair, direction, entryRate, tpRate, slRate, lot, new Date().toISOString())
     .run();
 
   console.log(`[position] Opened ${pair} ${direction} @ ${entryRate} TP=${tpRate} SL=${slRate}`);

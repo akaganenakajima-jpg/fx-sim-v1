@@ -19,7 +19,7 @@ export interface InstrumentConfig {
 export const INSTRUMENTS: InstrumentConfig[] = [
   {
     pair: 'USD/JPY',
-    rateChangeTh: 0.05,
+    rateChangeTh: 0.03,
     tpSlHint: '現在レートから±0.3〜1.0円',
     pnlUnit: '円',
     pnlMultiplier: 100,
@@ -28,7 +28,7 @@ export const INSTRUMENTS: InstrumentConfig[] = [
   },
   {
     pair: 'Nikkei225',
-    rateChangeTh: 50,
+    rateChangeTh: 30,
     tpSlHint: '現在値から±100〜500ポイント',
     pnlUnit: '円',
     pnlMultiplier: 1,
@@ -37,7 +37,7 @@ export const INSTRUMENTS: InstrumentConfig[] = [
   },
   {
     pair: 'S&P500',
-    rateChangeTh: 5,
+    rateChangeTh: 3,
     tpSlHint: '現在値から±10〜50ポイント',
     pnlUnit: '円',
     pnlMultiplier: 10,
@@ -46,7 +46,7 @@ export const INSTRUMENTS: InstrumentConfig[] = [
   },
   {
     pair: 'US10Y',
-    rateChangeTh: 0.05,
+    rateChangeTh: 0.03,
     tpSlHint: '現在利回りから±0.1〜0.3%',
     pnlUnit: '円',
     pnlMultiplier: 5000,
@@ -55,7 +55,7 @@ export const INSTRUMENTS: InstrumentConfig[] = [
   },
   {
     pair: 'BTC/USD',
-    rateChangeTh: 100,
+    rateChangeTh: 50,
     tpSlHint: '現在価格から±$300〜$1,500',
     pnlUnit: '円',
     pnlMultiplier: 1,
@@ -64,20 +64,56 @@ export const INSTRUMENTS: InstrumentConfig[] = [
   },
   {
     pair: 'Gold',
-    rateChangeTh: 5,
+    rateChangeTh: 3,
     tpSlHint: '現在価格から±$10〜$40',
     pnlUnit: '円',
     pnlMultiplier: 10,
-    trailingActivation: 15,
-    trailingDistance: 8,
+    trailingActivation: 10,    // 15→10: より早くトレイリング開始
+    trailingDistance: 5,        // 8→5: より狭く追従して利益確保
   },
   {
     pair: 'EUR/USD',
-    rateChangeTh: 0.003,
+    rateChangeTh: 0.002,
     tpSlHint: '現在レートから±0.005〜0.015',
     pnlUnit: '円',
     pnlMultiplier: 10000,
     trailingActivation: 0.004,
     trailingDistance: 0.002,
+  },
+  {
+    pair: 'ETH/USD',
+    rateChangeTh: 15,
+    tpSlHint: '現在価格から±$30〜$100',
+    pnlUnit: '円',
+    pnlMultiplier: 1,
+    trailingActivation: 30,
+    trailingDistance: 15,
+  },
+  {
+    pair: 'CrudeOil',
+    rateChangeTh: 0.3,
+    tpSlHint: '現在価格から±$0.5〜$2.0',
+    pnlUnit: '円',
+    pnlMultiplier: 100,        // $0.01変動 = ¥1
+    trailingActivation: 0.8,
+    trailingDistance: 0.4,
+  },
+  {
+    pair: 'NatGas',
+    rateChangeTh: 0.03,
+    tpSlHint: '現在価格から±$0.05〜$0.2',
+    pnlUnit: '円',
+    pnlMultiplier: 1000,       // $0.01変動 = ¥10
+    trailingActivation: 0.08,
+    trailingDistance: 0.04,
+  },
+  {
+    pair: 'Copper',
+    rateChangeTh: 0.02,
+    tpSlHint: '現在価格から±$0.03〜$0.1',
+    pnlUnit: '円',
+    pnlMultiplier: 1000,       // $0.01変動 = ¥10
+    trailingActivation: 0.05,
+    trailingDistance: 0.025,
   },
 ];

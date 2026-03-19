@@ -25,6 +25,16 @@ import { INSTRUMENTS } from './instruments';
 interface Env {
   DB: D1Database;
   GEMINI_API_KEY: string;
+  GEMINI_API_KEY_2?: string;
+}
+
+let _keyToggle = false;
+function getApiKey(env: Env): string {
+  _keyToggle = !_keyToggle;
+  if (env.GEMINI_API_KEY_2 && _keyToggle) {
+    return env.GEMINI_API_KEY_2;
+  }
+  return env.GEMINI_API_KEY;
 }
 
 const PREV_NEWS_HASH_KEY = 'prev_news_hash';
@@ -114,7 +124,7 @@ async function run(env: Env): Promise<void> {
 
     const news = newsResult.status === 'fulfilled' ? newsResult.value : [];
     const redditSignal = redditResult.status === 'fulfilled' ? redditResult.value : { hasSignal: false, keywords: [], topPosts: [] };
-    const indicators = indicatorsResult.status === 'fulfilled' ? indicatorsResult.value : { vix: null, us10y: null, nikkei: null, sp500: null, usdjpy: null, btcusd: null, gold: null, eurusd: null };
+    const indicators = indicatorsResult.status === 'fulfilled' ? indicatorsResult.value : { vix: null, us10y: null, nikkei: null, sp500: null, usdjpy: null, btcusd: null, gold: null, eurusd: null, ethusd: null, crudeoil: null, natgas: null, copper: null };
     const frankfurterRate = frankfurterResult.status === 'fulfilled' ? frankfurterResult.value : null;
 
     // USD/JPY: Yahoo Finance優先、フォールバックでfrankfurter
@@ -134,6 +144,10 @@ async function run(env: Env): Promise<void> {
       ['BTC/USD',   indicators.btcusd],
       ['Gold',      indicators.gold],
       ['EUR/USD',   indicators.eurusd],
+      ['ETH/USD',   indicators.ethusd],
+      ['CrudeOil',  indicators.crudeoil],
+      ['NatGas',    indicators.natgas],
+      ['Copper',    indicators.copper],
     ]);
 
     // 2. 全銘柄のTP/SLを一括チェック
@@ -153,7 +167,7 @@ async function run(env: Env): Promise<void> {
     let newsAnalysisRan = false;
     if ((hasNewNews || forceAnalysis) && news.length > 0) {
       try {
-        const analysis = await analyzeNews({ news, apiKey: env.GEMINI_API_KEY });
+        const analysis = await analyzeNews({ news, apiKey: getApiKey(env) });
         await setCacheValue(env.DB, 'news_analysis', JSON.stringify(analysis));
         newsAnalysisRan = true;
         console.log(`[fx-sim] News analysis: ${analysis.filter(a => a.attention).length}/${analysis.length} flagged`);
@@ -188,9 +202,15 @@ async function run(env: Env): Promise<void> {
     }
 
     // 4. 銘柄ごとにフィルタ → Gemini 判定 → 記録
-    // 有料API: 1回のcron実行でGemini呼出は最大3銘柄（ニュース分析が走った回は2）
-    let geminiCallsThisRun = newsAnalysisRan ? 1 : 0;
-    const MAX_GEMINI_PER_RUN = hasAttentionNews ? 7 : 3; // 🔥時は全銘柄判定
+    // 429クールダウンチェック
+    const cooldownKey = 'gemini_cooldown_until';
+    const cooldownRaw = await getCacheValue(env.DB, cooldownKey);
+    const cooldownUntil = cooldownRaw ? parseInt(cooldownRaw) : 0;
+    const isInCooldown = Date.now() < cooldownUntil;
+    if (isInCooldown) console.log(`[fx-sim] Gemini cooldown until ${new Date(cooldownUntil).toISOString()}`);
+
+    let geminiCallsThisRun = (newsAnalysisRan || isInCooldown) ? 99 : 0; // クールダウン中は全スキップ
+    const MAX_GEMINI_PER_RUN = hasAttentionNews ? 5 : 3;
     for (const instrument of INSTRUMENTS) {
       const currentRate = prices.get(instrument.pair);
       if (currentRate == null) {
@@ -280,15 +300,15 @@ async function run(env: Env): Promise<void> {
           hasOpenPosition,
           recentTrades,
           allPositionDirections,
-          apiKey: env.GEMINI_API_KEY,
+          apiKey: getApiKey(env),
         });
       } catch (e) {
         console.error(`[fx-sim] Gemini error (${instrument.pair}):`, e);
         await insertSystemLog(env.DB, 'ERROR', 'GEMINI', `Gemini API エラー (${instrument.pair})`, String(e).slice(0, 200));
         // 429の場合は2分間クールダウン
         if (String(e).includes('429')) {
-          await setCacheValue(env.DB, 'gemini_cooldown_until', String(Date.now() + 2 * 60 * 1000));
-          console.log('[fx-sim] Gemini 429 detected, cooling down for 2 minutes');
+          await setCacheValue(env.DB, 'gemini_cooldown_until', String(Date.now() + 1 * 60 * 1000));
+          console.log('[fx-sim] Gemini 429 detected, cooling down for 1 minute (key rotation active)');
         }
         await insertDecision(env.DB, {
           pair: instrument.pair,

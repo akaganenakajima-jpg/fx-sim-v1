@@ -21,6 +21,10 @@ export const JS = `
     { pair: 'BTC/USD',   label: 'BTC',      unit: '円', multiplier: 1 },
     { pair: 'Gold',      label: 'Gold',     unit: '円', multiplier: 10 },
     { pair: 'EUR/USD',   label: 'EUR / USD', unit: '円', multiplier: 10000 },
+    { pair: 'ETH/USD',   label: 'ETH',      unit: '円', multiplier: 1 },
+    { pair: 'CrudeOil',  label: '原油',     unit: '円', multiplier: 100 },
+    { pair: 'NatGas',    label: '天然ガス',  unit: '円', multiplier: 1000 },
+    { pair: 'Copper',    label: '銅',       unit: '円', multiplier: 1000 },
   ];
 
   var INITIAL_CAPITAL = 10000; // 元手¥10,000
@@ -55,8 +59,9 @@ export const JS = `
     if (rate == null) return '—';
     if (pair === 'USD/JPY' || pair === 'EUR/USD') return Number(rate).toFixed(3);
     if (pair === 'US10Y')   return Number(rate).toFixed(2) + '%';
-    if (pair === 'BTC/USD') return '$' + Number(rate).toLocaleString('en-US', { maximumFractionDigits: 0 });
+    if (pair === 'BTC/USD' || pair === 'ETH/USD') return '$' + Number(rate).toLocaleString('en-US', { maximumFractionDigits: 0 });
     if (pair === 'Gold')    return '$' + Number(rate).toLocaleString('en-US', { maximumFractionDigits: 1 });
+    if (pair === 'CrudeOil' || pair === 'NatGas' || pair === 'Copper') return '$' + Number(rate).toFixed(2);
     return Number(rate).toLocaleString('ja-JP', { maximumFractionDigits: 0 });
   }
 
