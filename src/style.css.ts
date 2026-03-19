@@ -71,7 +71,8 @@ body {
   min-height: 100dvh;
   -webkit-overflow-scrolling: touch;
 }
-body.drawer-open {
+body.drawer-open,
+body.sheet-open {
   overflow: hidden !important;
   touch-action: none;
 }
@@ -849,7 +850,7 @@ body, #app {
   white-space: nowrap;
 }
 .compact-summary.marquee-active .ticker-scroll {
-  animation: ticker-marquee 14s linear infinite;
+  animation: ticker-marquee 22s linear infinite;
 }
 @keyframes ticker-marquee {
   0%   { transform: translateX(0); }

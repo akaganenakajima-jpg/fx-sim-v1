@@ -175,7 +175,7 @@ export const JS = `
   }
 
   function lockScroll() {
-    // ドロワー展開中はdrawer-openクラスが既にロックしているのでスキップ
+    document.body.classList.add('sheet-open');
     if (document.body.classList.contains('drawer-open')) return;
     document.body.style.overflow = 'hidden';
     document.body.style.position = 'fixed';
@@ -206,6 +206,32 @@ export const JS = `
       body.innerHTML =
         row('ステータス', '<span style="color:var(--label-secondary);font-weight:600">HOLD（ポジションなし）</span>') +
         (currentRate != null ? row('現在値', fmtPrice(pair, currentRate)) : '');
+
+      // ノーポジでも過去取引履歴+AI判断を表示
+      var pairCloses = (lastData && lastData.recentCloses || []).filter(function(c) { return c.pair === pair; });
+      if (pairCloses.length > 0) {
+        var histUnit = instr ? instr.unit : '';
+        body.innerHTML += '<div style="margin-top:16px;padding-top:12px;border-top:1px solid var(--separator)">' +
+          '<div style="font-size:12px;color:var(--label-secondary);margin-bottom:8px;font-weight:600">過去の取引</div>' +
+          pairCloses.slice(0, 5).map(function(c) {
+            var pnl = c.pnl != null ? c.pnl : 0;
+            var pnlColor = pnl > 0 ? 'var(--green)' : pnl < 0 ? 'var(--red)' : 'var(--label-secondary)';
+            var icon = c.close_reason === 'TP' ? '🎯' : c.close_reason === 'SL' ? '🔴' : '—';
+            var dir = c.direction === 'BUY' ? '買い' : '空売り';
+            return '<div style="display:flex;justify-content:space-between;align-items:center;padding:7px 0;border-bottom:1px solid var(--separator)">' +
+              '<div><span style="font-size:11px;color:var(--label-secondary)">' + fmtTime(c.closed_at) + '</span> <span style="font-size:12px">' + icon + ' ' + dir + '</span></div>' +
+              '<span style="font-size:14px;font-weight:700;color:' + pnlColor + '">' + fmtPnl(pnl, histUnit).text + '</span></div>';
+          }).join('') + '</div>';
+      }
+      var pairDecisions = (lastData && lastData.recentDecisions || []).filter(function(d) { return d.pair === pair; });
+      if (pairDecisions.length > 0) {
+        var dec = pairDecisions[0];
+        body.innerHTML += '<div style="margin-top:12px;padding-top:12px;border-top:1px solid var(--separator)">' +
+          '<div style="font-size:12px;color:var(--label-secondary);margin-bottom:6px;font-weight:600">直近のAI判断</div>' +
+          '<div style="font-size:13px;line-height:1.5;color:var(--label-primary)">' + escHtml(dec.reasoning || '') + '</div>' +
+          '<div style="font-size:11px;color:var(--label-secondary);margin-top:4px">' + fmtTime(dec.created_at) + '</div></div>';
+      }
+
       lockScroll();
       sheet.classList.add('open');
       backdrop.classList.add('visible');
@@ -380,7 +406,7 @@ export const JS = `
     sheet.style.transform = '';
     sheet.classList.remove('open');
     el('sheet-backdrop').classList.remove('visible');
-    // ドロワー展開中はbodyスタイルを触らない（drawer-openが管理）
+    document.body.classList.remove('sheet-open');
     if (!document.body.classList.contains('drawer-open')) {
       document.body.style.overflow = '';
       document.body.style.position = '';
@@ -785,12 +811,16 @@ export const JS = `
       chart.innerHTML = '<div style="text-align:center;color:var(--label-secondary);font-size:12px;padding:40px 0">取引データ蓄積中...</div>';
       return;
     }
-    // 資産推移を計算
-    var equity = [INITIAL_CAPITAL];
+    // 資産推移を計算（recentClosesが全件でない場合はtotalPnlから逆算）
+    var totalPnl = data.performance.totalPnl || 0;
+    var closePnlSum = 0;
+    closes.forEach(function(c) { closePnlSum += (c.pnl || 0); });
+    var missingPnl = totalPnl - closePnlSum;
+    var equity = [INITIAL_CAPITAL + missingPnl]; // 不足分をスタートに反映
     var cumPnl = 0;
     closes.forEach(function(c) {
       cumPnl += (c.pnl || 0);
-      equity.push(INITIAL_CAPITAL + cumPnl);
+      equity.push(INITIAL_CAPITAL + missingPnl + cumPnl);
     });
     var w = chart.offsetWidth || 300;
     var h = 120;
@@ -967,6 +997,12 @@ export const JS = `
     dpEl.textContent = (totalPnl >= 0 ? '+' : '') + fmtYen(totalPnl);
     dpEl.className   = 'hero-sub-value ' + (totalPnl > 0 ? 'positive' : totalPnl < 0 ? 'negative' : 'neutral');
 
+    var roiEl = el('roi-value');
+    var roi = totalPnl / INITIAL_CAPITAL * 100;
+    if (roiEl) {
+      roiEl.textContent = (roi >= 0 ? '+' : '') + roi.toFixed(1) + '%';
+      roiEl.className = 'hero-sub-value ' + (roi > 0 ? 'positive' : roi < 0 ? 'negative' : 'neutral');
+    }
     el('win-rate').textContent     = perf.winRate.toFixed(1) + '%';
     el('total-trades').textContent = perf.totalClosed + ' 件';
 

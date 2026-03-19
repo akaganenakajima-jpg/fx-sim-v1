@@ -11,7 +11,7 @@ export function getDashboardHtml(): string {
   <meta name="theme-color" content="#000000" media="(prefers-color-scheme: dark)">
   <meta name="theme-color" content="#F2F2F7" media="(prefers-color-scheme: light)">
   <title>FX Sim</title>
-  <link rel="stylesheet" href="/style.css?v=7">
+  <link rel="stylesheet" href="/style.css?v=8">
 </head>
 <body>
   <div id="app">
@@ -59,6 +59,11 @@ export function getDashboardHtml(): string {
           <span class="hero-sub-item">
             <span class="hero-sub-label">損益</span>
             <span id="today-pnl" class="hero-sub-value neutral">—</span>
+          </span>
+          <span class="hero-divider"></span>
+          <span class="hero-sub-item">
+            <span class="hero-sub-label">ROI</span>
+            <span id="roi-value" class="hero-sub-value">—</span>
           </span>
           <span class="hero-divider"></span>
           <span class="hero-sub-item">
@@ -208,7 +213,7 @@ export function getDashboardHtml(): string {
     </div>
 
   </div>
-  <script src="/app.js?v=7"></script>
+  <script src="/app.js?v=8"></script>
 </body>
 </html>`;
 }
