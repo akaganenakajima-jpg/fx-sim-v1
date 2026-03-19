@@ -21,7 +21,7 @@ export const CSS = `
 }
 
 @media (prefers-color-scheme: light) {
-  :root {
+  :root:not([data-theme="dark"]) {
     --bg:               #F2F2F7;
     --bg-elevated:      #FFFFFF;
     --bg-secondary:     #E5E5EA;
@@ -35,6 +35,20 @@ export const CSS = `
     --blue:             #007AFF;
     --purple:           #AF52DE;
   }
+}
+:root[data-theme="light"] {
+  --bg:               #F2F2F7;
+  --bg-elevated:      #FFFFFF;
+  --bg-secondary:     #E5E5EA;
+  --bg-tertiary:      #D1D1D6;
+  --separator:        #C6C6C8;
+  --label:            #000000;
+  --label-secondary:  #8A8A8E;
+  --green:            #34C759;
+  --red:              #FF3B30;
+  --orange:           #FF9500;
+  --blue:             #007AFF;
+  --purple:           #AF52DE;
 }
 
 /* ─── Reset ─── */
@@ -659,7 +673,8 @@ body, #app {
   max-height: calc(100dvh - 49px - env(safe-area-inset-bottom) - env(safe-area-inset-top) - 120px);
   overflow: hidden;
   z-index: 15;
-  background: rgba(28, 28, 30, 0.96);
+  background: var(--bg-elevated);
+  border-top: 1px solid var(--separator);
   -webkit-backdrop-filter: blur(24px) saturate(1.8);
   backdrop-filter: blur(24px) saturate(1.8);
   border-radius: 14px 14px 0 0;

@@ -128,7 +128,7 @@ export async function getApiStatus(db: D1Database): Promise<StatusResponse> {
       db
         .prepare(
           `SELECT pair, rate, created_at FROM decisions
-           WHERE pair IN ('USD/JPY','Nikkei225','S&P500','US10Y','BTC/USD','Gold','EUR/USD','ETH/USD','CrudeOil','NatGas','Copper')
+           WHERE pair IN ('USD/JPY','Nikkei225','S&P500','US10Y','BTC/USD','Gold','EUR/USD','ETH/USD','CrudeOil','NatGas','Copper','Silver','GBP/USD','AUD/USD','SOL/USD','DAX','NASDAQ')
            ORDER BY id DESC LIMIT 80`
         )
         .all<{ pair: string; rate: number; created_at: string }>(),

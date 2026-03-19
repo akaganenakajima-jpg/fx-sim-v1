@@ -128,7 +128,7 @@ async function run(env: Env): Promise<void> {
 
     const news = newsResult.status === 'fulfilled' ? newsResult.value : [];
     const redditSignal = redditResult.status === 'fulfilled' ? redditResult.value : { hasSignal: false, keywords: [], topPosts: [] };
-    const indicators = indicatorsResult.status === 'fulfilled' ? indicatorsResult.value : { vix: null, us10y: null, nikkei: null, sp500: null, usdjpy: null, btcusd: null, gold: null, eurusd: null, ethusd: null, crudeoil: null, natgas: null, copper: null };
+    const indicators = indicatorsResult.status === 'fulfilled' ? indicatorsResult.value : { vix: null, us10y: null, nikkei: null, sp500: null, usdjpy: null, btcusd: null, gold: null, eurusd: null, ethusd: null, crudeoil: null, natgas: null, copper: null, silver: null, gbpusd: null, audusd: null, solusd: null, dax: null, nasdaq: null };
     const frankfurterRate = frankfurterResult.status === 'fulfilled' ? frankfurterResult.value : null;
 
     // USD/JPY: Yahoo Finance優先、フォールバックでfrankfurter
@@ -152,6 +152,12 @@ async function run(env: Env): Promise<void> {
       ['CrudeOil',  indicators.crudeoil],
       ['NatGas',    indicators.natgas],
       ['Copper',    indicators.copper],
+      ['Silver',    indicators.silver],
+      ['GBP/USD',   indicators.gbpusd],
+      ['AUD/USD',   indicators.audusd],
+      ['SOL/USD',   indicators.solusd],
+      ['DAX',       indicators.dax],
+      ['NASDAQ',    indicators.nasdaq],
     ]);
 
     // 2. 全銘柄のTP/SLを一括チェック

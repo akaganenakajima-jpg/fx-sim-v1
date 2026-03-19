@@ -15,6 +15,12 @@ export interface MarketIndicators {
   crudeoil: number | null;
   natgas: number | null;
   copper: number | null;
+  silver: number | null;
+  gbpusd: number | null;
+  audusd: number | null;
+  solusd: number | null;
+  dax: number | null;
+  nasdaq: number | null;
 }
 
 interface YahooChartResult {
@@ -56,7 +62,13 @@ export async function getMarketIndicators(): Promise<MarketIndicators> {
     fetchYahoo('CL=F'),       // 原油先物
     fetchYahoo('NG=F'),       // 天然ガス先物
     fetchYahoo('HG=F'),       // 銅先物
+    fetchYahoo('SI=F'),       // Silver先物
+    fetchYahoo('GBPUSD=X'),
+    fetchYahoo('AUDUSD=X'),
+    fetchYahoo('SOL-USD'),
+    fetchYahoo('^GDAXI'),     // DAX
+    fetchYahoo('^IXIC'),      // NASDAQ
   ]);
 
-  return { vix, us10y, nikkei, sp500, usdjpy, btcusd, gold, eurusd, ethusd, crudeoil, natgas, copper };
+  return { vix, us10y, nikkei, sp500, usdjpy, btcusd, gold, eurusd, ethusd, crudeoil, natgas, copper, silver, gbpusd, audusd, solusd, dax, nasdaq };
 }

@@ -11,7 +11,7 @@ export function getDashboardHtml(): string {
   <meta name="theme-color" content="#000000" media="(prefers-color-scheme: dark)">
   <meta name="theme-color" content="#F2F2F7" media="(prefers-color-scheme: light)">
   <title>FX Sim</title>
-  <link rel="stylesheet" href="/style.css?v=6">
+  <link rel="stylesheet" href="/style.css?v=7">
 </head>
 <body>
   <div id="app">
@@ -21,6 +21,7 @@ export function getDashboardHtml(): string {
       <h1 class="header-title">FX Sim</h1>
       <div class="header-right">
         <span id="last-updated" class="header-time" aria-live="polite">—</span>
+        <button id="theme-btn" class="refresh-btn" aria-label="テーマ切替" title="テーマ切替" style="font-size:16px">☀️</button>
         <button id="refresh-btn" class="refresh-btn" aria-label="今すぐ更新" title="更新">
           <svg width="18" height="18" viewBox="0 0 18 18" fill="none" aria-hidden="true">
             <path d="M9 2.5A6.5 6.5 0 1 1 3.5 8" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
@@ -207,7 +208,7 @@ export function getDashboardHtml(): string {
     </div>
 
   </div>
-  <script src="/app.js?v=6"></script>
+  <script src="/app.js?v=7"></script>
 </body>
 </html>`;
 }

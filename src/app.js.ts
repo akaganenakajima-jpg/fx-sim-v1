@@ -28,6 +28,15 @@ export const JS = `
     { pair: 'CrudeOil',  label: '原油',     unit: '円', multiplier: 100 },
     { pair: 'NatGas',    label: '天然ガス',  unit: '円', multiplier: 1000 },
     { pair: 'Copper',    label: '銅',       unit: '円', multiplier: 1000 },
+    { pair: 'Silver',    label: 'Silver',   unit: '円', multiplier: 100 },
+    // 為替（追加）
+    { pair: 'GBP/USD',   label: 'GBP / USD', unit: '円', multiplier: 10000 },
+    { pair: 'AUD/USD',   label: 'AUD / USD', unit: '円', multiplier: 10000 },
+    // 暗号資産（追加）
+    { pair: 'SOL/USD',   label: 'SOL',      unit: '円', multiplier: 10 },
+    // 株式指数（追加）
+    { pair: 'DAX',       label: 'DAX',      unit: '円', multiplier: 1 },
+    { pair: 'NASDAQ',    label: 'NASDAQ',   unit: '円', multiplier: 1 },
     // 債券
     { pair: 'US10Y',     label: '米10年債',  unit: '円', multiplier: 5000 },
   ];
@@ -62,9 +71,10 @@ export const JS = `
 
   function fmtPrice(pair, rate) {
     if (rate == null) return '—';
-    if (pair === 'USD/JPY' || pair === 'EUR/USD') return Number(rate).toFixed(3);
+    if (pair === 'USD/JPY' || pair === 'EUR/USD' || pair === 'GBP/USD' || pair === 'AUD/USD') return Number(rate).toFixed(3);
     if (pair === 'US10Y')   return Number(rate).toFixed(2) + '%';
     if (pair === 'BTC/USD' || pair === 'ETH/USD') return '$' + Number(rate).toLocaleString('en-US', { maximumFractionDigits: 0 });
+    if (pair === 'SOL/USD' || pair === 'Silver') return '$' + Number(rate).toFixed(2);
     if (pair === 'Gold')    return '$' + Number(rate).toLocaleString('en-US', { maximumFractionDigits: 1 });
     if (pair === 'CrudeOil' || pair === 'NatGas' || pair === 'Copper') return '$' + Number(rate).toFixed(2);
     return Number(rate).toLocaleString('ja-JP', { maximumFractionDigits: 0 });
@@ -661,6 +671,15 @@ export const JS = `
     if (isTP && navigator.vibrate) navigator.vibrate([80, 40, 80]);
     if (isSL && navigator.vibrate) navigator.vibrate([200]);
 
+    // プッシュ通知
+    if ('Notification' in window && Notification.permission === 'granted') {
+      var icon = isTP ? '🎯' : isSL ? '🔴' : '✅';
+      new Notification('FX Sim ' + (isTP ? '利確' : isSL ? '損切り' : '決済'), {
+        body: icon + ' ' + (pos.pair || '') + ' ' + pnlFmt.text,
+        tag: 'fxsim-trade-' + pos.id,
+      });
+    }
+
     setTimeout(function() { banner.classList.remove('show'); }, 4000);
     banner.addEventListener('click', function() { banner.classList.remove('show'); }, { once: true });
   }
@@ -1245,6 +1264,28 @@ export const JS = `
       historyExpanded = !historyExpanded;
       if (lastData) renderHistory(lastData.recentDecisions);
     });
+  }
+
+  // テーマ切替
+  var themeBtn = el('theme-btn');
+  if (themeBtn) {
+    var savedTheme = localStorage.getItem('fx-theme');
+    if (savedTheme) {
+      document.documentElement.setAttribute('data-theme', savedTheme);
+      themeBtn.textContent = savedTheme === 'light' ? '🌙' : '☀️';
+    }
+    themeBtn.addEventListener('click', function() {
+      var current = document.documentElement.getAttribute('data-theme');
+      var next = current === 'light' ? 'dark' : 'light';
+      document.documentElement.setAttribute('data-theme', next);
+      localStorage.setItem('fx-theme', next);
+      themeBtn.textContent = next === 'light' ? '🌙' : '☀️';
+    });
+  }
+
+  // 通知許可リクエスト
+  if ('Notification' in window && Notification.permission === 'default') {
+    Notification.requestPermission();
   }
 
   refresh();
