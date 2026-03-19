@@ -6,7 +6,7 @@ import { getUSDJPY } from './rate';
 import { fetchNews } from './news';
 import { fetchRedditSignal } from './reddit';
 import { getMarketIndicators } from './indicators';
-import { getDecision, analyzeNews } from './gemini';
+import { getDecision, getDecisionGPT, analyzeNews } from './gemini';
 import { checkAndCloseAllPositions, openPosition } from './position';
 import { shouldCallGemini } from './filter';
 import {
@@ -26,6 +26,7 @@ interface Env {
   DB: D1Database;
   GEMINI_API_KEY: string;
   GEMINI_API_KEY_2?: string;
+  OPENAI_API_KEY?: string;
 }
 
 let _keyToggle = false;
@@ -210,7 +211,7 @@ async function run(env: Env): Promise<void> {
     if (isInCooldown) console.log(`[fx-sim] Gemini cooldown until ${new Date(cooldownUntil).toISOString()}`);
 
     let geminiCallsThisRun = (newsAnalysisRan || isInCooldown) ? 99 : 0; // クールダウン中は全スキップ
-    const MAX_GEMINI_PER_RUN = hasAttentionNews ? 5 : 3;
+    const MAX_GEMINI_PER_RUN = hasAttentionNews ? 3 : 1;
     for (const instrument of INSTRUMENTS) {
       const currentRate = prices.get(instrument.pair);
       if (currentRate == null) {
@@ -304,11 +305,23 @@ async function run(env: Env): Promise<void> {
         });
       } catch (e) {
         console.error(`[fx-sim] Gemini error (${instrument.pair}):`, e);
-        await insertSystemLog(env.DB, 'ERROR', 'GEMINI', `Gemini API エラー (${instrument.pair})`, String(e).slice(0, 200));
-        // 429の場合は2分間クールダウン
-        if (String(e).includes('429')) {
-          await setCacheValue(env.DB, 'gemini_cooldown_until', String(Date.now() + 1 * 60 * 1000));
-          console.log('[fx-sim] Gemini 429 detected, cooling down for 1 minute (key rotation active)');
+        // 429 → GPT-4o-mini フォールバック
+        if (String(e).includes('429') && env.OPENAI_API_KEY) {
+          try {
+            console.log(`[fx-sim] Falling back to GPT-4o-mini for ${instrument.pair}`);
+            geminiResult = await getDecisionGPT({
+              instrument, rate: currentRate, indicators, news, redditSignal,
+              hasOpenPosition, recentTrades, allPositionDirections,
+              apiKey: env.OPENAI_API_KEY,
+            });
+            await insertSystemLog(env.DB, 'INFO', 'GPT', `GPTフォールバック成功 (${instrument.pair}) → ${geminiResult.decision}`, null);
+          } catch (gptErr) {
+            console.error(`[fx-sim] GPT fallback also failed:`, gptErr);
+            await insertSystemLog(env.DB, 'ERROR', 'GPT', `GPTフォールバック失敗 (${instrument.pair})`, String(gptErr).slice(0, 200));
+          }
+        }
+        if (!geminiResult) {
+          await insertSystemLog(env.DB, 'ERROR', 'GEMINI', `Gemini API エラー (${instrument.pair})`, String(e).slice(0, 200));
         }
         await insertDecision(env.DB, {
           pair: instrument.pair,

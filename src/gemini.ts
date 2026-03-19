@@ -141,6 +141,56 @@ export async function getDecision(params: {
   };
 }
 
+// ── GPT-4o フォールバック ──
+export async function getDecisionGPT(params: {
+  instrument: InstrumentConfig;
+  rate: number;
+  indicators: MarketIndicators;
+  news: NewsItem[];
+  redditSignal: RedditSignal;
+  hasOpenPosition: boolean;
+  recentTrades?: Array<{ pair: string; direction: string; pnl: number; close_reason: string }>;
+  allPositionDirections?: string[];
+  apiKey: string;
+}): Promise<GeminiDecision> {
+  const { apiKey, instrument, ...rest } = params;
+  const userMessage = buildUserMessage({ instrument, ...rest });
+  const systemPrompt = buildSystemInstruction(instrument);
+
+  const res = await fetch('https://api.openai.com/v1/chat/completions', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${apiKey}`,
+    },
+    body: JSON.stringify({
+      model: 'gpt-4o-mini',
+      messages: [
+        { role: 'system', content: systemPrompt },
+        { role: 'user', content: userMessage },
+      ],
+      response_format: { type: 'json_object' },
+      temperature: 0.3,
+    }),
+  });
+
+  if (!res.ok) {
+    const body = await res.text();
+    throw new Error(`OpenAI API error ${res.status}: ${body}`);
+  }
+
+  const data = await res.json<{ choices: Array<{ message: { content: string } }> }>();
+  const text = data.choices[0].message.content;
+  const parsed = JSON.parse(text) as GeminiDecision;
+
+  return {
+    decision: (['BUY', 'SELL', 'HOLD'] as const).includes(parsed.decision as 'BUY' | 'SELL' | 'HOLD') ? parsed.decision : 'HOLD',
+    tp_rate: parsed.tp_rate ?? null,
+    sl_rate: parsed.sl_rate ?? null,
+    reasoning: parsed.reasoning ?? '',
+  };
+}
+
 // ── ニュース注目フラグ分析 ──
 
 export interface NewsAnalysisItem {
