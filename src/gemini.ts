@@ -33,19 +33,25 @@ function buildUserMessage(params: {
   news: NewsItem[];
   redditSignal: RedditSignal;
   hasOpenPosition: boolean;
+  recentTrades?: Array<{ pair: string; direction: string; pnl: number; close_reason: string }>;
+  allPositionDirections?: string[];
 }): string {
-  const { instrument, rate, indicators, news, redditSignal, hasOpenPosition } = params;
+  const { instrument, rate, indicators, news, redditSignal, hasOpenPosition, recentTrades, allPositionDirections } = params;
 
   const newsText = news
     .map((n, i) => `  ${i + 1}. ${n.title}`)
     .join('\n');
 
+  // VIX連動TP/SL幅: VIX高→幅広、VIX低→幅狭
+  const vix = indicators.vix ?? 20;
+  const vixMultiplier = vix > 30 ? 1.5 : vix > 25 ? 1.2 : vix > 20 ? 1.0 : 0.8;
+  const tpSlNote = `TP/SLは${instrument.tpSlHint}を基準に、現在VIX=${vix.toFixed(1)}のため幅を${vixMultiplier}倍に調整すること。`;
+
   return [
     `取引対象: ${instrument.pair}`,
-    `現在値: ${rate.toFixed(instrument.pair === 'USD/JPY' ? 3 : 2)}`,
+    `現在値: ${rate.toFixed(instrument.pair === 'USD/JPY' || instrument.pair === 'EUR/USD' ? 3 : 2)}`,
     ``,
-    `【市場コンテキスト（USD/JPY相関指標）】`,
-    `USD/JPY: ${instrument.pair === 'USD/JPY' ? rate.toFixed(3) : '参照値として使用'}`,
+    `【市場コンテキスト】`,
     `米10年債利回り: ${indicators.us10y != null ? indicators.us10y.toFixed(2) + '%' : 'N/A'}`,
     `VIX: ${indicators.vix != null ? indicators.vix.toFixed(2) : 'N/A'}`,
     `日経平均: ${indicators.nikkei != null ? indicators.nikkei.toFixed(0) : 'N/A'}`,
@@ -54,6 +60,27 @@ function buildUserMessage(params: {
     `直近ニュース（箇条書き5件）:`,
     newsText || '  (取得なし)',
     `オープンポジション: ${hasOpenPosition ? 'あり（原則HOLDを返すこと）' : 'なし'}`,
+    ``,
+    `【TP/SL設定指示】`,
+    tpSlNote,
+    ...(recentTrades && recentTrades.length > 0 ? [
+      ``,
+      `【直近の取引結果（この銘柄）】`,
+      ...recentTrades.slice(0, 5).map(t =>
+        `  ${t.direction} → ${t.close_reason} PnL=${t.pnl >= 0 ? '+' : ''}${t.pnl.toFixed(0)}円`
+      ),
+      `上記パターンを参考に、同じ失敗を繰り返さないこと。`,
+    ] : []),
+    ...(allPositionDirections && allPositionDirections.length > 0 ? [
+      ``,
+      `【現在の全ポジション方向】`,
+      `  ${allPositionDirections.join(', ')}`,
+      allPositionDirections.filter(d => d.includes('SELL')).length >= 5
+        ? '⚠️ 全ポジションがSELLに偏っています。BUYも検討すること。'
+        : allPositionDirections.filter(d => d.includes('BUY')).length >= 5
+        ? '⚠️ 全ポジションがBUYに偏っています。SELLも検討すること。'
+        : '',
+    ] : []),
   ].join('\n');
 }
 
@@ -70,6 +97,8 @@ export async function getDecision(params: {
   news: NewsItem[];
   redditSignal: RedditSignal;
   hasOpenPosition: boolean;
+  recentTrades?: Array<{ pair: string; direction: string; pnl: number; close_reason: string }>;
+  allPositionDirections?: string[];
   apiKey: string;
 }): Promise<GeminiDecision> {
   const { apiKey, instrument, ...rest } = params;
@@ -110,4 +139,51 @@ export async function getDecision(params: {
     sl_rate: parsed.sl_rate ?? null,
     reasoning: parsed.reasoning ?? '',
   };
+}
+
+// ── ニュース注目フラグ分析 ──
+
+export interface NewsAnalysisItem {
+  index: number;
+  attention: boolean;
+  impact: string | null;
+  title_ja: string | null; // 英語ニュースの日本語訳タイトル（日本語ニュースはnull）
+}
+
+export async function analyzeNews(params: {
+  news: NewsItem[];
+  apiKey: string;
+}): Promise<NewsAnalysisItem[]> {
+  const { news, apiKey } = params;
+  if (news.length === 0) return [];
+
+  const newsList = news.slice(0, 12).map((n, i) =>
+    `[${i}] ${n.title}${n.description ? ' — ' + n.description.slice(0, 100) : ''}`
+  ).join('\n');
+
+  const systemPrompt =
+    'あなたは金融マーケットアナリストです。以下のニュース一覧を分析し、' +
+    'マーケット（為替・株式・債券・暗号資産・コモディティ）に影響がありそうなニュースに注目フラグを付けてください。' +
+    '必ず以下のJSON配列のみで返答してください:\n' +
+    '[{"index":0,"attention":true,"impact":"円安要因。日銀政策への影響で...","title_ja":"日本語タイトル"},{"index":1,"attention":false,"impact":null,"title_ja":null},...]\n' +
+    'impactは注目ニュースのみ日本語50文字以内で市場への影響を説明。注目でなければnull。\n' +
+    'title_jaは英語タイトルの場合のみ日本語訳を返す。日本語タイトルはnull。';
+
+  const res = await fetch(`${GEMINI_ENDPOINT}?key=${apiKey}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      systemInstruction: { parts: [{ text: systemPrompt }] },
+      contents: [{ role: 'user', parts: [{ text: newsList }] }],
+      generationConfig: { responseMimeType: 'application/json' },
+    }),
+  });
+
+  if (!res.ok) {
+    throw new Error(`Gemini news analysis error ${res.status}`);
+  }
+
+  const data = await res.json<GeminiResponse>();
+  const text = data.candidates[0].content.parts[0].text;
+  return JSON.parse(text) as NewsAnalysisItem[];
 }

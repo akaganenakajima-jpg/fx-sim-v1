@@ -11,7 +11,7 @@ export function getDashboardHtml(): string {
   <meta name="theme-color" content="#000000" media="(prefers-color-scheme: dark)">
   <meta name="theme-color" content="#F2F2F7" media="(prefers-color-scheme: light)">
   <title>FX Sim</title>
-  <link rel="stylesheet" href="/style.css">
+  <link rel="stylesheet" href="/style.css?v=5">
 </head>
 <body>
   <div id="app">
@@ -50,13 +50,13 @@ export function getDashboardHtml(): string {
 
       <!-- PnL HERO -->
       <section class="card card-hero" aria-label="損益サマリー">
-        <div class="hero-label">累計損益</div>
+        <div class="hero-label">資産残高</div>
         <div id="hero-pnl" class="hero-pnl neutral" aria-live="polite">
           <span class="skeleton-line" style="width:140px;height:52px"></span>
         </div>
         <div class="hero-sub">
           <span class="hero-sub-item">
-            <span class="hero-sub-label">本日</span>
+            <span class="hero-sub-label">損益</span>
             <span id="today-pnl" class="hero-sub-value neutral">—</span>
           </span>
           <span class="hero-divider"></span>
@@ -73,6 +73,15 @@ export function getDashboardHtml(): string {
       </section>
 
       <!-- 銘柄ウォッチリスト -->
+      <!-- AI最新判断（インライン） -->
+      <div class="ai-inline" id="ai-card">
+        <span id="ai-badge" class="badge badge-hold ai-badge">—</span>
+        <span id="ai-reasoning" class="ai-inline-text">読み込み中…</span>
+        <span id="ai-time" class="ai-inline-time">—</span>
+        <div id="ai-status" class="ai-inline-status">—</div>
+      </div>
+
+      <!-- 銘柄ウォッチリスト -->
       <section class="card card-watchlist" aria-label="銘柄一覧">
         <div class="section-title" style="margin-bottom:4px">ポジション</div>
         <div id="watchlist" class="watchlist" role="list">
@@ -82,18 +91,6 @@ export function getDashboardHtml(): string {
             <span class="skeleton-line" style="width:100%;height:64px;border-radius:8px"></span>
             <span class="skeleton-line" style="width:100%;height:64px;border-radius:8px"></span>
           </div>
-        </div>
-      </section>
-
-      <!-- AI最新判断 -->
-      <section class="card card-ai" id="ai-card" aria-label="AI最新判断" aria-live="polite">
-        <div class="section-header">
-          <span class="section-title">AI 最新判断</span>
-          <span id="ai-time" class="ai-time">—</span>
-        </div>
-        <div class="ai-body">
-          <span id="ai-badge" class="badge badge-hold ai-badge">HOLD</span>
-          <div id="ai-reasoning" class="ai-reasoning secondary-text">読み込み中…</div>
         </div>
       </section>
 
@@ -204,7 +201,7 @@ export function getDashboardHtml(): string {
     </div>
 
   </div>
-  <script src="/app.js"></script>
+  <script src="/app.js?v=5"></script>
 </body>
 </html>`;
 }

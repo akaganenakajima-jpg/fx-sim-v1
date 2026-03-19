@@ -14,11 +14,16 @@ export const JS = `
 
   // 銘柄設定（表示用）
   var INSTRUMENTS = [
-    { pair: 'USD/JPY',   label: 'USD / JPY', unit: 'pip', multiplier: 100 },
-    { pair: 'Nikkei225', label: '日経225',   unit: 'pt',  multiplier: 0.1 },
-    { pair: 'S&P500',    label: 'S&P 500',  unit: 'pt',  multiplier: 0.1 },
-    { pair: 'US10Y',     label: '米10年債',  unit: 'bp',  multiplier: 100 },
+    { pair: 'USD/JPY',   label: 'USD / JPY', unit: '円', multiplier: 100 },
+    { pair: 'Nikkei225', label: '日経225',   unit: '円', multiplier: 1 },
+    { pair: 'S&P500',    label: 'S&P 500',  unit: '円', multiplier: 10 },
+    { pair: 'US10Y',     label: '米10年債',  unit: '円', multiplier: 5000 },
+    { pair: 'BTC/USD',   label: 'BTC',      unit: '円', multiplier: 1 },
+    { pair: 'Gold',      label: 'Gold',     unit: '円', multiplier: 10 },
+    { pair: 'EUR/USD',   label: 'EUR / USD', unit: '円', multiplier: 10000 },
   ];
+
+  var INITIAL_CAPITAL = 10000; // 元手¥10,000
 
   // ── ユーティリティ ──
   function fmt(n, dec) {
@@ -29,10 +34,15 @@ export const JS = `
   function fmtPnl(pnl, unit) {
     if (pnl == null || isNaN(pnl)) return { text: '—', cls: 'neu' };
     var sign = pnl >= 0 ? '+' : '';
-    return {
-      text: sign + Number(pnl).toFixed(1) + (unit ? ' ' + unit : ''),
-      cls:  pnl > 0 ? 'pos' : pnl < 0 ? 'neg' : 'neu',
-    };
+    var text = unit === '円'
+      ? sign + '¥' + Math.abs(Math.round(pnl)).toLocaleString('ja-JP')
+      : sign + Number(pnl).toFixed(1) + (unit ? ' ' + unit : '');
+    return { text: text, cls: pnl > 0 ? 'pos' : pnl < 0 ? 'neg' : 'neu' };
+  }
+
+  function fmtYen(amount) {
+    if (amount == null || isNaN(amount)) return '—';
+    return '¥' + Math.round(amount).toLocaleString('ja-JP');
   }
 
   function fmtTime(iso) {
@@ -43,8 +53,10 @@ export const JS = `
 
   function fmtPrice(pair, rate) {
     if (rate == null) return '—';
-    if (pair === 'USD/JPY') return Number(rate).toFixed(2);
+    if (pair === 'USD/JPY' || pair === 'EUR/USD') return Number(rate).toFixed(3);
     if (pair === 'US10Y')   return Number(rate).toFixed(2) + '%';
+    if (pair === 'BTC/USD') return '$' + Number(rate).toLocaleString('en-US', { maximumFractionDigits: 0 });
+    if (pair === 'Gold')    return '$' + Number(rate).toLocaleString('en-US', { maximumFractionDigits: 1 });
     return Number(rate).toLocaleString('ja-JP', { maximumFractionDigits: 0 });
   }
 
@@ -123,10 +135,9 @@ export const JS = `
     var fromVal = parseFloat(elem.dataset.pnlVal) || 0;
     var isFirstRender = !elem.dataset.pnlVal;
     elem.dataset.pnlVal = toVal;
-    // 値が変わらない場合でも初回は必ず描画（スケルトン除去）
     if (fromVal === toVal && !isFirstRender) return;
     if (fromVal === toVal) {
-      elem.textContent = (toVal >= 0 ? '+' : '') + toVal.toFixed(1);
+      elem.textContent = fmtYen(toVal);
       return;
     }
     var duration = 800;
@@ -134,12 +145,11 @@ export const JS = `
     function step(ts) {
       if (!start) start = ts;
       var progress = Math.min((ts - start) / duration, 1);
-      var ease = 1 - Math.pow(1 - progress, 3); // ease-out-cubic
+      var ease = 1 - Math.pow(1 - progress, 3);
       var current = fromVal + (toVal - fromVal) * ease;
-      var sign = current >= 0 ? '+' : '';
-      elem.textContent = sign + current.toFixed(1);
+      elem.textContent = fmtYen(current);
       if (progress < 1) requestAnimationFrame(step);
-      else elem.textContent = (toVal >= 0 ? '+' : '') + toVal.toFixed(1);
+      else elem.textContent = fmtYen(toVal);
     }
     requestAnimationFrame(step);
   }
@@ -279,19 +289,59 @@ export const JS = `
                 '<span style="margin-left:4px;font-size:11px">' + reasonIcon + ' ' + (p.close_reason || '—') + '</span>' +
               '</div>' +
               '<span style="font-size:14px;font-weight:700;color:' + pnlColor2 + '">' +
-                (pnl >= 0 ? '+' : '') + pnl.toFixed(1) + ' ' + unit +
+                fmtPnl(pnl, unit).text +
               '</span>' +
             '</div>';
           }).join('') +
         '</div>';
     }
 
+    // この銘柄の直近判断（reasoning + ニュース）
+    var decisionHtml = '';
+    var decisions = (lastData && lastData.recentDecisions || []).filter(function(d) {
+      return d.pair === pair;
+    });
+    if (decisions.length > 0) {
+      decisionHtml = '<div style="margin-top:16px;padding-top:12px;border-top:1px solid var(--separator)">' +
+        '<div style="font-size:12px;color:var(--label-secondary);margin-bottom:8px;font-weight:600">AI判断根拠</div>' +
+        decisions.slice(0, 3).map(function(dec) {
+          var badgeCls = dec.decision === 'BUY' ? 'badge-buy' : dec.decision === 'SELL' ? 'badge-sell' : 'badge-hold';
+          return '<div style="padding:8px 0;border-bottom:1px solid var(--separator)">' +
+            '<div style="display:flex;align-items:center;gap:6px;margin-bottom:4px">' +
+              '<span class="badge ' + badgeCls + '" style="font-size:10px;padding:2px 6px">' + dec.decision + '</span>' +
+              '<span style="font-size:11px;color:var(--label-secondary)">' + fmtTime(dec.created_at) + '</span>' +
+            '</div>' +
+            '<div style="font-size:13px;line-height:1.5;color:var(--label-primary)">' + escHtml(dec.reasoning || '') + '</div>' +
+          '</div>';
+        }).join('') +
+      '</div>';
+    }
+
+    // 取引規模の計算
+    var mul = instr ? instr.multiplier : 1;
+    var unitLabel = '';
+    if (instr) {
+      if (instr.pair === 'USD/JPY') unitLabel = '¥' + mul + ' / 1円';
+      else if (instr.pair === 'US10Y') unitLabel = '¥' + (mul / 100) + ' / 1bp';
+      else unitLabel = '¥' + mul + ' / 1pt';
+    }
+    var notional = 0;
+    if (currentRate != null && instr) {
+      if (instr.pair === 'USD/JPY') notional = mul * currentRate;
+      else if (instr.pair === 'US10Y') notional = mul * 1;
+      else notional = mul * currentRate;
+    }
+    var leverage = notional > 0 ? (notional / INITIAL_CAPITAL) : 0;
+
     body.innerHTML =
-      row('方向', '<span style="color:' + (pos.direction === 'BUY' ? 'var(--green)' : 'var(--red)') + ';font-weight:700">' + pos.direction + '</span>') +
+      row('方向', '<span style="color:' + (pos.direction === 'BUY' ? 'var(--green)' : 'var(--red)') + ';font-weight:700">' + (pos.direction === 'BUY' ? '買い' : '空売り') + '</span>') +
       progressHtml +
       (currentRate != null ? row('現在値', fmtPrice(pos.pair, currentRate)) : '') +
       row('含み損益', '<span style="color:' + pnlColor + ';font-weight:700">' + pnlFmt.text + '</span>') +
+      row('取引規模', unitLabel) +
+      (notional > 0 ? row('想定元本', fmtYen(notional) + ' <span style="font-size:11px;color:var(--label-secondary)">(' + leverage.toFixed(1) + '倍)</span>') : '') +
       row('エントリー日時', fmtTime(pos.entry_at)) +
+      decisionHtml +
       historyHtml;
 
     lockScroll();
@@ -366,6 +416,8 @@ export const JS = `
       drawer.style.transform = '';
       drawer.classList.add('expanded');
       document.body.classList.add('drawer-open');
+      // スクロール位置を先頭に戻してティッカーバーを見せる
+      if (content) content.scrollTop = 0;
       if (content) {
         content.style.transition = EASE_OUT;
         content.classList.add('drawer-expanded');
@@ -450,8 +502,9 @@ export const JS = `
 
     // ニュースデータを描画
     var newsData = [];
+    var newsAnalysisData = [];
     var body = el('news-drawer-body');
-    window._renderNews = function(news) {
+    window._renderNews = function(news, analysis) {
       var tab  = el('tab-portfolio');
       if (!news || news.length === 0) {
         drawer.classList.remove('visible');
@@ -459,15 +512,21 @@ export const JS = `
         return;
       }
       newsData = news;
+      newsAnalysisData = analysis || [];
       drawer.classList.add('visible');
       if (tab) tab.classList.add('news-visible');
+      // 分析データをindexでマップ化
+      var analysisMap = {};
+      newsAnalysisData.forEach(function(a) { analysisMap[a.index] = a; });
       body.innerHTML = news.map(function(item, i) {
         var dateStr = '';
         if (item.pubDate) {
           try { dateStr = new Date(item.pubDate).toLocaleString('ja-JP', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' }); } catch(e) { dateStr = item.pubDate; }
         }
-        return '<div class="news-item" data-news-idx="' + i + '">' +
-          '<div class="news-item-title">' + escHtml(typeof item === 'string' ? item : item.title) + '</div>' +
+        var a = analysisMap[i];
+        var flag = (a && a.attention) ? '<span class="news-flag">🔥</span>' : '';
+        return '<div class="news-item' + (a && a.attention ? ' news-attention' : '') + '" data-news-idx="' + i + '">' +
+          '<div class="news-item-title">' + flag + escHtml(a && a.title_ja ? a.title_ja : (typeof item === 'string' ? item : item.title)) + '</div>' +
           (dateStr ? '<div class="news-item-date">' + dateStr + '</div>' : '') +
         '</div>';
       }).join('');
@@ -484,9 +543,22 @@ export const JS = `
       if (item.pubDate) {
         try { dateStr = new Date(item.pubDate).toLocaleString('ja-JP', { year: 'numeric', month: 'long', day: 'numeric', hour: '2-digit', minute: '2-digit' }); } catch(e) { dateStr = item.pubDate; }
       }
+      // 分析データからインパクトコメント取得
+      var idx = parseInt(row.dataset.newsIdx, 10);
+      var analysisMap2 = {};
+      newsAnalysisData.forEach(function(a) { analysisMap2[a.index] = a; });
+      var ana = analysisMap2[idx];
+      var impactHtml = '';
+      if (ana && ana.attention && ana.impact) {
+        impactHtml = '<div style="background:rgba(255,149,0,0.1);border-left:3px solid #FF9500;padding:10px 12px;border-radius:8px;margin-bottom:12px">' +
+          '<div style="font-size:11px;font-weight:600;color:#FF9500;margin-bottom:4px">AI マーケットインパクト</div>' +
+          '<div style="font-size:13px;line-height:1.5;color:var(--label-primary)">' + escHtml(ana.impact) + '</div>' +
+        '</div>';
+      }
       el('sheet-body').innerHTML =
         (dateStr ? '<div style="font-size:12px;color:var(--label-secondary);margin-bottom:8px">' + dateStr + '</div>' : '') +
         '<div style="font-size:15px;font-weight:600;line-height:1.5;margin-bottom:12px">' + escHtml(item.title) + '</div>' +
+        impactHtml +
         (item.description ? '<div style="font-size:13px;color:var(--label-secondary);line-height:1.6">' + escHtml(item.description) + '</div>' : '');
       lockScroll();
       el('sheet').classList.add('open');
@@ -599,6 +671,14 @@ export const JS = `
       rateMap['S&P500']    = ld.sp500;
       rateMap['US10Y']     = ld.us10y;
     }
+    // スパークラインから最新レートを補完（新銘柄用）
+    var sparks = data.sparklines || {};
+    INSTRUMENTS.forEach(function(instr) {
+      if (!rateMap[instr.pair]) {
+        var pts = sparks[instr.pair];
+        if (pts && pts.length > 0) rateMap[instr.pair] = pts[pts.length - 1].rate;
+      }
+    });
 
     var html = INSTRUMENTS.map(function(instr) {
       var pos         = posMap[instr.pair];
@@ -613,7 +693,7 @@ export const JS = `
       var pnlFmt = fmtPnl(unrealized, instr.unit);
 
       var dirClass = pos ? 'watch-direction-' + pos.direction.toLowerCase() : 'watch-direction-hold';
-      var dirText  = pos ? pos.direction : 'HOLD';
+      var dirText  = pos ? (pos.direction === 'BUY' ? '買い' : '空売り') : 'HOLD';
       var subText  = pos ? 'Entry ' + fmtPrice(instr.pair, pos.entry_rate) : '—';
       var badgeCls = 'watch-pnl-' + pnlFmt.cls;
 
@@ -680,7 +760,7 @@ export const JS = `
       var pnlFmt  = fmtPnl(p.totalPnl, instr.unit);
       var pnlCls  = pnlFmt.cls === 'pos' ? 'var(--green)' : pnlFmt.cls === 'neg' ? 'var(--red)' : 'var(--label-secondary)';
 
-      return '<div class="stats-pair-card">' +
+      return '<div class="stats-pair-card" data-stats-pair="' + escHtml(instr.pair) + '" style="cursor:pointer;-webkit-tap-highlight-color:transparent">' +
         '<div class="stats-pair-header">' +
           '<span class="stats-pair-name">' + escHtml(instr.label) + '</span>' +
           '<span class="stats-pnl" style="color:' + pnlCls + '">' + pnlFmt.text + '</span>' +
@@ -698,10 +778,95 @@ export const JS = `
       var p = byPair[instr.pair];
       return sum + (p ? p.total : 0);
     }, 0);
-    container.innerHTML = html +
+    // 取引履歴（全銘柄横断、新しい順）
+    var closes = (data.recentCloses || []).slice();
+    var histHtml = '';
+    if (closes.length > 0) {
+      histHtml = '<div style="margin-top:16px">' +
+        '<div class="list-header" style="padding:0 0 8px">取引履歴</div>' +
+        closes.map(function(c, idx) {
+          var instrH = INSTRUMENTS.filter(function(i) { return i.pair === c.pair; })[0];
+          var label = instrH ? instrH.label : c.pair;
+          var unit = instrH ? instrH.unit : '';
+          var pnl = c.pnl != null ? c.pnl : 0;
+          var pnlColor = pnl > 0 ? 'var(--green)' : pnl < 0 ? 'var(--red)' : 'var(--label-secondary)';
+          var icon = c.close_reason === 'TP' ? '🎯' : c.close_reason === 'SL' ? '🔴' : '—';
+          var dir = c.direction === 'BUY' ? '買い' : '空売り';
+          return '<div style="display:flex;justify-content:space-between;align-items:center;padding:10px 0;border-bottom:1px solid var(--separator)">' +
+            '<div>' +
+              '<div style="font-size:14px;font-weight:600">' + escHtml(label) + '</div>' +
+              '<div style="font-size:11px;color:var(--label-secondary);margin-top:2px">' +
+                icon + ' ' + (c.close_reason || '') + ' · ' + dir + ' · ' + fmtTime(c.closed_at) +
+              '</div>' +
+            '</div>' +
+            '<span style="font-size:15px;font-weight:700;color:' + pnlColor + '">' +
+              fmtPnl(pnl, unit).text +
+            '</span>' +
+          '</div>';
+        }).join('') +
+      '</div>';
+    }
+
+    container.innerHTML = html + histHtml +
       (totalTrades === 0
         ? '<div class="secondary-text" style="padding:8px 0 4px;text-align:center;font-size:13px">まだ決済された取引はありません<br>Cronが蓄積されると成績が表示されます</div>'
         : '');
+
+    // 銘柄カードタップ → 銘柄別取引履歴シート
+    container.querySelectorAll('[data-stats-pair]').forEach(function(card) {
+      card.addEventListener('click', function() {
+        var pair = card.getAttribute('data-stats-pair');
+        var instr = INSTRUMENTS.filter(function(i) { return i.pair === pair; })[0];
+        var label = instr ? instr.label : pair;
+        var unit = instr ? instr.unit : '';
+        var p = byPair[pair] || { total: 0, wins: 0, totalPnl: 0 };
+        var pairCloses = closes.filter(function(c) { return c.pair === pair; });
+
+        el('sheet-title').textContent = label + ' 取引履歴';
+
+        var summaryHtml =
+          '<div style="display:flex;gap:16px;margin-bottom:12px">' +
+            '<div style="flex:1;text-align:center;padding:8px;background:var(--bg-tertiary);border-radius:8px">' +
+              '<div style="font-size:11px;color:var(--label-secondary)">損益</div>' +
+              '<div style="font-size:16px;font-weight:700;color:' + (p.totalPnl > 0 ? 'var(--green)' : p.totalPnl < 0 ? 'var(--red)' : 'var(--label)') + '">' + fmtPnl(p.totalPnl, unit).text + '</div>' +
+            '</div>' +
+            '<div style="flex:1;text-align:center;padding:8px;background:var(--bg-tertiary);border-radius:8px">' +
+              '<div style="font-size:11px;color:var(--label-secondary)">勝率</div>' +
+              '<div style="font-size:16px;font-weight:700">' + (p.total > 0 ? (p.wins / p.total * 100).toFixed(0) + '%' : '—') + '</div>' +
+            '</div>' +
+            '<div style="flex:1;text-align:center;padding:8px;background:var(--bg-tertiary);border-radius:8px">' +
+              '<div style="font-size:11px;color:var(--label-secondary)">取引</div>' +
+              '<div style="font-size:16px;font-weight:700">' + p.total + '件</div>' +
+            '</div>' +
+          '</div>';
+
+        var listHtml = '';
+        if (pairCloses.length > 0) {
+          listHtml = pairCloses.map(function(c) {
+            var pnl = c.pnl != null ? c.pnl : 0;
+            var pnlColor = pnl > 0 ? 'var(--green)' : pnl < 0 ? 'var(--red)' : 'var(--label-secondary)';
+            var icon = c.close_reason === 'TP' ? '🎯' : c.close_reason === 'SL' ? '🔴' : '—';
+            var dir = c.direction === 'BUY' ? '買い' : '空売り';
+            return '<div style="display:flex;justify-content:space-between;align-items:center;padding:10px 0;border-bottom:1px solid var(--separator)">' +
+              '<div>' +
+                '<div style="font-size:13px">' + icon + ' ' + (c.close_reason || '') + ' · ' + dir + '</div>' +
+                '<div style="font-size:11px;color:var(--label-secondary);margin-top:2px">' +
+                  fmtPrice(pair, c.entry_rate) + ' → ' + fmtPrice(pair, c.close_rate) + ' · ' + fmtTime(c.closed_at) +
+                '</div>' +
+              '</div>' +
+              '<span style="font-size:15px;font-weight:700;color:' + pnlColor + '">' + fmtPnl(pnl, unit).text + '</span>' +
+            '</div>';
+          }).join('');
+        } else {
+          listHtml = '<div style="text-align:center;color:var(--label-secondary);padding:16px;font-size:13px">まだ取引履歴がありません</div>';
+        }
+
+        el('sheet-body').innerHTML = summaryHtml + listHtml;
+        lockScroll();
+        el('sheet').classList.add('open');
+        el('sheet-backdrop').classList.add('visible');
+      });
+    });
   }
 
   // ── メインレンダリング ──
@@ -712,17 +877,17 @@ export const JS = `
     // TP/SLバナー検出
     detectAndShowBanner(data);
 
-    // Hero PnL（カウントアップ）
+    // Hero: 資産残高（元手 + 累計PnL）
     var perf = data.performance;
     var heroEl = el('hero-pnl');
     var totalPnl = perf.totalPnl;
+    var capital = INITIAL_CAPITAL + totalPnl;
     heroEl.className = 'hero-pnl ' + (totalPnl > 0 ? 'positive' : totalPnl < 0 ? 'negative' : 'neutral');
-    animatePnl(heroEl, totalPnl);
+    animatePnl(heroEl, capital);
 
     var dpEl = el('today-pnl');
-    var todayPnlFmt = fmtPnl(perf.todayPnl, '');
-    dpEl.textContent = todayPnlFmt.text;
-    dpEl.className   = 'hero-sub-value ' + (perf.todayPnl > 0 ? 'positive' : perf.todayPnl < 0 ? 'negative' : 'neutral');
+    dpEl.textContent = (totalPnl >= 0 ? '+' : '') + fmtYen(totalPnl);
+    dpEl.className   = 'hero-sub-value ' + (totalPnl > 0 ? 'positive' : totalPnl < 0 ? 'negative' : 'neutral');
 
     el('win-rate').textContent     = perf.winRate.toFixed(1) + '%';
     el('total-trades').textContent = perf.totalClosed + ' 件';
@@ -730,23 +895,36 @@ export const JS = `
     // ウォッチリスト
     renderWatchlist(data);
 
-    // AI最新判断（ポートフォリオタブ）
+    // AI最新判断（ポートフォリオタブ）— 直近BUY/SELLを表示
     var ld = data.latestDecision;
+    var recentAction = (data.recentDecisions || []).length > 0 ? data.recentDecisions[0] : null;
+
+    // ポートフォリオタブ: 直近アクション + 稼働状況
+    if (recentAction) {
+      var bc = recentAction.decision === 'BUY' ? 'badge-buy' : 'badge-sell';
+      var b1 = el('ai-badge');
+      if (b1) { b1.textContent = recentAction.decision; b1.className = 'badge ' + bc + ' ai-badge'; }
+      var r1 = el('ai-reasoning');
+      if (r1) r1.textContent = fmtReasoning(recentAction.reasoning);
+      var t1 = el('ai-time');
+      if (t1) t1.textContent = '[' + recentAction.pair + '] ' + fmtTime(recentAction.created_at);
+    }
+    // 稼働状況ライン
+    var statusEl = el('ai-status');
+    if (statusEl && data.systemStatus) {
+      var runs = data.systemStatus.totalRuns || 0;
+      statusEl.textContent = runs.toLocaleString('ja-JP') + '回監視中 · 次のシグナル待ち';
+    }
+
+    // AI判断タブ: 従来通りlatestDecisionを表示
     if (ld) {
-      var bc = ld.decision === 'BUY' ? 'badge-buy' : ld.decision === 'SELL' ? 'badge-sell' : 'badge-hold';
-      ['ai-badge', 'ai-badge2'].forEach(function(id) {
-        var b = el(id);
-        if (b) { b.textContent = ld.decision; b.className = 'badge ' + bc + ' ai-badge'; }
-      });
-      ['ai-reasoning', 'ai-reasoning2'].forEach(function(id) {
-        var r = el(id);
-        if (r) r.textContent = fmtReasoning(ld.reasoning);
-      });
-      var timeText = (ld.pair ? '[' + ld.pair + '] ' : '') + fmtTime(ld.created_at);
-      ['ai-time', 'ai-time2'].forEach(function(id) {
-        var t = el(id);
-        if (t) t.textContent = timeText;
-      });
+      var bc2 = ld.decision === 'BUY' ? 'badge-buy' : ld.decision === 'SELL' ? 'badge-sell' : 'badge-hold';
+      var b2 = el('ai-badge2');
+      if (b2) { b2.textContent = ld.decision; b2.className = 'badge ' + bc2 + ' ai-badge'; }
+      var r2 = el('ai-reasoning2');
+      if (r2) r2.textContent = fmtReasoning(ld.reasoning);
+      var t2 = el('ai-time2');
+      if (t2) t2.textContent = (ld.pair ? '[' + ld.pair + '] ' : '') + fmtTime(ld.created_at);
     }
 
     // 判定履歴
@@ -759,7 +937,7 @@ export const JS = `
     renderLog(data);
 
     // ニュースドロワー
-    if (window._renderNews) window._renderNews(data.latestNews || []);
+    if (window._renderNews) window._renderNews(data.latestNews || [], data.newsAnalysis || []);
 
     // ティッカーバー（ニュースドロワー展開時の横スクロール銘柄バー）
     var tickerEl = el('ticker-scroll');
@@ -916,10 +1094,41 @@ export const JS = `
     }
 
     if (d.news_summary) {
-      rows += '<div style="margin-top:12px;padding-top:12px;border-top:1px solid var(--separator)">' +
-        '<div style="font-size:12px;color:var(--label-secondary);margin-bottom:6px">ニュース</div>' +
-        '<div style="font-size:13px;line-height:1.7;color:var(--label-primary);white-space:pre-wrap">' + escHtml(d.news_summary) + '</div>' +
-        '</div>';
+      // news_summaryをパースしてタイトルリストに変換（多重エンコード対応）
+      var newsItems = [];
+      try {
+        var raw = d.news_summary;
+        // 最大3回パースを試行（多重エンコード対応）
+        for (var attempt = 0; attempt < 3 && typeof raw === 'string'; attempt++) {
+          try { raw = JSON.parse(raw); } catch(e) { break; }
+        }
+        if (Array.isArray(raw)) {
+          // 各アイテムのtitleもJSON文字列の場合があるので展開
+          raw.forEach(function(item) {
+            if (typeof item === 'string') {
+              newsItems.push({ title: item });
+            } else if (item.title && item.title.charAt(0) === '[') {
+              try {
+                var inner = JSON.parse(item.title);
+                if (Array.isArray(inner)) inner.forEach(function(i) { newsItems.push(i); });
+                else newsItems.push(item);
+              } catch(e) { newsItems.push(item); }
+            } else {
+              newsItems.push(item);
+            }
+          });
+        }
+      } catch(e) {
+        newsItems = d.news_summary.split(' | ').map(function(t) { return { title: t.trim() }; });
+      }
+      if (newsItems.length > 0) {
+        rows += '<div style="margin-top:12px;padding-top:12px;border-top:1px solid var(--separator)">' +
+          '<div style="font-size:12px;color:var(--label-secondary);margin-bottom:6px">参照ニュース</div>' +
+          newsItems.slice(0, 5).map(function(n) {
+            return '<div style="font-size:12px;line-height:1.5;color:var(--label-primary);padding:4px 0;border-bottom:1px solid var(--separator)">• ' + escHtml(n.title || '') + '</div>';
+          }).join('') +
+          '</div>';
+      }
     }
 
     if (d.reddit_signal) {

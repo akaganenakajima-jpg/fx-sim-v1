@@ -6,7 +6,7 @@ import { getUSDJPY } from './rate';
 import { fetchNews } from './news';
 import { fetchRedditSignal } from './reddit';
 import { getMarketIndicators } from './indicators';
-import { getDecision } from './gemini';
+import { getDecision, analyzeNews } from './gemini';
 import { checkAndCloseAllPositions, openPosition } from './position';
 import { shouldCallGemini } from './filter';
 import {
@@ -39,7 +39,7 @@ export default {
     switch (url.pathname) {
       case '/':
         return new Response(getDashboardHtml(), {
-          headers: { 'Content-Type': 'text/html; charset=utf-8' },
+          headers: { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-cache, no-store' },
         });
       case '/style.css':
         return new Response(CSS, {
@@ -52,7 +52,9 @@ export default {
       case '/api/status':
         try {
           const status = await getApiStatus(env.DB);
-          return new Response(JSON.stringify(status), {
+          // unpaired surrogateを除去して不正JSONを防止
+          const json = JSON.stringify(status).replace(/[\uD800-\uDFFF]/g, '');
+          return new Response(json, {
             headers: { 'Content-Type': 'application/json; charset=utf-8' },
           });
         } catch (e) {
@@ -81,23 +83,25 @@ async function run(env: Env): Promise<void> {
   console.log(`[fx-sim] cron start ${now.toISOString()}`);
 
   try {
-    // 1. 全価格・共通データを一括取得
-    let usdJpyRate: number;
-    try {
-      usdJpyRate = await getUSDJPY();
-    } catch (e) {
-      console.error('[fx-sim] rate fetch failed:', e);
-      await insertSystemLog(env.DB, 'ERROR', 'RATE', 'レート取得失敗', String(e).slice(0, 200));
-      return;
+    // ワンタイムマイグレーション: 旧PnL(pt)→円に変換（S&P500: ×100, US10Y: ×50）
+    const migrated = await getCacheValue(env.DB, 'pnl_yen_migrated');
+    if (!migrated) {
+      await env.DB.prepare(`UPDATE positions SET pnl = pnl * 100 WHERE pair = 'S&P500' AND status = 'CLOSED' AND pnl IS NOT NULL`).run();
+      await env.DB.prepare(`UPDATE positions SET pnl = pnl * 50 WHERE pair = 'US10Y' AND status = 'CLOSED' AND pnl IS NOT NULL`).run();
+      await env.DB.prepare(`UPDATE positions SET pnl = pnl * 10 WHERE pair = 'Nikkei225' AND status = 'CLOSED' AND pnl IS NOT NULL`).run();
+      // USD/JPYは倍率変更なし（100→100）
+      await setCacheValue(env.DB, 'pnl_yen_migrated', '1');
+      console.log('[fx-sim] PnL migration to yen completed');
     }
 
-    const [newsResult, redditResult, indicatorsResult] = await Promise.allSettled([
+    // 1. 全価格・共通データを一括取得（Yahoo Finance + frankfurterフォールバック）
+    const [newsResult, redditResult, indicatorsResult, frankfurterResult] = await Promise.allSettled([
       fetchNews(),
       fetchRedditSignal(),
       getMarketIndicators(),
+      getUSDJPY(),
     ]);
 
-    // 各外部API失敗をログに記録
     if (newsResult.status === 'rejected') {
       await insertSystemLog(env.DB, 'WARN', 'NEWS', 'ニュース取得失敗', String(newsResult.reason).slice(0, 200));
     }
@@ -110,14 +114,26 @@ async function run(env: Env): Promise<void> {
 
     const news = newsResult.status === 'fulfilled' ? newsResult.value : [];
     const redditSignal = redditResult.status === 'fulfilled' ? redditResult.value : { hasSignal: false, keywords: [], topPosts: [] };
-    const indicators = indicatorsResult.status === 'fulfilled' ? indicatorsResult.value : { vix: null, us10y: null, nikkei: null, sp500: null };
+    const indicators = indicatorsResult.status === 'fulfilled' ? indicatorsResult.value : { vix: null, us10y: null, nikkei: null, sp500: null, usdjpy: null, btcusd: null, gold: null, eurusd: null };
+    const frankfurterRate = frankfurterResult.status === 'fulfilled' ? frankfurterResult.value : null;
 
-    // 価格マップ（USD/JPYはfrankfurter、他はYahoo Finance経由のindicators）
+    // USD/JPY: Yahoo Finance優先、フォールバックでfrankfurter
+    const usdJpyRate = indicators.usdjpy ?? frankfurterRate;
+    if (usdJpyRate == null) {
+      console.error('[fx-sim] USD/JPY rate unavailable from all sources');
+      await insertSystemLog(env.DB, 'ERROR', 'RATE', 'USD/JPYレート取得失敗（全ソース）', null);
+      return;
+    }
+
+    // 価格マップ（全てYahoo Finance経由）
     const prices = new Map<string, number | null>([
       ['USD/JPY',   usdJpyRate],
       ['Nikkei225', indicators.nikkei],
       ['S&P500',    indicators.sp500],
       ['US10Y',     indicators.us10y],
+      ['BTC/USD',   indicators.btcusd],
+      ['Gold',      indicators.gold],
+      ['EUR/USD',   indicators.eurusd],
     ]);
 
     // 2. 全銘柄のTP/SLを一括チェック
@@ -129,16 +145,52 @@ async function run(env: Env): Promise<void> {
     const hasNewNews = currentNewsHash !== (prevNewsHashRaw ?? '');
     await setCacheValue(env.DB, PREV_NEWS_HASH_KEY, currentNewsHash);
 
-    // news_summary: JSON形式で保存（title・pubDate・description）
+    // 一時的: 分析データがなければ強制実行（初回のみ）
+    const existingAnalysis = await getCacheValue(env.DB, 'news_analysis');
+    const forceAnalysis = !existingAnalysis && news.length > 0;
+
+    // 新ニュース検出時: Geminiでマーケットインパクト分析
+    let newsAnalysisRan = false;
+    if ((hasNewNews || forceAnalysis) && news.length > 0) {
+      try {
+        const analysis = await analyzeNews({ news, apiKey: env.GEMINI_API_KEY });
+        await setCacheValue(env.DB, 'news_analysis', JSON.stringify(analysis));
+        newsAnalysisRan = true;
+        console.log(`[fx-sim] News analysis: ${analysis.filter(a => a.attention).length}/${analysis.length} flagged`);
+      } catch (e) {
+        console.error('[fx-sim] News analysis failed:', e);
+        await insertSystemLog(env.DB, 'WARN', 'NEWS', 'ニュース分析失敗', String(e).slice(0, 200));
+      }
+    }
+
+    // news_summary: JSON形式で保存（titleのみ、切り詰めなし）
     const newsSummary = news.length > 0
-      ? JSON.stringify(news.slice(0, 8).map((n) => ({
+      ? JSON.stringify(news.slice(0, 5).map((n) => ({
           title: n.title,
-          pubDate: n.pubDate,
-          description: n.description?.slice(0, 200) || '',
-        }))).slice(0, 2000)
+        })))
       : null;
 
+    // 🔥ニュースドリブン: 注目ニュースがあればフィルタをスキップ
+    let hasAttentionNews = false;
+    if (newsAnalysisRan) {
+      // 今回分析した結果から注目フラグを確認
+      try {
+        const analysisRaw = await getCacheValue(env.DB, 'news_analysis');
+        if (analysisRaw) {
+          const analysis = JSON.parse(analysisRaw);
+          hasAttentionNews = Array.isArray(analysis) && analysis.some((a: { attention: boolean }) => a.attention);
+          if (hasAttentionNews) {
+            console.log('[fx-sim] 🔥 Attention news detected! Forcing Gemini calls for all instruments');
+            await insertSystemLog(env.DB, 'INFO', 'NEWS', '🔥注目ニュース検出 → 全銘柄即時判定', null);
+          }
+        }
+      } catch {}
+    }
+
     // 4. 銘柄ごとにフィルタ → Gemini 判定 → 記録
+    // 有料API: 1回のcron実行でGemini呼出は最大3銘柄（ニュース分析が走った回は2）
+    let geminiCallsThisRun = newsAnalysisRan ? 1 : 0;
+    const MAX_GEMINI_PER_RUN = hasAttentionNews ? 7 : 3; // 🔥時は全銘柄判定
     for (const instrument of INSTRUMENTS) {
       const currentRate = prices.get(instrument.pair);
       if (currentRate == null) {
@@ -166,7 +218,7 @@ async function run(env: Env): Promise<void> {
         `[fx-sim] ${instrument.pair} rate=${currentRate} filter=${filterResult.shouldCall} reason="${filterResult.reason}"`
       );
 
-      if (!filterResult.shouldCall) {
+      if (!filterResult.shouldCall && !hasAttentionNews) {
         await insertDecision(env.DB, {
           pair: instrument.pair,
           rate: currentRate,
@@ -185,11 +237,38 @@ async function run(env: Env): Promise<void> {
         continue;
       }
 
+      // レート制限: 今回のcronでGemini呼出上限に達したらスキップ
+      if (geminiCallsThisRun >= MAX_GEMINI_PER_RUN) {
+        await insertDecision(env.DB, {
+          pair: instrument.pair, rate: currentRate, decision: 'HOLD',
+          tp_rate: null, sl_rate: null,
+          reasoning: `レート制限: 次のcronで判定予定`,
+          news_summary: null, reddit_signal: null,
+          vix: indicators.vix, us10y: indicators.us10y,
+          nikkei: indicators.nikkei, sp500: indicators.sp500,
+          created_at: now.toISOString(),
+        });
+        continue;
+      }
+
       // オープンポジション確認（銘柄別）
       const openPos = await getOpenPositionByPair(env.DB, instrument.pair);
       const hasOpenPosition = openPos !== null;
 
+      // 過去履歴（この銘柄の直近5件のクローズ）+ 全ポジション方向
+      const recentTradesRaw = await env.DB
+        .prepare(`SELECT pair, direction, pnl, close_reason FROM positions WHERE pair = ? AND status = 'CLOSED' ORDER BY closed_at DESC LIMIT 5`)
+        .bind(instrument.pair)
+        .all<{ pair: string; direction: string; pnl: number; close_reason: string }>();
+      const recentTrades = recentTradesRaw.results ?? [];
+
+      const allOpenRaw = await env.DB
+        .prepare(`SELECT pair, direction FROM positions WHERE status = 'OPEN'`)
+        .all<{ pair: string; direction: string }>();
+      const allPositionDirections = (allOpenRaw.results ?? []).map(p => `${p.pair}:${p.direction}`);
+
       // Gemini 判定
+      geminiCallsThisRun++;
       let geminiResult;
       try {
         geminiResult = await getDecision({
@@ -199,11 +278,18 @@ async function run(env: Env): Promise<void> {
           news,
           redditSignal,
           hasOpenPosition,
+          recentTrades,
+          allPositionDirections,
           apiKey: env.GEMINI_API_KEY,
         });
       } catch (e) {
         console.error(`[fx-sim] Gemini error (${instrument.pair}):`, e);
         await insertSystemLog(env.DB, 'ERROR', 'GEMINI', `Gemini API エラー (${instrument.pair})`, String(e).slice(0, 200));
+        // 429の場合は2分間クールダウン
+        if (String(e).includes('429')) {
+          await setCacheValue(env.DB, 'gemini_cooldown_until', String(Date.now() + 2 * 60 * 1000));
+          console.log('[fx-sim] Gemini 429 detected, cooling down for 2 minutes');
+        }
         await insertDecision(env.DB, {
           pair: instrument.pair,
           rate: currentRate,

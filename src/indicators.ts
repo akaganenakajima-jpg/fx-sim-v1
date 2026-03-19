@@ -4,9 +4,13 @@
 
 export interface MarketIndicators {
   vix: number | null;
-  us10y: number | null; // 米10年債利回り（%）
+  us10y: number | null;
   nikkei: number | null;
   sp500: number | null;
+  usdjpy: number | null;
+  btcusd: number | null;
+  gold: number | null;
+  eurusd: number | null;
 }
 
 interface YahooChartResult {
@@ -35,12 +39,16 @@ async function fetchYahoo(symbol: string): Promise<number | null> {
 }
 
 export async function getMarketIndicators(): Promise<MarketIndicators> {
-  const [vix, nikkei, sp500, us10y] = await Promise.all([
+  const [vix, nikkei, sp500, us10y, usdjpy, btcusd, gold, eurusd] = await Promise.all([
     fetchYahoo('^VIX'),
     fetchYahoo('^N225'),
     fetchYahoo('^GSPC'),
-    fetchYahoo('^TNX'), // 米10年債利回り（FREDの代替）
+    fetchYahoo('^TNX'),
+    fetchYahoo('USDJPY=X'),
+    fetchYahoo('BTC-USD'),
+    fetchYahoo('GC=F'),       // Gold先物
+    fetchYahoo('EURUSD=X'),
   ]);
 
-  return { vix, us10y, nikkei, sp500 };
+  return { vix, us10y, nikkei, sp500, usdjpy, btcusd, gold, eurusd };
 }

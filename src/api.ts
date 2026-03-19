@@ -1,6 +1,7 @@
 // GET /api/status — D1から全ダッシュボードデータをJSON返却
 
 import type { Position } from './db';
+import { fetchNews } from './news';
 
 export interface LatestDecision {
   id: number;
@@ -78,6 +79,7 @@ export interface StatusResponse {
   systemLogs: SystemLog[];
   logStats: LogStats;
   latestNews: Array<{ title: string; pubDate: string; description: string }>;
+  newsAnalysis: Array<{ index: number; attention: boolean; impact: string | null; title_ja: string | null }>;
 }
 
 export async function getApiStatus(db: D1Database): Promise<StatusResponse> {
@@ -126,7 +128,7 @@ export async function getApiStatus(db: D1Database): Promise<StatusResponse> {
       db
         .prepare(
           `SELECT pair, rate, created_at FROM decisions
-           WHERE pair IN ('USD/JPY','Nikkei225','S&P500','US10Y')
+           WHERE pair IN ('USD/JPY','Nikkei225','S&P500','US10Y','BTC/USD','Gold','EUR/USD')
            ORDER BY id DESC LIMIT 80`
         )
         .all<{ pair: string; rate: number; created_at: string }>(),
@@ -192,29 +194,20 @@ export async function getApiStatus(db: D1Database): Promise<StatusResponse> {
 
   const sysLogs = sysLogsRaw.results ?? [];
 
-  // ニュースサマリーをパース（JSON形式 or 旧パイプ区切りに対応）
-  type NewsEntry = { title: string; pubDate: string; description: string };
-  const seenTitles = new Set<string>();
-  const latestNews: NewsEntry[] = [];
-  for (const row of (newsRaw.results ?? [])) {
-    let items: NewsEntry[] = [];
-    try {
-      const parsed = JSON.parse(row.news_summary);
-      if (Array.isArray(parsed)) items = parsed;
-    } catch {
-      // 旧パイプ形式
-      items = row.news_summary.split(' | ')
-        .map((t: string) => ({ title: t.trim(), pubDate: '', description: '' }))
-        .filter((i: NewsEntry) => i.title);
+  // ニュースをリアルタイム取得（DB依存を廃止）
+  let latestNews: Array<{ title: string; pubDate: string; description: string }> = [];
+  try {
+    latestNews = await fetchNews();
+  } catch {
+    // フォールバック: DBのnews_summaryから取得
+    type NewsEntry = { title: string; pubDate: string; description: string };
+    for (const row of (newsRaw.results ?? [])) {
+      try {
+        let parsed = JSON.parse(row.news_summary);
+        if (typeof parsed === 'string') parsed = JSON.parse(parsed);
+        if (Array.isArray(parsed)) { latestNews = parsed; break; }
+      } catch {}
     }
-    for (const item of items) {
-      if (!seenTitles.has(item.title)) {
-        seenTitles.add(item.title);
-        latestNews.push(item);
-        if (latestNews.length >= 10) break;
-      }
-    }
-    if (latestNews.length >= 10) break;
   }
 
   return {
@@ -237,6 +230,7 @@ export async function getApiStatus(db: D1Database): Promise<StatusResponse> {
     performanceByPair,
     recentCloses: recentClosesRaw.results ?? [],
     latestNews,
+    newsAnalysis: await getNewsAnalysis(db),
     systemLogs: sysLogs,
     logStats: {
       totalRuns: logStatsRaw?.totalRuns ?? 0,
@@ -246,4 +240,12 @@ export async function getApiStatus(db: D1Database): Promise<StatusResponse> {
       lastRun: logStatsRaw?.lastRun ?? null,
     },
   };
+}
+
+async function getNewsAnalysis(db: D1Database): Promise<Array<{ index: number; attention: boolean; impact: string | null }>> {
+  try {
+    const row = await db.prepare("SELECT value FROM market_cache WHERE key = 'news_analysis'").first<{ value: string }>();
+    if (row) return JSON.parse(row.value);
+  } catch {}
+  return [];
 }

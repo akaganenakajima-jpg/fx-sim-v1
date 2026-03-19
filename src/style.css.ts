@@ -58,7 +58,7 @@ body {
   -webkit-overflow-scrolling: touch;
 }
 body.drawer-open {
-  overflow: hidden;
+  overflow: hidden !important;
   touch-action: none;
 }
 
@@ -123,6 +123,10 @@ body.drawer-open {
   display: flex;
   flex-direction: column;
   gap: 12px;
+  overflow-x: hidden;
+}
+body, #app {
+  overflow-x: hidden;
 }
 
 /* ─── Card ─── */
@@ -296,6 +300,30 @@ body.drawer-open {
 .badge-hold { background: var(--bg-secondary);    color: var(--label-secondary); }
 
 /* ─── AI Card ─── */
+.ai-inline {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 16px;
+  flex-wrap: wrap;
+}
+.ai-inline .ai-badge { font-size: 11px; padding: 3px 10px; flex-shrink: 0; }
+.ai-inline-text {
+  font-size: 12px;
+  color: var(--label-secondary);
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ai-inline-time { font-size: 11px; color: var(--label-tertiary); flex-shrink: 0; }
+.ai-inline-status {
+  font-size: 10px;
+  color: var(--label-tertiary);
+  width: 100%;
+}
+/* AI判断タブ用（従来スタイル維持） */
 .card-ai {
   border: 1px solid rgba(10,132,255,0.25);
   position: relative;
@@ -324,6 +352,11 @@ body.drawer-open {
   color: var(--label-secondary);
   line-height: 1.5;
   flex: 1;
+}
+.ai-status {
+  font-size: 11px;
+  color: var(--label-tertiary);
+  margin-top: 4px;
 }
 
 /* ─── List header row ─── */
@@ -587,8 +620,8 @@ body.drawer-open {
   flex-shrink: 0;
   font-variant-numeric: tabular-nums;
 }
-.log-msg { color: var(--label-primary); flex: 1; }
-.log-detail { font-size: 11px; color: var(--label-secondary); margin-top: 2px; }
+.log-msg { color: var(--label-primary); flex: 1; word-break: break-all; }
+.log-detail { font-size: 11px; color: var(--label-secondary); margin-top: 2px; word-break: break-all; }
 .stat-grid {
   display: grid;
   grid-template-columns: 1fr 1fr;
@@ -695,6 +728,8 @@ body.drawer-open {
 }
 .news-item:last-child { border-bottom: none; }
 .news-item:active { background: rgba(255,255,255,0.06); }
+.news-attention { background: rgba(255,149,0,0.08); }
+.news-flag { margin-right: 4px; font-size: 12px; }
 .news-item-title {
   font-size: 13px;
   color: var(--label-primary);
@@ -769,15 +804,18 @@ body.drawer-open {
 
 /* ポートフォリオタブはスクロールなし・固定高さレイアウト */
 #tab-portfolio {
-  height: calc(100dvh - 49px - env(safe-area-inset-bottom));
-  overflow: hidden;
+  height: calc(100vh - 49px - env(safe-area-inset-bottom));
+  height: calc(100svh - 49px - env(safe-area-inset-bottom));
+  overflow-y: auto;
+  overflow-x: hidden;
+  -webkit-overflow-scrolling: touch;
   padding-bottom: 12px;
   transform-origin: 50% 0%;
   will-change: transform, opacity;
   border-radius: 0;
 }
 #tab-portfolio.news-visible {
-  padding-bottom: calc(68px + 12px);
+  padding-bottom: 80px;
 }
 
 /* ─── ティッカーバー（ニュース展開時の横スクロール） ─── */

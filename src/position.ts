@@ -46,6 +46,32 @@ export async function checkAndCloseAllPositions(
     const instr = instrMap.get(pos.pair);
     const multiplier = instr?.pnlMultiplier ?? 100;
 
+    // トレイリングストップ: 含み益が activation 幅を超えたらSLを引き上げ
+    if (instr && pos.sl_rate != null) {
+      const activation = instr.trailingActivation;
+      const distance = instr.trailingDistance;
+      const isBuy = pos.direction === 'BUY';
+      const profit = isBuy
+        ? currentRate - pos.entry_rate
+        : pos.entry_rate - currentRate;
+
+      if (profit >= activation) {
+        const newSl = isBuy
+          ? currentRate - distance
+          : currentRate + distance;
+        // SLは利益方向にのみ移動（BUY: 上方向、SELL: 下方向）
+        const shouldUpdate = isBuy
+          ? newSl > pos.sl_rate
+          : newSl < pos.sl_rate;
+
+        if (shouldUpdate) {
+          await db.prepare('UPDATE positions SET sl_rate = ? WHERE id = ?').bind(newSl, pos.id).run();
+          console.log(`[position] Trailing SL: ${pos.pair} id=${pos.id} SL ${pos.sl_rate.toFixed(4)} → ${newSl.toFixed(4)}`);
+          pos.sl_rate = newSl; // 以降のSLチェックで新しいSLを使う
+        }
+      }
+    }
+
     if (shouldTriggerTP(pos, currentRate)) {
       const pnl = calcPnl(pos.direction, pos.entry_rate, currentRate, multiplier);
       console.log(`[position] TP hit: ${pos.pair} id=${pos.id} pnl=${pnl.toFixed(2)}`);
