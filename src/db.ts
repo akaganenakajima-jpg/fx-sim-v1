@@ -28,6 +28,7 @@ export interface DecisionRecord {
   nikkei: number | null;
   sp500: number | null;
   created_at: string;
+  news_sources?: string | null;  // カンマ区切りソース名
 }
 
 export async function getOpenPositions(db: D1Database): Promise<Position[]> {
@@ -56,8 +57,8 @@ export async function insertDecision(
     .prepare(
       `INSERT INTO decisions
         (pair, rate, decision, tp_rate, sl_rate, reasoning, news_summary,
-         reddit_signal, vix, us10y, nikkei, sp500, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+         reddit_signal, vix, us10y, nikkei, sp500, created_at, news_sources)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     )
     .bind(
       record.pair,
@@ -72,7 +73,8 @@ export async function insertDecision(
       record.us10y,
       record.nikkei,
       record.sp500,
-      record.created_at
+      record.created_at,
+      record.news_sources ?? null
     )
     .run();
 }

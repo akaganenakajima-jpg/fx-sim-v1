@@ -3,7 +3,7 @@
 // fetch:     GET / → ダッシュボード、GET /api/status → JSON、GET /style.css・/app.js → 静的ファイル
 
 import { getUSDJPY } from './rate';
-import { fetchNews } from './news';
+import { fetchNews, type SourceFetchStat } from './news';
 import { fetchRedditSignal } from './reddit';
 import { getMarketIndicators } from './indicators';
 import { getDecision, getDecisionGPT, getDecisionClaude, analyzeNews, analyzeNewsGPT, analyzeNewsClaude } from './gemini';
@@ -129,7 +129,28 @@ async function run(env: Env): Promise<void> {
       await insertSystemLog(env.DB, 'WARN', 'INDICATORS', '指標取得失敗', String(indicatorsResult.reason).slice(0, 200));
     }
 
-    const news = newsResult.status === 'fulfilled' ? newsResult.value : [];
+    const newsData = newsResult.status === 'fulfilled' ? newsResult.value : { items: [], stats: [] };
+    const news = newsData.items;
+    const newsFetchStats = newsData.stats;
+
+    // ニュースソース統計をD1に記録（バッチINSERT）
+    if (newsFetchStats.length > 0) {
+      try {
+        const stmt = env.DB.prepare(
+          `INSERT INTO news_fetch_log (source, ok, latency_ms, item_count, avg_freshness, created_at)
+           VALUES (?, ?, ?, ?, ?, ?)`
+        );
+        const batch = newsFetchStats.map(s =>
+          stmt.bind(s.source, s.ok ? 1 : 0, s.latencyMs, s.itemCount, s.avgFreshnessMin, now.toISOString())
+        );
+        await env.DB.batch(batch);
+      } catch (e) {
+        console.warn(`[fx-sim] news_fetch_log insert error: ${String(e).slice(0, 100)}`);
+      }
+    }
+
+    // ニュースソース名リスト（decisions記録用）
+    const activeNewsSources = [...new Set(news.map(n => n.source))].join(',');
     const redditSignal = redditResult.status === 'fulfilled' ? redditResult.value : { hasSignal: false, keywords: [], topPosts: [] };
     const indicators = indicatorsResult.status === 'fulfilled' ? indicatorsResult.value : { vix: null, us10y: null, nikkei: null, sp500: null, usdjpy: null, btcusd: null, gold: null, eurusd: null, ethusd: null, crudeoil: null, natgas: null, copper: null, silver: null, gbpusd: null, audusd: null, solusd: null, dax: null, nasdaq: null };
     const frankfurterRate = frankfurterResult.status === 'fulfilled' ? frankfurterResult.value : null;
@@ -467,6 +488,7 @@ async function run(env: Env): Promise<void> {
           nikkei: indicators.nikkei,
           sp500: indicators.sp500,
           created_at: now.toISOString(),
+          news_sources: activeNewsSources || null,
         });
         continue;
       }
@@ -486,6 +508,7 @@ async function run(env: Env): Promise<void> {
         nikkei: indicators.nikkei,
         sp500: indicators.sp500,
         created_at: now.toISOString(),
+        news_sources: activeNewsSources || null,
       });
 
       // 最終AI呼び出し時刻を更新（定期強制呼び出し用）
@@ -529,9 +552,10 @@ async function run(env: Env): Promise<void> {
       await insertSystemLog(env.DB, 'WARN', 'CRON', `実行時間超過: ${elapsed}ms`, null);
     }
 
-    // ログパージ: 500件超の古いレコードを削除（DB肥大化防止）
+    // ログパージ: 古いレコードを削除（DB肥大化防止）
     try {
       await env.DB.prepare(`DELETE FROM system_logs WHERE id NOT IN (SELECT id FROM system_logs ORDER BY id DESC LIMIT 500)`).run();
+      await env.DB.prepare(`DELETE FROM news_fetch_log WHERE id NOT IN (SELECT id FROM news_fetch_log ORDER BY id DESC LIMIT 5000)`).run();
     } catch {}
 
     // 日次サマリー（JST 0:00〜0:01 = UTC 15:00〜15:01 に1日1回記録）

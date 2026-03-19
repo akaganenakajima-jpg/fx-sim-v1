@@ -12,34 +12,31 @@ export const JS = `
   var sheetPos = null;
   var lastPnlMap = {};  // PnLバッジ変化検出用 { pair: pnlText }
 
-  // 銘柄設定（表示用）
+  // カテゴリ表示順（新カテゴリ追加時はここに足すだけ）
+  var CATEGORY_ORDER = ['為替', '株式指数', '暗号資産', 'コモディティ', '債券'];
+
+  // 銘柄設定（順番は気にしなくてOK — categoryで自動ソート）
   var INSTRUMENTS = [
-    // 為替
-    { pair: 'USD/JPY',   label: 'USD / JPY', unit: '円', multiplier: 100 },
-    { pair: 'EUR/USD',   label: 'EUR / USD', unit: '円', multiplier: 10000 },
-    // 株式指数
-    { pair: 'S&P500',    label: 'S&P 500',  unit: '円', multiplier: 10 },
-    { pair: 'Nikkei225', label: '日経225',   unit: '円', multiplier: 1 },
-    // 暗号資産
-    { pair: 'BTC/USD',   label: 'BTC',      unit: '円', multiplier: 1 },
-    { pair: 'ETH/USD',   label: 'ETH',      unit: '円', multiplier: 1 },
-    // コモディティ
-    { pair: 'Gold',      label: 'Gold',     unit: '円', multiplier: 10 },
-    { pair: 'CrudeOil',  label: '原油',     unit: '円', multiplier: 100 },
-    { pair: 'NatGas',    label: '天然ガス',  unit: '円', multiplier: 1000 },
-    { pair: 'Copper',    label: '銅',       unit: '円', multiplier: 1000 },
-    { pair: 'Silver',    label: 'Silver',   unit: '円', multiplier: 100 },
-    // 為替（追加）
-    { pair: 'GBP/USD',   label: 'GBP / USD', unit: '円', multiplier: 10000 },
-    { pair: 'AUD/USD',   label: 'AUD / USD', unit: '円', multiplier: 10000 },
-    // 暗号資産（追加）
-    { pair: 'SOL/USD',   label: 'SOL',      unit: '円', multiplier: 10 },
-    // 株式指数（追加）
-    { pair: 'DAX',       label: 'DAX',      unit: '円', multiplier: 1 },
-    { pair: 'NASDAQ',    label: 'NASDAQ',   unit: '円', multiplier: 1 },
-    // 債券
-    { pair: 'US10Y',     label: '米10年債',  unit: '円', multiplier: 5000 },
-  ];
+    { pair: 'USD/JPY',   label: 'USD / JPY', unit: '円', multiplier: 100,   category: '為替' },
+    { pair: 'EUR/USD',   label: 'EUR / USD', unit: '円', multiplier: 10000, category: '為替' },
+    { pair: 'GBP/USD',   label: 'GBP / USD', unit: '円', multiplier: 10000, category: '為替' },
+    { pair: 'AUD/USD',   label: 'AUD / USD', unit: '円', multiplier: 10000, category: '為替' },
+    { pair: 'S&P500',    label: 'S&P 500',   unit: '円', multiplier: 10,    category: '株式指数' },
+    { pair: 'NASDAQ',    label: 'NASDAQ',    unit: '円', multiplier: 1,     category: '株式指数' },
+    { pair: 'Nikkei225', label: '日経225',    unit: '円', multiplier: 1,     category: '株式指数' },
+    { pair: 'DAX',       label: 'DAX',       unit: '円', multiplier: 1,     category: '株式指数' },
+    { pair: 'BTC/USD',   label: 'BTC',       unit: '円', multiplier: 1,     category: '暗号資産' },
+    { pair: 'ETH/USD',   label: 'ETH',       unit: '円', multiplier: 1,     category: '暗号資産' },
+    { pair: 'SOL/USD',   label: 'SOL',       unit: '円', multiplier: 10,    category: '暗号資産' },
+    { pair: 'Gold',      label: 'Gold',      unit: '円', multiplier: 10,    category: 'コモディティ' },
+    { pair: 'Silver',    label: 'Silver',    unit: '円', multiplier: 100,   category: 'コモディティ' },
+    { pair: 'Copper',    label: '銅',        unit: '円', multiplier: 1000,  category: 'コモディティ' },
+    { pair: 'CrudeOil',  label: '原油',      unit: '円', multiplier: 100,   category: 'コモディティ' },
+    { pair: 'NatGas',    label: '天然ガス',   unit: '円', multiplier: 1000,  category: 'コモディティ' },
+    { pair: 'US10Y',     label: '米10年債',   unit: '円', multiplier: 5000,  category: '債券' },
+  ].sort(function(a, b) {
+    return CATEGORY_ORDER.indexOf(a.category) - CATEGORY_ORDER.indexOf(b.category);
+  });
 
   var INITIAL_CAPITAL = 10000; // 元手¥10,000
 
@@ -117,6 +114,10 @@ export const JS = `
       } else {
         drawer.style.display = 'none';
       }
+    }
+    // 統計タブ表示時: チャートを正しい幅で再描画
+    if (targetId === 'tab-stats' && lastData) {
+      requestAnimationFrame(function() { renderEquityChart(lastData); });
     }
   }
 
@@ -817,110 +818,166 @@ export const JS = `
   }
 
   // ── 資産推移グラフ描画 ──
+  // Apple HIG: 11pt最小フォント、8ptグリッド、十分な余白
+  // UX心理学: Peak-End（最終値強調）、Goal Gradient（目標ライン）、認知負荷軽減（ラベル統一）
   function renderEquityChart(data) {
     var chart = el('equity-chart');
     if (!chart) return;
     var closes = (data.recentCloses || []).slice().reverse();
     if (closes.length < 2) {
-      chart.innerHTML = '<div style="text-align:center;color:var(--label-secondary);font-size:12px;padding:40px 0">取引データ蓄積中...</div>';
+      chart.innerHTML = '<div style="text-align:center;color:var(--label-secondary);font-size:13px;padding:60px 0">取引データ蓄積中...</div>';
       return;
     }
-    // 資産推移を計算（recentClosesが全件でない場合はtotalPnlから逆算）
+    // 資産推移を計算
     var totalPnl = data.performance.totalPnl || 0;
     var closePnlSum = 0;
     closes.forEach(function(c) { closePnlSum += (c.pnl || 0); });
     var missingPnl = totalPnl - closePnlSum;
-    var equity = [INITIAL_CAPITAL + missingPnl]; // 不足分をスタートに反映
+    var equity = [INITIAL_CAPITAL + missingPnl];
     var cumPnl = 0;
     closes.forEach(function(c) {
       cumPnl += (c.pnl || 0);
       equity.push(INITIAL_CAPITAL + missingPnl + cumPnl);
     });
-    var w = chart.offsetWidth || 300;
-    var h = 160;
+
+    var font = '-apple-system,system-ui,sans-serif';
+    var w = chart.clientWidth || chart.offsetWidth || 300;
+    var h = 180;
+
     var min = Math.min.apply(null, equity);
     var max = Math.max.apply(null, equity);
-    var range = max - min || 1;
-    var padL = range > 5000 ? 42 : 56; // Y軸ラベル用（レンジ狭い時は実数表示で幅広く）
-    var padR = 10;
-    var padT = 16; // 最終値ラベル用余白
-    var padB = 22; // X軸ラベル用
+    var dataRange = max - min || 1;
+
+    // Nice axis: 綺麗な数値の目盛りを生成（500, 1000, 2000, 5000刻み等）
+    var yTicks = 4;
+    var rawStep = dataRange / yTicks;
+    var mag = Math.pow(10, Math.floor(Math.log10(rawStep)));
+    var niceStep = rawStep <= mag * 1.5 ? mag
+                 : rawStep <= mag * 3   ? mag * 2
+                 : rawStep <= mag * 7   ? mag * 5
+                 : mag * 10;
+    var niceMin = Math.floor(min / niceStep) * niceStep;
+    var niceMax = Math.ceil(max / niceStep) * niceStep;
+    yTicks = Math.round((niceMax - niceMin) / niceStep);
+    // 目盛り数が多すぎたら間引く（最大5本）
+    if (yTicks > 5) { niceStep *= 2; niceMax = niceMin + Math.ceil((max - niceMin) / niceStep) * niceStep; yTicks = Math.round((niceMax - niceMin) / niceStep); }
+    var niceRange = niceMax - niceMin || 1;
+
+    // Y軸ラベルフォーマット — 全ラベルがユニークになることを保証
+    function fmtYLabel(v) {
+      // 万単位表示の場合、niceStepに応じた精度で表示
+      if (v >= 10000 && niceStep >= 1000) return '¥' + (v / 10000).toFixed(v % 10000 === 0 ? 0 : 1) + '万';
+      // niceStep < 1000 or 1万未満 → 千円単位でカンマ区切り
+      return '¥' + Math.round(v).toLocaleString();
+    }
+
+    var maxLabelLen = 0;
+    for (var ti = 0; ti <= yTicks; ti++) {
+      var lbl = fmtYLabel(niceMin + niceStep * ti);
+      if (lbl.length > maxLabelLen) maxLabelLen = lbl.length;
+    }
+    var padL = Math.max(56, maxLabelLen * 8 + 12);
+    var padR = 8;
+    var padT = 28; // 最終値ラベル用余白（上に十分なスペース）
+    var padB = 28; // X軸ラベル用余白
     var chartW = w - padL - padR;
     var chartH = h - padT - padB;
-    var step = chartW / (equity.length - 1);
+
+    // データ→座標変換
+    var step = equity.length > 1 ? chartW / (equity.length - 1) : 0;
     var pts = equity.map(function(v, i) {
       var x = padL + i * step;
-      var y = padT + chartH - ((v - min) / range) * chartH;
+      var y = padT + chartH - ((v - niceMin) / niceRange) * chartH;
       return x.toFixed(1) + ',' + y.toFixed(1);
     });
     var lastVal = equity[equity.length - 1];
     var color = lastVal >= INITIAL_CAPITAL ? 'var(--green)' : 'var(--red)';
+    var gridColor = 'var(--label-quaternary, rgba(128,128,128,0.15))';
 
-    // グリッド色（カード背景上で見えるように明示指定）
-    var gridColor = 'var(--label-quaternary, rgba(128,128,128,0.2))';
-
-    // Y軸目盛り（4本）— 上下端はボーダーと重なるので省略
+    // Y軸グリッド + ラベル（HIG 11pt最小）
     var yGridLines = '';
     var yLabels = '';
-    var yTicks = 4;
     for (var yi = 0; yi <= yTicks; yi++) {
-      var yVal = min + (range * yi / yTicks);
+      var yVal = niceMin + niceStep * yi;
       var yPos = padT + chartH - (chartH * yi / yTicks);
+      // 上下端はボーダーと重なるので線は省略、ラベルは表示
       if (yi > 0 && yi < yTicks) {
-        yGridLines += '<line x1="' + padL + '" y1="' + yPos.toFixed(1) + '" x2="' + (w - padR) + '" y2="' + yPos.toFixed(1) + '" stroke="' + gridColor + '" stroke-width="1"/>';
+        yGridLines += '<line x1="' + padL + '" y1="' + yPos.toFixed(1) + '" x2="' + (w - padR) + '" y2="' + yPos.toFixed(1) + '" stroke="' + gridColor + '" stroke-width="0.5"/>';
       }
-      var yLabel = yVal >= 10000 ? '¥' + (range > 5000 ? (yVal / 10000).toFixed(1) + '万' : Math.round(yVal).toLocaleString()) : '¥' + Math.round(yVal).toLocaleString();
-      yLabels += '<text x="' + (padL - 6) + '" y="' + (yPos + 3).toFixed(1) + '" text-anchor="end" fill="var(--label-secondary)" font-size="9" font-family="-apple-system,system-ui,sans-serif">' + yLabel + '</text>';
+      yLabels += '<text x="' + (padL - 8) + '" y="' + (yPos + 4).toFixed(1) + '" text-anchor="end" fill="var(--label-secondary)" font-size="11" font-family="' + font + '">' + fmtYLabel(yVal) + '</text>';
     }
 
-    // X軸目盛り（最大5本）— 左右端は省略
-    var xGridLines = '';
+    // X軸ラベル: 両端 + 中間1本（シンプルに保つ）
+    var totalTrades = equity.length - 1;
     var xLabels = '';
-    var xTicks = Math.min(equity.length - 1, 5);
-    for (var xi = 0; xi <= xTicks; xi++) {
-      var idx = Math.round((equity.length - 1) * xi / xTicks);
-      var xPos = padL + idx * step;
-      if (xi > 0 && xi < xTicks) {
-        xGridLines += '<line x1="' + xPos.toFixed(1) + '" y1="' + padT + '" x2="' + xPos.toFixed(1) + '" y2="' + (padT + chartH) + '" stroke="' + gridColor + '" stroke-width="1"/>';
-      }
-      xLabels += '<text x="' + xPos.toFixed(1) + '" y="' + (h - 4) + '" text-anchor="middle" fill="var(--label-secondary)" font-size="9" font-family="-apple-system,system-ui,sans-serif">#' + idx + '</text>';
+    xLabels += '<text x="' + padL + '" y="' + (h - 8) + '" text-anchor="start" fill="var(--label-tertiary)" font-size="11" font-family="' + font + '">開始</text>';
+    if (totalTrades > 6) {
+      var midIdx = Math.round(totalTrades / 2);
+      var midX = padL + midIdx * step;
+      xLabels += '<text x="' + midX.toFixed(1) + '" y="' + (h - 8) + '" text-anchor="middle" fill="var(--label-tertiary)" font-size="11" font-family="' + font + '">' + midIdx + '件</text>';
     }
+    xLabels += '<text x="' + (w - padR) + '" y="' + (h - 8) + '" text-anchor="end" fill="var(--label-tertiary)" font-size="11" font-family="' + font + '">' + totalTrades + '件</text>';
 
     // 元本ライン
-    var capitalY = padT + chartH - ((INITIAL_CAPITAL - min) / range) * chartH;
+    var capitalY = padT + chartH - ((INITIAL_CAPITAL - niceMin) / niceRange) * chartH;
+    var capitalLine = '';
+    if (INITIAL_CAPITAL >= niceMin && INITIAL_CAPITAL <= niceMax) {
+      capitalLine =
+        '<line x1="' + padL + '" y1="' + capitalY.toFixed(1) + '" x2="' + (w - padR) + '" y2="' + capitalY.toFixed(1) + '" stroke="var(--label-tertiary)" stroke-width="1" stroke-dasharray="4,4" opacity="0.4"/>' +
+        '<text x="' + (padL + 6) + '" y="' + (capitalY - 6).toFixed(1) + '" fill="var(--label-tertiary)" font-size="11" font-family="' + font + '">元本</text>';
+    }
+
+    // 目標ライン（Goal Gradient）
+    var goalLine = '';
+    var GOAL = 15000;
+    if (GOAL >= niceMin && GOAL <= niceMax) {
+      var goalY = padT + chartH - ((GOAL - niceMin) / niceRange) * chartH;
+      goalLine =
+        '<line x1="' + padL + '" y1="' + goalY.toFixed(1) + '" x2="' + (w - padR) + '" y2="' + goalY.toFixed(1) + '" stroke="var(--blue)" stroke-width="1" stroke-dasharray="5,4" opacity="0.5"/>' +
+        '<text x="' + (w - padR - 6) + '" y="' + (goalY - 6).toFixed(1) + '" text-anchor="end" fill="var(--blue)" font-size="11" font-weight="600" font-family="' + font + '" opacity="0.7">目標 ¥1.5万</text>';
+    }
 
     // グラデーション塗りつぶし
     var fillPts = pts.join(' ') + ' ' + (w - padR) + ',' + (padT + chartH) + ' ' + padL + ',' + (padT + chartH);
+
+    // 最終値ドット座標
+    var lastPt = pts[pts.length - 1].split(',');
+    var lastX = parseFloat(lastPt[0]);
+    var lastY = parseFloat(lastPt[1]);
+    // 最終値ラベル: ドットの上14px、上端に近すぎたら下に
+    var labelY = lastY - 14;
+    if (labelY < padT - 6) labelY = lastY + 18;
+    // 常に右寄せ（最終値は右端なので）
+    var labelAnchor = 'end';
+
     chart.innerHTML =
-      '<svg width="' + w + '" height="' + h + '" viewBox="0 0 ' + w + ' ' + h + '">' +
+      '<svg width="' + w + '" height="' + h + '" viewBox="0 0 ' + w + ' ' + h + '" style="display:block;overflow:visible;max-width:100%">' +
         '<defs><linearGradient id="eqGrad" x1="0" y1="0" x2="0" y2="1">' +
-          '<stop offset="0%" stop-color="' + color + '" stop-opacity="0.2"/>' +
-          '<stop offset="100%" stop-color="' + color + '" stop-opacity="0.02"/>' +
+          '<stop offset="0%" stop-color="' + color + '" stop-opacity="0.18"/>' +
+          '<stop offset="100%" stop-color="' + color + '" stop-opacity="0.01"/>' +
         '</linearGradient></defs>' +
-        // チャート枠線
-        '<rect x="' + padL + '" y="' + padT + '" width="' + chartW + '" height="' + chartH + '" fill="none" stroke="' + gridColor + '" stroke-width="1" rx="2"/>' +
-        yGridLines + xGridLines + yLabels + xLabels +
+        // チャートエリア境界線（角丸）
+        '<rect x="' + padL + '" y="' + padT + '" width="' + chartW + '" height="' + chartH + '" fill="none" stroke="' + gridColor + '" stroke-width="0.5" rx="4"/>' +
+        yGridLines + yLabels + xLabels +
+        capitalLine + goalLine +
+        // 塗りつぶし + ライン
         '<polygon points="' + fillPts + '" fill="url(#eqGrad)"/>' +
         '<polyline points="' + pts.join(' ') + '" fill="none" stroke="' + color + '" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>' +
-        // 元本ライン（表示範囲内の場合のみ）
-        (INITIAL_CAPITAL >= min && INITIAL_CAPITAL <= max
-          ? '<line x1="' + padL + '" y1="' + capitalY.toFixed(1) + '" x2="' + (w - padR) + '" y2="' + capitalY.toFixed(1) + '" stroke="var(--label-tertiary)" stroke-width="1" stroke-dasharray="3,3" opacity="0.5"/>' +
-            '<text x="' + (padL + 4) + '" y="' + (capitalY - 4).toFixed(1) + '" fill="var(--label-tertiary)" font-size="8" font-family="-apple-system,system-ui,sans-serif">元本</text>'
-          : '') +
-        // 目標ライン（Goal Gradient — 表示範囲内の場合のみ）
-        (function() {
-          var GOAL = 15000;
-          if (GOAL >= min && GOAL <= max) {
-            var goalY = padT + chartH - ((GOAL - min) / range) * chartH;
-            return '<line x1="' + padL + '" y1="' + goalY.toFixed(1) + '" x2="' + (w - padR) + '" y2="' + goalY.toFixed(1) + '" stroke="var(--blue)" stroke-width="1" stroke-dasharray="4,3" opacity="0.6"/>' +
-              '<text x="' + (w - padR - 4) + '" y="' + (goalY - 4).toFixed(1) + '" text-anchor="end" fill="var(--blue)" font-size="8" font-weight="600" font-family="-apple-system,system-ui,sans-serif" opacity="0.8">目標</text>';
-          }
-          return '';
-        })() +
-        // 最終値ドット + ラベル
-        '<circle cx="' + pts[pts.length - 1].split(',')[0] + '" cy="' + pts[pts.length - 1].split(',')[1] + '" r="3.5" fill="' + color + '"/>' +
-        '<text x="' + pts[pts.length - 1].split(',')[0] + '" y="' + (padT - 3) + '" text-anchor="middle" fill="' + color + '" font-size="11" font-weight="600" font-family="-apple-system,system-ui,sans-serif">' + fmtYen(lastVal) + '</text>' +
+        // 最終値ドット（Peak-End強調: 大きめドット + 光彩）
+        '<circle cx="' + lastX.toFixed(1) + '" cy="' + lastY.toFixed(1) + '" r="6" fill="' + color + '" opacity="0.15"/>' +
+        '<circle cx="' + lastX.toFixed(1) + '" cy="' + lastY.toFixed(1) + '" r="3.5" fill="' + color + '"/>' +
+        // 最終値ラベル（HIG 13pt、ウェイト600）
+        '<text x="' + lastX.toFixed(1) + '" y="' + labelY.toFixed(1) + '" text-anchor="' + labelAnchor + '" fill="' + color + '" font-size="13" font-weight="600" font-family="' + font + '">' + fmtYen(lastVal) + '</text>' +
       '</svg>';
+
+    // レスポンシブ: コンテナリサイズ時に再描画
+    if (!chart._resizeOb) {
+      chart._resizeOb = new ResizeObserver(function() {
+        if (chart._resizeTimer) clearTimeout(chart._resizeTimer);
+        chart._resizeTimer = setTimeout(function() { renderEquityChart(data); }, 150);
+      });
+      chart._resizeOb.observe(chart);
+    }
   }
 
   // ── 統計タブ描画 ──

@@ -90,7 +90,7 @@ body.sheet-open {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  padding: calc(env(safe-area-inset-top) + 12px) 20px 10px;
+  padding: calc(env(safe-area-inset-top) + 12px) 20px 12px;
   position: fixed;
   top: 0;
   left: 0;
@@ -129,6 +129,10 @@ body.sheet-open {
   -webkit-tap-highlight-color: transparent;
   touch-action: manipulation;
   border-radius: 50%;
+  transition: opacity 0.15s ease;
+}
+.refresh-btn:active {
+  opacity: 0.5;
 }
 .refresh-btn.spinning svg {
   animation: spin 0.6s cubic-bezier(0.4, 0, 0.2, 1);
@@ -164,7 +168,7 @@ body, #app {
   font-weight: 500;
   color: var(--label-secondary);
   letter-spacing: 0.2px;
-  margin-bottom: 6px;
+  margin-bottom: 8px;
 }
 .hero-pnl {
   font-size: 44px;
@@ -203,10 +207,10 @@ body, #app {
 }
 
 /* ─── Watchlist（株価アプリ風） ─── */
-.card-watchlist { padding: 10px 0 0; }
+.card-watchlist { padding: 12px 0 0; }
 .card-watchlist .section-title { padding: 0 16px; }
 .watchlist {
-  margin-top: 6px;
+  margin-top: 8px;
 }
 .watchlist-skeleton {
   display: flex;
@@ -223,9 +227,11 @@ body, #app {
   min-height: 56px;
   border-bottom: 1px solid var(--separator);
   gap: 12px;
-  cursor: default;
+  cursor: pointer;
   -webkit-tap-highlight-color: transparent;
+  transition: opacity 0.15s ease;
 }
+.watch-row:active { opacity: 0.6; }
 .watch-row:last-child { border-bottom: none; }
 
 /* 左: 銘柄名 + サブ情報 */
@@ -247,13 +253,13 @@ body, #app {
   margin-top: 4px;
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 8px;
 }
 .watch-direction {
-  font-size: 10px;
+  font-size: 11px;
   font-weight: 700;
   letter-spacing: 0.5px;
-  padding: 1px 6px;
+  padding: 2px 6px;
   border-radius: 6px;
 }
 .watch-direction-buy  { background: rgba(48,209,88,0.18);  color: var(--green); }
@@ -278,7 +284,7 @@ body, #app {
   font-size: 13px;
   font-weight: 600;
   font-variant-numeric: tabular-nums;
-  padding: 2px 8px;
+  padding: 4px 8px;
   border-radius: 6px;
   letter-spacing: -0.3px;
 }
@@ -327,7 +333,7 @@ body, #app {
   padding: 8px 16px;
   flex-wrap: wrap;
 }
-.ai-inline .ai-badge { font-size: 11px; padding: 3px 10px; flex-shrink: 0; }
+.ai-inline .ai-badge { font-size: 11px; padding: 4px 8px; flex-shrink: 0; }
 .ai-inline-text {
   font-size: 12px;
   color: var(--label-secondary);
@@ -339,7 +345,7 @@ body, #app {
 }
 .ai-inline-time { font-size: 11px; color: var(--label-tertiary); flex-shrink: 0; }
 .ai-inline-status {
-  font-size: 10px;
+  font-size: 11px;
   color: var(--label-tertiary);
   width: 100%;
 }
@@ -366,7 +372,7 @@ body, #app {
   gap: 12px;
   position: relative;
 }
-.ai-badge { font-size: 12px; padding: 5px 14px; flex-shrink: 0; }
+.ai-badge { font-size: 12px; padding: 4px 12px; flex-shrink: 0; }
 .ai-reasoning {
   font-size: 13px;
   color: var(--label-secondary);
@@ -405,7 +411,7 @@ body, #app {
 }
 
 /* ─── Decisions ─── */
-.decisions-list { display: flex; flex-direction: column; gap: 2px; }
+.decisions-list { display: flex; flex-direction: column; gap: 4px; }
 .decision-row {
   background: var(--bg-elevated);
   border-radius: var(--radius-sm);
@@ -455,7 +461,7 @@ body, #app {
   align-items: center;
   justify-content: center;
   flex-wrap: wrap;
-  gap: 6px;
+  gap: 8px;
   padding: 20px 16px 8px;
   font-size: 12px;
   color: var(--label-secondary);
@@ -467,8 +473,8 @@ body, #app {
 /* ─── Status dot ─── */
 .status-dot {
   display: inline-block;
-  width: 7px;
-  height: 7px;
+  width: 8px;
+  height: 8px;
   background: var(--green);
   border-radius: 50%;
   flex-shrink: 0;
@@ -609,7 +615,7 @@ body, #app {
   color: var(--label-tertiary);
   letter-spacing: 0.8px;
   text-transform: uppercase;
-  padding: 0 4px 6px;
+  padding: 0 4px 8px;
   margin-top: 8px;
 }
 .log-row {
@@ -623,13 +629,12 @@ body, #app {
 }
 .log-row:last-child { border-bottom: none; }
 .log-level {
-  font-size: 10px;
+  font-size: 11px;
   font-weight: 700;
   letter-spacing: 0.4px;
-  padding: 2px 5px;
+  padding: 2px 6px;
   border-radius: 4px;
   flex-shrink: 0;
-  margin-top: 1px;
 }
 .log-level-info  { background: rgba(48,209,88,0.15);  color: #30D158; }
 .log-level-warn  { background: rgba(255,159,10,0.15); color: #FF9F0A; }
@@ -645,13 +650,13 @@ body, #app {
 .stat-grid {
   display: grid;
   grid-template-columns: 1fr 1fr;
-  gap: 10px;
+  gap: 8px;
   margin-bottom: 4px;
 }
 .stat-cell {
   background: var(--bg-tertiary);
-  border-radius: 10px;
-  padding: 10px 12px;
+  border-radius: var(--radius);
+  padding: 12px;
 }
 .stat-cell-label {
   font-size: 11px;
@@ -715,7 +720,8 @@ body, #app {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  padding: 8px 16px 10px;
+  padding: 8px 16px;
+  min-height: 44px;
   cursor: pointer;
   -webkit-tap-highlight-color: transparent;
   touch-action: none;
@@ -741,7 +747,7 @@ body, #app {
   padding: 0 0 8px;
 }
 .news-item {
-  padding: 10px 16px;
+  padding: 12px 16px;
   min-height: 44px;
   display: flex;
   flex-direction: column;
@@ -759,7 +765,7 @@ body, #app {
   font-size: 13px;
   color: var(--label);
   line-height: 1.45;
-  margin-bottom: 3px;
+  margin-bottom: 4px;
 }
 .news-item-date {
   font-size: 11px;
@@ -969,7 +975,7 @@ body, #app {
 .sheet.open { transform: translateY(0); }
 .sheet-handle {
   width: 36px;
-  height: 5px;
+  height: 4px;
   background: var(--bg-tertiary);
   border-radius: 3px;
   margin: 12px auto 0;
@@ -1011,12 +1017,12 @@ body, #app {
   background: var(--green);
   color: #000;
   border-radius: var(--radius);
-  padding: 14px 18px;
+  padding: 16px;
   font-size: 15px;
   font-weight: 700;
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 8px;
   z-index: 50;
   transform: translateY(-20px);
   opacity: 0;
@@ -1087,7 +1093,7 @@ body, #app {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  margin-bottom: 10px;
+  margin-bottom: 12px;
 }
 .stats-pair-name {
   font-size: 15px;
@@ -1100,11 +1106,11 @@ body, #app {
   font-variant-numeric: tabular-nums;
 }
 .stats-bar-track {
-  height: 6px;
+  height: 8px;
   background: var(--bg-tertiary);
-  border-radius: 3px;
+  border-radius: 4px;
   overflow: hidden;
-  margin-bottom: 6px;
+  margin-bottom: 8px;
 }
 .stats-bar-fill {
   height: 100%;

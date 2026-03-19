@@ -198,7 +198,8 @@ export async function getApiStatus(db: D1Database): Promise<StatusResponse> {
   // ニュースをリアルタイム取得（DB依存を廃止）
   let latestNews: Array<{ title: string; pubDate: string; description: string }> = [];
   try {
-    latestNews = await fetchNews();
+    const newsResult = await fetchNews();
+    latestNews = newsResult.items;
   } catch {
     // フォールバック: DBのnews_summaryから取得
     type NewsEntry = { title: string; pubDate: string; description: string };

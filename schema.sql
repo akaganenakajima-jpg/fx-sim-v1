@@ -45,3 +45,13 @@ CREATE TABLE IF NOT EXISTS market_cache (
   value      TEXT NOT NULL,               -- JSON文字列
   updated_at TEXT NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS news_fetch_log (
+  id              INTEGER PRIMARY KEY AUTOINCREMENT,
+  source          TEXT    NOT NULL,        -- 'NHK', 'WSJ_Markets' 等
+  ok              INTEGER NOT NULL,        -- 1=成功, 0=失敗
+  latency_ms      INTEGER NOT NULL,        -- レスポンス時間(ms)
+  item_count      INTEGER NOT NULL,        -- 取得記事数
+  avg_freshness   INTEGER,                 -- 平均鮮度(分), null=算出不可
+  created_at      TEXT    NOT NULL
+);

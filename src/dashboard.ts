@@ -130,9 +130,9 @@ export function getDashboardHtml(): string {
     <div id="tab-stats" class="content tab-panel" role="region" aria-label="統計">
 
       <!-- 資産推移グラフ -->
-      <div class="card" style="padding:12px 16px">
-        <div class="section-title" style="margin-bottom:8px">資産推移</div>
-        <div id="equity-chart" style="height:120px;position:relative"></div>
+      <div class="card" style="padding:16px 16px 12px">
+        <div class="section-title" style="margin-bottom:12px">資産推移</div>
+        <div id="equity-chart" style="height:180px;position:relative"></div>
       </div>
 
       <div class="list-header-row" style="padding-top:8px">
