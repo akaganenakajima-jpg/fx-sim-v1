@@ -196,8 +196,8 @@ async function run(env: Env): Promise<void> {
       return;
     }
 
-    // 価格マップ（全てYahoo Finance経由）
-    const prices = new Map<string, number | null>([
+    // 価格マップ（全てYahoo Finance経由 + キャッシュフォールバック）
+    const livePrices: Array<[string, number | null]> = [
       ['USD/JPY',   usdJpyRate],
       ['Nikkei225', indicators.nikkei],
       ['S&P500',    indicators.sp500],
@@ -215,7 +215,32 @@ async function run(env: Env): Promise<void> {
       ['SOL/USD',   indicators.solusd],
       ['DAX',       indicators.dax],
       ['NASDAQ',    indicators.nasdaq],
-    ]);
+    ];
+
+    // Yahoo失敗時はmarket_cacheの前回レートをフォールバック
+    const fallbackPairs: string[] = [];
+    const prices = new Map<string, number | null>();
+    for (const [pair, liveRate] of livePrices) {
+      if (liveRate != null) {
+        prices.set(pair, liveRate);
+      } else {
+        // キャッシュから前回レートを取得
+        const cached = await getCacheValue(env.DB, `prev_rate_${pair}`);
+        if (cached) {
+          prices.set(pair, parseFloat(cached));
+          fallbackPairs.push(pair);
+        } else {
+          prices.set(pair, null);
+        }
+      }
+    }
+    if (fallbackPairs.length > 0) {
+      console.warn(`[fx-sim] Yahoo失敗→キャッシュ使用: ${fallbackPairs.join(', ')}`);
+      // 3件以上のフォールバックは一括WARNのみ（スパム防止）
+      if (fallbackPairs.length >= 3) {
+        await insertSystemLog(env.DB, 'WARN', 'RATE', `Yahoo障害: ${fallbackPairs.length}銘柄キャッシュフォールバック`, fallbackPairs.join(', '));
+      }
+    }
 
     // ブローカー環境（TP/SL・ポジション開設で使用）
     const brokerEnv: BrokerEnv = {
@@ -353,9 +378,8 @@ async function run(env: Env): Promise<void> {
     for (const instrument of INSTRUMENTS) {
       const currentRate = prices.get(instrument.pair);
       if (currentRate == null) {
-        console.warn(`[fx-sim] ${instrument.pair}: price unavailable`);
-        await insertSystemLog(env.DB, 'WARN', 'RATE', `レート取得失敗: ${instrument.pair}`, null);
-        continue;
+        console.warn(`[fx-sim] ${instrument.pair}: price unavailable (no cache)`);
+        continue; // キャッシュもない場合はスキップ（個別WARNは出さない — 上の一括WARNで十分）
       }
 
       const cacheKey = `prev_rate_${instrument.pair}`;
