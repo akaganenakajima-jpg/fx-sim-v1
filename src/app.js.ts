@@ -376,7 +376,7 @@ export const JS = `
           pairCloses.slice(0, 5).map(function(c) {
             var pnl = c.pnl != null ? c.pnl : 0;
             var pnlColor = pnl > 0 ? 'var(--green)' : pnl < 0 ? 'var(--red)' : 'var(--label-secondary)';
-            var icon = c.close_reason === 'TP' ? '🎯' : c.close_reason === 'SL' ? '🔴' : '—';
+            var icon = c.close_reason === 'TP' ? '<span style="color:var(--green);font-size:10px;font-weight:700;letter-spacing:0.3px">TP</span>' : c.close_reason === 'SL' ? '<span style="color:var(--red);font-size:10px;font-weight:700;letter-spacing:0.3px">SL</span>' : '—';
             var dir = c.direction === 'BUY' ? '買い' : '空売り';
             return '<div style="display:flex;justify-content:space-between;align-items:center;padding:7px 0;border-bottom:1px solid var(--separator)">' +
               '<div><span style="font-size:11px;color:var(--label-secondary)">' + fmtTime(c.closed_at) + '</span> <span style="font-size:12px">' + icon + ' ' + dir + '</span></div>' +
@@ -871,17 +871,19 @@ export const JS = `
     var bannerSub   = el('tp-banner-sub');
     var bannerIcon  = banner.querySelector('.tp-banner-icon');
 
+    var SVG_CHECK = '<svg width="22" height="22" viewBox="0 0 22 22" fill="none"><circle cx="11" cy="11" r="9.5" stroke="currentColor" stroke-width="1.5"/><path d="M6.5 11l3 3 6-6" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+    var SVG_CROSS = '<svg width="22" height="22" viewBox="0 0 22 22" fill="none"><circle cx="11" cy="11" r="9.5" stroke="currentColor" stroke-width="1.5"/><path d="M7.5 7.5l7 7M14.5 7.5l-7 7" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>';
     if (isTP) {
       banner.classList.remove('sl-banner');
-      bannerIcon.textContent = '🎯';
+      bannerIcon.innerHTML = SVG_CHECK;
       bannerTitle.textContent = '利確！TP到達';
     } else if (isSL) {
       banner.classList.add('sl-banner');
-      bannerIcon.textContent = '🌸';
+      bannerIcon.innerHTML = SVG_CROSS;
       bannerTitle.textContent = '損切り — 金継ぎ';
     } else {
       banner.classList.remove('sl-banner');
-      bannerIcon.textContent = '✅';
+      bannerIcon.innerHTML = SVG_CHECK;
       bannerTitle.textContent = '決済完了';
     }
 
@@ -894,9 +896,9 @@ export const JS = `
 
     // プッシュ通知
     if ('Notification' in window && Notification.permission === 'granted') {
-      var icon = isTP ? '🎯' : isSL ? '🔴' : '✅';
-      new Notification('FX Sim ' + (isTP ? '利確' : isSL ? '損切り' : '決済'), {
-        body: icon + ' ' + (pos.pair || '') + ' ' + pnlFmt.text,
+      var notifLabel = isTP ? '利確' : isSL ? '損切り' : '決済';
+      new Notification('FX Sim ' + notifLabel, {
+        body: (pos.pair || '') + '  ' + pnlFmt.text,
         tag: 'fxsim-trade-' + pos.id,
       });
     }
@@ -1223,14 +1225,18 @@ export const JS = `
       .slice(0, 3);
     if (ranked.length === 0) { section.style.display = 'none'; return; }
 
-    var medals = ['🥇', '🥈', '🥉'];
+    var medals = [
+      '<span class="ai-ranking-medal ai-ranking-medal--1">1</span>',
+      '<span class="ai-ranking-medal ai-ranking-medal--2">2</span>',
+      '<span class="ai-ranking-medal ai-ranking-medal--3">3</span>'
+    ];
     var html = ranked.map(function(r, i) {
       var pct = (r.bayesRate * 100).toFixed(1);
       var barW = Math.round(r.bayesRate * 100);
       var inst = INSTRUMENTS.find(function(x) { return x.pair === r.pair; });
       var label = inst ? inst.label : r.pair;
       return '<div class="ai-ranking-row">' +
-        '<span class="ai-ranking-medal">' + medals[i] + '</span>' +
+        medals[i] +
         '<span class="ai-ranking-name">' + escHtml(label) + '</span>' +
         '<div class="ai-ranking-bar"><div class="ai-ranking-bar-fill" style="width:' + barW + '%"></div></div>' +
         '<span class="ai-ranking-pct">' + pct + '%</span>' +
@@ -1312,7 +1318,11 @@ export const JS = `
       .filter(function(r) { return r.n >= 3; })
       .sort(function(a, b) { return b.bayesRate - a.bayesRate; })
       .slice(0, 3);
-    var medals = ['🥇', '🥈', '🥉'];
+    var medals = [
+      '<span class="ai-ranking-medal ai-ranking-medal--1">1</span>',
+      '<span class="ai-ranking-medal ai-ranking-medal--2">2</span>',
+      '<span class="ai-ranking-medal ai-ranking-medal--3">3</span>'
+    ];
     var pairsVerdict = topPairs.length >= 2 ? 'yes' : 'warn';
     var pairsVerdictTxt = topPairs.length >= 2 ? '✓ 明確' : '△ 不明瞭';
 
@@ -1331,7 +1341,7 @@ export const JS = `
       '<div class="stats-narrative-section">' +
         '<div class="stats-narrative-header">' +
           '<div class="stats-narrative-question">' +
-            '<span>📊</span><span>このAIは統計的に勝てているか？</span>' +
+            'このAIは統計的に勝てているか？' +
           '</div>' +
           '<span class="stats-verdict stats-verdict--' + verdictCls + '">' + verdictTxt + '</span>' +
         '</div>' +
@@ -1380,7 +1390,7 @@ export const JS = `
       '<div class="stats-narrative-section">' +
         '<div class="stats-narrative-header">' +
           '<div class="stats-narrative-question">' +
-            '<span>⚖️</span><span>リスクに見合ったリターンか？</span>' +
+            'リスクに見合ったリターンか？' +
           '</div>' +
           '<span class="stats-verdict stats-verdict--' + riskVerdictCls + '">' + riskVerdictTxt + '</span>' +
         '</div>' +
@@ -1414,7 +1424,7 @@ export const JS = `
       '<div class="stats-narrative-section">' +
         '<div class="stats-narrative-header">' +
           '<div class="stats-narrative-question">' +
-            '<span>🎯</span><span>どの銘柄が得意か？</span>' +
+            'どの銘柄が得意か？' +
           '</div>' +
           '<span class="stats-verdict stats-verdict--' + pairsVerdict + '">' + pairsVerdictTxt + '</span>' +
         '</div>' +
@@ -1426,7 +1436,7 @@ export const JS = `
             var pct = (r.bayesRate * 100).toFixed(1);
             var barW = Math.round(r.bayesRate * 100);
             return '<div class="ai-ranking-row">' +
-              '<span class="ai-ranking-medal">' + medals[i] + '</span>' +
+              medals[i] +
               '<span class="ai-ranking-name">' + escHtml(label) + '</span>' +
               '<div class="ai-ranking-bar"><div class="ai-ranking-bar-fill" style="width:' + barW + '%"></div></div>' +
               '<span class="ai-ranking-pct">' + pct + '%</span>' +
@@ -1901,7 +1911,7 @@ export const JS = `
           listHtml = pairCloses.map(function(c) {
             var pnl = c.pnl != null ? c.pnl : 0;
             var pnlColor = pnl > 0 ? 'var(--green)' : pnl < 0 ? 'var(--red)' : 'var(--label-secondary)';
-            var icon = c.close_reason === 'TP' ? '🎯' : c.close_reason === 'SL' ? '🔴' : '—';
+            var icon = c.close_reason === 'TP' ? '<span style="color:var(--green);font-size:10px;font-weight:700;letter-spacing:0.3px">TP</span>' : c.close_reason === 'SL' ? '<span style="color:var(--red);font-size:10px;font-weight:700;letter-spacing:0.3px">SL</span>' : '—';
             var dir = c.direction === 'BUY' ? '買い' : '空売り';
             return '<div style="display:flex;justify-content:space-between;align-items:center;padding:10px 0;border-bottom:1px solid var(--separator)">' +
               '<div>' +

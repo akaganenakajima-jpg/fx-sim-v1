@@ -11,7 +11,7 @@ export function getDashboardHtml(): string {
   <meta name="theme-color" content="#000000" media="(prefers-color-scheme: dark)">
   <meta name="theme-color" content="#F2F2F7" media="(prefers-color-scheme: light)">
   <title>FX Sim</title>
-  <link rel="stylesheet" href="/style.css?v=10">
+  <link rel="stylesheet" href="/style.css?v=11">
 </head>
 <body>
   <div id="app">
@@ -87,7 +87,7 @@ export function getDashboardHtml(): string {
 
     <!-- TP/SL バナー -->
     <div id="tp-banner" class="tp-banner" role="alert" aria-live="assertive">
-      <div class="tp-banner-icon">🎯</div>
+      <div class="tp-banner-icon"><svg width="22" height="22" viewBox="0 0 22 22" fill="none"><circle cx="11" cy="11" r="9.5" stroke="currentColor" stroke-width="1.5"/><path d="M6.5 11l3 3 6-6" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg></div>
       <div class="tp-banner-text">
         <div class="tp-banner-title" id="tp-banner-title">利確成功</div>
         <div class="tp-banner-sub"   id="tp-banner-sub">—</div>
@@ -321,7 +321,7 @@ export function getDashboardHtml(): string {
     </div>
 
   </div>
-  <script src="/app.js?v=10"></script>
+  <script src="/app.js?v=11"></script>
 </body>
 </html>`;
 }

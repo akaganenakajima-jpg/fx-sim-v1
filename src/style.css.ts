@@ -154,7 +154,7 @@ body.sheet-open {
 
 /* ─── Content ─── */
 .content {
-  padding: calc(env(safe-area-inset-top) + 58px) 16px 48px;
+  padding: calc(env(safe-area-inset-top) + 74px) 16px 48px;
   display: flex;
   flex-direction: column;
   gap: 12px;
@@ -221,8 +221,8 @@ body, #app {
 }
 
 /* ─── Watchlist（株価アプリ風） ─── */
-.card-watchlist { padding: 12px 0 0; }
-.card-watchlist .section-title { padding: 0 16px; }
+.card-watchlist { padding: 0; }
+.card-watchlist .section-title { padding: 8px 16px 4px; }
 .watchlist {
   margin-top: 8px;
 }
@@ -1803,7 +1803,7 @@ body.sheet-open .tab-bar {
   background: var(--bg-elevated);
   border-radius: var(--radius);
   border: 1px solid rgba(255,255,255,0.05);
-  margin: 0 16px 8px;
+  margin: 0 16px;
   overflow: hidden;
 }
 .ai-ranking-list--inline {
@@ -1822,11 +1822,21 @@ body.sheet-open .tab-bar {
 .ai-ranking-row:last-child { border-bottom: none; }
 .ai-ranking-row:active { background: rgba(255,255,255,0.12); }
 .ai-ranking-medal {
-  font-size: 16px;
-  width: 24px;
-  text-align: center;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: rgba(255,255,255,0.08);
+  font-size: 11px;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  justify-content: center;
   flex-shrink: 0;
+  color: var(--label-secondary);
 }
+.ai-ranking-medal--1 { background: rgba(255,204,0,0.18); color: #FFCC00; }
+.ai-ranking-medal--2 { background: rgba(174,174,178,0.18); color: #AEAEB2; }
+.ai-ranking-medal--3 { background: rgba(188,96,0,0.18); color: #BC6000; }
 .ai-ranking-name {
   flex: 1;
   font-size: 15px;
