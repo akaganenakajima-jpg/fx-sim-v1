@@ -518,18 +518,12 @@ export async function analyzeNewsClaude(params: {
 
 // ── Path B: og:description フェッチ ──
 
-/** og:descriptionを取得しない英語ソース（RSSのdescriptionを使用） */
-const OG_EXCLUDED_SOURCES = ['CNBC', 'Bloomberg', 'FXStreet', 'CoinDesk'];
-
 /**
  * 指定URLからog:descriptionを取得する
- * - 英語4ソースはスキップしてnullを返す
  * - タイムアウト3秒、失敗時はnullを返す（例外を投げない）
  */
 export async function fetchOgDescription(url: string, sourceName?: string): Promise<string | null> {
-  if (sourceName && OG_EXCLUDED_SOURCES.some(s => sourceName.toLowerCase().includes(s.toLowerCase()))) {
-    return null;
-  }
+  void sourceName; // 将来の拡張用
   try {
     const res = await fetchWithTimeout(url, {}, 3_000);
     if (!res.ok) return null;
@@ -596,7 +590,7 @@ export async function newsStage1(params: {
     '- tp_rate/sl_rateは必ず数値で返す（nullは不可）\n' +
     '- リスクリワード比は1.5以上\n' +
     '- 確信度が低いニュースはtrade_signalsに含めない\n' +
-    '- attention:falseのニュースはimpact/title_jaを空文字列、affected_pairsを[]にする';
+    '- attention:falseのニュースはimpact/affected_pairsを空にするが、title_jaは英語タイトルの場合必ず日本語訳を返す';
 
   const res = await fetchWithTimeout(`${GEMINI_ENDPOINT}?key=${apiKey}`, {
     method: 'POST',

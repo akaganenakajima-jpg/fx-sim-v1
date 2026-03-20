@@ -94,6 +94,7 @@ export default {
             TRADING_ENABLED: env.TRADING_ENABLED, OANDA_LIVE: env.OANDA_LIVE,
             RISK_MAX_DAILY_LOSS: env.RISK_MAX_DAILY_LOSS, RISK_MAX_LIVE_POSITIONS: env.RISK_MAX_LIVE_POSITIONS,
             RISK_MAX_LOT_SIZE: env.RISK_MAX_LOT_SIZE, RISK_ANOMALY_THRESHOLD: env.RISK_ANOMALY_THRESHOLD,
+            geminiApiKey: env.GEMINI_API_KEY,
           });
           // unpaired surrogateを除去して不正JSONを防止
           const json = JSON.stringify(status).replace(/[\uD800-\uDFFF]/g, '');
@@ -827,6 +828,7 @@ async function run(env: Env): Promise<void> {
 
     const sharedNewsStore: SharedNewsStore = { items: news, hash: currentNewsHash, hasChanged };
 
+
     /* DEPRECATED_v2: newsAnalysisRan / hasAttentionNews ロジック → runPathB() に置換
     let newsAnalysisRan = false;
     ...
@@ -936,7 +938,7 @@ async function run(env: Env): Promise<void> {
       ));
     }
 
-    // news_analysis キャッシュ更新（Path B分析結果）
+    // news_analysis + latest_news キャッシュ更新（Path B分析結果、title_ja付き）
     if (pathBResult.newsAnalysis.length > 0) {
       const enriched = pathBResult.newsAnalysis.map(a => ({
         ...a,
@@ -946,7 +948,12 @@ async function run(env: Env): Promise<void> {
         source: (news[a.index] as any)?.source ?? null,
       }));
       await setCacheValue(env.DB, 'news_analysis', JSON.stringify(enriched));
-      await setCacheValue(env.DB, 'latest_news', JSON.stringify(news.slice(0, 30)));
+      const titleJaMap = new Map(
+        pathBResult.newsAnalysis.filter(a => a.title_ja).map(a => [a.index, a.title_ja] as [number, string])
+      );
+      await setCacheValue(env.DB, 'latest_news', JSON.stringify(
+        news.slice(0, 30).map((n, i) => ({ ...n, title_ja: titleJaMap.get(i) || null }))
+      ));
     }
 
     const newsMs = Date.now() - t2;
