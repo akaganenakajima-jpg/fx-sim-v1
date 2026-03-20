@@ -204,7 +204,8 @@ export async function openPosition(
   tpRate: number | null,
   slRate: number | null,
   source: 'paper' | 'oanda' = 'paper',
-  oandaTradeId: string | null = null
+  oandaTradeId: string | null = null,
+  webhookUrl?: string,
 ): Promise<void> {
   const existing = await getOpenPositionByPair(db, pair);
   if (existing) {
@@ -240,6 +241,10 @@ export async function openPosition(
       `7連敗縮退: ${pair} ${direction} 当日発注停止`,
       JSON.stringify({ consecutiveLosses, lot }));
     console.warn(`[position] 7連敗縮退: ${pair} 発注停止`);
+    // 7連敗通知（return の直前）
+    await sendNotification(webhookUrl, buildDrawdownMessage({
+      consecutiveLosses, lotMultiplier: 0, pair,
+    }));
     return;
   }
   if (ddMultiplier < 1.0) {
@@ -248,6 +253,10 @@ export async function openPosition(
     console.log(`[position] 連敗縮退: ${consecutiveLosses}連敗 ×${ddMultiplier} lot ${prevLot.toFixed(1)} → ${lot.toFixed(1)}`);
     await insertSystemLog(db, 'INFO', 'DRAWDOWN',
       `連敗縮退 ${consecutiveLosses}連敗 → lot×${ddMultiplier}: ${pair}`);
+    // 縮退通知
+    await sendNotification(webhookUrl, buildDrawdownMessage({
+      consecutiveLosses, lotMultiplier: ddMultiplier, pair,
+    }));
   }
 
   await db
