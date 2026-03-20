@@ -499,3 +499,120 @@ export function markovTransition(outcomes: boolean[]): {
     streakProb3,
   };
 }
+
+/** EWMA（指数加重移動平均）ボラティリティ推定
+ *  σ²_t = λ·σ²_{t-1} + (1-λ)·r²_{t-1}
+ *  λ=0.94: RiskMetrics 標準値（長期依存度）
+ *  O(n) 計算でCPU制限違反なし
+ *
+ *  注: 真のGARCH(1,1)より単純だが、Cloudflare Workers制約内で安定動作
+ */
+export function ewmaVolatility(
+  logReturns: number[],
+  lambda = 0.94,
+): {
+  sigma2: number;        // 現在の分散推定値
+  sigmaAnnualized: number; // 年率換算ボラ%（1分足 → ×√525600）
+  forecastSigma2: number; // 1期先予測分散
+  isHighVol: boolean;    // 全体平均の1.5倍超
+} {
+  if (logReturns.length < 5) {
+    return { sigma2: 0, sigmaAnnualized: 0, forecastSigma2: 0, isHighVol: false };
+  }
+  // 初期分散: 最初の5件の標本分散
+  const init = logReturns.slice(0, 5);
+  const initMean = init.reduce((s, v) => s + v, 0) / 5;
+  let sigma2 = init.reduce((s, v) => s + (v - initMean) ** 2, 0) / 4;
+
+  for (let i = 1; i < logReturns.length; i++) {
+    sigma2 = lambda * sigma2 + (1 - lambda) * logReturns[i - 1] ** 2;
+  }
+  const forecastSigma2 = lambda * sigma2 + (1 - lambda) * (logReturns[logReturns.length - 1] ** 2);
+
+  // 全体分散と比較して高ボラ判定
+  const overallVar = logReturns.reduce((s, v) => s + v ** 2, 0) / logReturns.length;
+  const isHighVol = overallVar > 0 ? sigma2 / overallVar > 1.5 : false;
+
+  // 年率換算（1分足 × 525600分/年）
+  const sigmaAnnualized = Math.sqrt(sigma2 * 525600) * 100;
+
+  return { sigma2, sigmaAnnualized, forecastSigma2, isHighVol };
+}
+
+/** Engle-Granger 共和分検定（2変量）
+ *  Step 1: y = a + b*x の OLS 回帰
+ *  Step 2: 残差に ADF 検定（簡易版: 定常性の判定）
+ *  注意: n < 200 の場合は信頼性なし（false 強制返却）
+ */
+export function engleGrangerCointegration(
+  x: number[],
+  y: number[],
+): { residualADF: number; cointegrated: boolean; sampleN: number } {
+  const n = Math.min(x.length, y.length);
+  if (n < 200) return { residualADF: 0, cointegrated: false, sampleN: n };
+
+  const xs = x.slice(0, n);
+  const ys = y.slice(0, n);
+
+  // OLS: b = Cov(x,y)/Var(x), a = mean(y) - b*mean(x)
+  const mx = xs.reduce((s, v) => s + v, 0) / n;
+  const my = ys.reduce((s, v) => s + v, 0) / n;
+  let covXY = 0, varX = 0;
+  for (let i = 0; i < n; i++) {
+    covXY += (xs[i] - mx) * (ys[i] - my);
+    varX  += (xs[i] - mx) ** 2;
+  }
+  const b = varX > 0 ? covXY / varX : 0;
+  const a = my - b * mx;
+
+  // 残差
+  const residuals = xs.map((xi, i) => ys[i] - (a + b * xi));
+
+  // 簡易 ADF: Δe_t = γ * e_{t-1} + ε_t の OLS → γ が負に有意なら定常
+  const deltaE = residuals.slice(1).map((v, i) => v - residuals[i]);
+  const lagE   = residuals.slice(0, -1);
+  const mLag   = lagE.reduce((s, v) => s + v, 0) / lagE.length;
+  let covDE_lagE = 0, varLag = 0;
+  for (let i = 0; i < deltaE.length; i++) {
+    covDE_lagE += deltaE[i] * (lagE[i] - mLag);
+    varLag     += (lagE[i] - mLag) ** 2;
+  }
+  const gamma = varLag > 0 ? covDE_lagE / varLag : 0;
+  const residualADF = gamma; // 負で大きいほど定常（共和分あり）
+
+  // ADF 臨界値（n≥200、5%有意水準）: 約 -2.86
+  const cointegrated = gamma < -2.86;
+  return { residualADF, cointegrated, sampleN: n };
+}
+
+/** 階層ベイズ勝率推定（Beta-Binomial 共役更新）
+ *  プール推定を事前分布として使い、銘柄固有勝率を補正
+ *  コールドスタート（データ少）の銘柄をプール平均に引き寄せる
+ *
+ *  更新式: α_i = α_prior + wins_i, β_i = β_prior + losses_i
+ *  事後平均: α_i / (α_i + β_i)
+ */
+export function hierarchicalWinRate(
+  pairData: Array<{ pair: string; wins: number; total: number }>,
+): Array<{ pair: string; rawRate: number; bayesRate: number; n: number }> {
+  if (pairData.length === 0) return [];
+
+  const totalWins   = pairData.reduce((s, d) => s + d.wins, 0);
+  const totalTrades = pairData.reduce((s, d) => s + d.total, 0);
+  if (totalTrades === 0) return [];
+
+  // ハイパーパラメータ（プール推定からの事前分布）
+  const pooledRate = totalWins / totalTrades;
+  // precision = 10: プールへの引き戻し強度（大きいほどプールに近づく）
+  const precision = 10;
+  const alphaPrior = pooledRate * precision;
+  const betaPrior  = (1 - pooledRate) * precision;
+
+  return pairData.map(d => {
+    const alphaPost = alphaPrior + d.wins;
+    const betaPost  = betaPrior  + (d.total - d.wins);
+    const bayesRate = alphaPost / (alphaPost + betaPost);
+    const rawRate   = d.total > 0 ? d.wins / d.total : pooledRate;
+    return { pair: d.pair, rawRate, bayesRate, n: d.total };
+  }).sort((a, b) => b.bayesRate - a.bayesRate);
+}
