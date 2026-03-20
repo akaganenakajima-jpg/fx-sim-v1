@@ -15,7 +15,7 @@ export interface GeminiDecision {
 const GEMINI_ENDPOINT =
   'https://generativelanguage.googleapis.com/v1beta/models/gemini-3.1-pro-preview:generateContent';
 
-const AI_TIMEOUT_MS = 15_000; // AI API呼び出し15秒タイムアウト
+const AI_TIMEOUT_MS = 12_000; // AI API呼び出し12秒タイムアウト（フォールバック3段で最悪36秒）
 const NEWS_ANALYSIS_TIMEOUT_MS = 8_000; // ニュース分析 8秒タイムアウト（フォールバック3段で最悪24秒）
 
 function fetchWithTimeout(url: string, init: RequestInit, timeoutMs = AI_TIMEOUT_MS): Promise<Response> {
