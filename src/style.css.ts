@@ -2131,7 +2131,7 @@ body.sheet-open .tab-bar {
 .dir-badge { font-size: 11px; font-weight: 600; padding: 2px 7px; border-radius: 6px; letter-spacing: 0.02em; }
 .dir-badge.buy  { background: rgba(48,209,88,0.18); color: var(--green); }
 .dir-badge.sell { background: rgba(255,69,58,0.18);  color: var(--red); }
-.tl-chip { font-size: 11px; padding: 2px 7px; border-radius: 6px; }
+.tl-chip { font-size: 11px; padding: 2px 7px; border-radius: 6px; white-space: nowrap; }
 .tl-chip.news { background: rgba(90,200,250,0.12); color: var(--teal);   border: 1px solid rgba(90,200,250,0.28); }
 .tl-chip.rate { background: rgba(255,159,10,0.12);  color: var(--orange); border: 1px solid rgba(255,159,10,0.28); }
 .tl-chip.cron { background: rgba(174,174,178,0.08); color: var(--label-tertiary); border: 1px solid rgba(174,174,178,0.2); }
