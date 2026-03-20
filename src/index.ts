@@ -6,7 +6,7 @@ import { getUSDJPY } from './rate';
 import { fetchNews, type SourceFetchStat } from './news';
 import { fetchRedditSignal } from './reddit';
 import { getMarketIndicators } from './indicators';
-import { getDecision, getDecisionGPT, getDecisionClaude, analyzeNews, analyzeNewsGPT, analyzeNewsClaude } from './gemini';
+import { getDecision, getDecisionGPT, getDecisionClaude, getDecisionWithHedge, analyzeNews, analyzeNewsGPT, analyzeNewsClaude } from './gemini';
 import { checkAndCloseAllPositions, openPosition } from './position';
 import { shouldCallGemini } from './filter';
 import {
@@ -535,10 +535,10 @@ async function run(env: Env): Promise<void> {
       const recentTrades = recentTradesMap.get(instrument.pair) ?? [];
       const sparkRates = sparkMap.get(instrument.pair) ?? [];
 
-      // Gemini 判定
+      // AI判定（ヘッジリクエスト: Gemini→4秒後GPT並行→最速採用）
       let geminiResult;
       try {
-        geminiResult = await getDecision({
+        const hedgeResult = await getDecisionWithHedge({
           instrument,
           rate: currentRate,
           indicators,
@@ -548,75 +548,31 @@ async function run(env: Env): Promise<void> {
           recentTrades,
           allPositionDirections,
           sparkRates,
-          apiKey: getApiKey(env),
+          geminiApiKey: getApiKey(env),
+          openaiApiKey: env.OPENAI_API_KEY,
+          openaiApiKey2: env.OPENAI_API_KEY_2,
+          anthropicApiKey: env.ANTHROPIC_API_KEY,
+          keyIndex: _keyIndex,
         });
-        geminiOkCount++;
+        geminiResult = hedgeResult.decision;
+        if (hedgeResult.provider === 'gemini') geminiOkCount++;
+        else if (hedgeResult.provider === 'gpt') gptOkCount++;
+        else claudeOkCount++;
+        if (hedgeResult.provider !== 'gemini') {
+          await insertSystemLog(env.DB, 'INFO', hedgeResult.provider.toUpperCase(), `${hedgeResult.provider}ヘッジ成功 (${instrument.pair}) → ${geminiResult.decision}`, null);
+        }
       } catch (e) {
         const errMsg = String(e);
-        const is429 = errMsg.includes('429');
-        // ログは1行要約のみ（巨大JSONを吐かない）
-        console.warn(`[fx-sim] Gemini ${is429 ? '429' : 'error'} (${instrument.pair}): ${errMsg.split('\n')[0].slice(0, 120)}`);
-        // 429 → GPT-4o-mini フォールバック → Claude フォールバック
-        if (is429 && env.OPENAI_API_KEY) {
-          try {
-            console.log(`[fx-sim] Falling back to GPT for ${instrument.pair}`);
-            geminiResult = await getDecisionGPT({
-              instrument, rate: currentRate, indicators, news, redditSignal,
-              hasOpenPosition, recentTrades, allPositionDirections, sparkRates,
-              apiKey: (_keyIndex % 2 === 0 ? env.OPENAI_API_KEY : env.OPENAI_API_KEY_2) || env.OPENAI_API_KEY!,
-            });
-            gptOkCount++;
-            await insertSystemLog(env.DB, 'INFO', 'GPT', `GPTフォールバック成功 (${instrument.pair}) → ${geminiResult.decision}`, null);
-          } catch (gptErr) {
-            console.warn(`[fx-sim] GPT fallback failed (${instrument.pair}): ${String(gptErr).split('\n')[0].slice(0, 120)}`);
-            // GPT失敗 → Claude フォールバック
-            if (env.ANTHROPIC_API_KEY) {
-              try {
-                console.log(`[fx-sim] Falling back to Claude for ${instrument.pair}`);
-                geminiResult = await getDecisionClaude({
-                  instrument, rate: currentRate, indicators, news, redditSignal,
-                  hasOpenPosition, recentTrades, allPositionDirections, sparkRates,
-                  apiKey: env.ANTHROPIC_API_KEY,
-                });
-                claudeOkCount++;
-                await insertSystemLog(env.DB, 'INFO', 'CLAUDE', `Claudeフォールバック成功 (${instrument.pair}) → ${geminiResult.decision}`, null);
-              } catch (claudeErr) {
-                console.warn(`[fx-sim] Claude fallback failed (${instrument.pair}): ${String(claudeErr).split('\n')[0].slice(0, 120)}`);
-                await insertSystemLog(env.DB, 'ERROR', 'CLAUDE', `Claudeフォールバック失敗 (${instrument.pair})`, String(claudeErr).slice(0, 200));
-              }
-            }
-            if (!geminiResult) {
-              await insertSystemLog(env.DB, 'ERROR', 'GPT', `GPTフォールバック失敗 (${instrument.pair})`, String(gptErr).slice(0, 200));
-            }
-          }
-        } else if (is429 && env.ANTHROPIC_API_KEY) {
-          // GPTキーなし → Claude直接フォールバック
-          try {
-            console.log(`[fx-sim] Falling back to Claude for ${instrument.pair}`);
-            geminiResult = await getDecisionClaude({
-              instrument, rate: currentRate, indicators, news, redditSignal,
-              hasOpenPosition, recentTrades, allPositionDirections, sparkRates,
-              apiKey: env.ANTHROPIC_API_KEY,
-            });
-            claudeOkCount++;
-            await insertSystemLog(env.DB, 'INFO', 'CLAUDE', `Claudeフォールバック成功 (${instrument.pair}) → ${geminiResult.decision}`, null);
-          } catch (claudeErr) {
-            console.warn(`[fx-sim] Claude fallback failed (${instrument.pair}): ${String(claudeErr).split('\n')[0].slice(0, 120)}`);
-            await insertSystemLog(env.DB, 'ERROR', 'CLAUDE', `Claudeフォールバック失敗 (${instrument.pair})`, String(claudeErr).slice(0, 200));
-          }
-        }
-        if (!geminiResult) {
-          aiFailCount++;
-          const logLevel = is429 ? 'WARN' : 'ERROR';
-          await insertSystemLog(env.DB, logLevel, 'GEMINI', `Gemini ${is429 ? '429' : 'エラー'} (${instrument.pair})`, is429 ? '全フォールバック失敗' : errMsg.split('\n')[0].slice(0, 200));
-        }
+        console.warn(`[fx-sim] All AI failed (${instrument.pair}): ${errMsg.split('\n')[0].slice(0, 120)}`);
+        aiFailCount++;
+        await insertSystemLog(env.DB, 'ERROR', 'AI', `全プロバイダー失敗 (${instrument.pair})`, errMsg.split('\n')[0].slice(0, 200));
         await insertDecision(env.DB, {
           pair: instrument.pair,
           rate: currentRate,
           decision: 'HOLD',
           tp_rate: null,
           sl_rate: null,
-          reasoning: is429 ? 'API制限: 次回判定予定' : `エラー: ${errMsg.split('\n')[0].slice(0, 80)}`,
+          reasoning: `AI判定失敗: ${errMsg.split('\n')[0].slice(0, 80)}`,
           news_summary: null,
           reddit_signal: redditSignal.keywords.join(', ') || null,
           vix: indicators.vix,

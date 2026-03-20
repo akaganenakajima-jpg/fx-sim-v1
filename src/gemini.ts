@@ -15,8 +15,9 @@ export interface GeminiDecision {
 const GEMINI_ENDPOINT =
   'https://generativelanguage.googleapis.com/v1beta/models/gemini-3.1-pro-preview:generateContent';
 
-const AI_TIMEOUT_MS = 12_000; // AI API呼び出し12秒タイムアウト（フォールバック3段で最悪36秒）
-const NEWS_ANALYSIS_TIMEOUT_MS = 8_000; // ニュース分析 8秒タイムアウト（フォールバック3段で最悪24秒）
+const AI_TIMEOUT_MS = 12_000; // AI API呼び出し12秒タイムアウト
+const NEWS_ANALYSIS_TIMEOUT_MS = 8_000; // ニュース分析 8秒タイムアウト
+const HEDGE_DELAY_MS = 4_000; // ヘッジリクエスト: Gemini開始後4秒でGPTも並行開始
 
 function fetchWithTimeout(url: string, init: RequestInit, timeoutMs = AI_TIMEOUT_MS): Promise<Response> {
   const controller = new AbortController();
@@ -273,6 +274,65 @@ export async function getDecisionClaude(params: {
     sl_rate: parsed.sl_rate ?? null,
     reasoning: parsed.reasoning ?? '',
   };
+}
+
+// ── ヘッジリクエスト: 最速プロバイダーの結果を使う ──
+// Gemini開始 → 4秒後にGPTも並行開始 → 最初に成功した方を採用
+export interface HedgeResult {
+  decision: GeminiDecision;
+  provider: 'gemini' | 'gpt' | 'claude';
+}
+
+export async function getDecisionWithHedge(params: {
+  instrument: InstrumentConfig;
+  rate: number;
+  indicators: MarketIndicators;
+  news: NewsItem[];
+  redditSignal: RedditSignal;
+  hasOpenPosition: boolean;
+  recentTrades?: Array<{ pair: string; direction: string; pnl: number; close_reason: string }>;
+  allPositionDirections?: string[];
+  sparkRates?: number[];
+  geminiApiKey: string;
+  openaiApiKey?: string;
+  openaiApiKey2?: string;
+  anthropicApiKey?: string;
+  keyIndex?: number;
+}): Promise<HedgeResult> {
+  const { geminiApiKey, openaiApiKey, openaiApiKey2, anthropicApiKey, keyIndex, ...common } = params;
+
+  // Geminiを即座に開始
+  const geminiPromise = getDecision({ ...common, apiKey: geminiApiKey })
+    .then(d => ({ decision: d, provider: 'gemini' as const }));
+
+  // 4秒後にGPTをヘッジとして開始（Geminiがまだ返ってなければ）
+  const hedgePromise = new Promise<HedgeResult>((resolve, reject) => {
+    setTimeout(async () => {
+      if (openaiApiKey) {
+        try {
+          const oaiKey = (keyIndex !== undefined && keyIndex % 2 === 0 ? openaiApiKey : openaiApiKey2) || openaiApiKey;
+          const d = await getDecisionGPT({ ...common, apiKey: oaiKey });
+          resolve({ decision: d, provider: 'gpt' });
+        } catch (gptErr) {
+          // GPTも失敗 → Claude
+          if (anthropicApiKey) {
+            try {
+              const d = await getDecisionClaude({ ...common, apiKey: anthropicApiKey });
+              resolve({ decision: d, provider: 'claude' });
+            } catch { reject(new Error('All hedge providers failed')); }
+          } else { reject(gptErr); }
+        }
+      } else if (anthropicApiKey) {
+        try {
+          const d = await getDecisionClaude({ ...common, apiKey: anthropicApiKey });
+          resolve({ decision: d, provider: 'claude' });
+        } catch (e) { reject(e); }
+      } else { reject(new Error('No hedge provider')); }
+    }, HEDGE_DELAY_MS);
+  });
+
+  // 最初に成功した方を採用（エラーは無視してもう一方を待つ）
+  return Promise.any([geminiPromise, hedgePromise]);
 }
 
 // ── ニュース注目フラグ分析 ──
