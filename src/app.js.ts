@@ -1501,6 +1501,8 @@ export const JS = `
       var streakPct = (st.markov.streakProb3 * 100).toFixed(1);
       var roiCI = st.roiCI;
       var roiColor = roiCI && roiCI.roi >= 0 ? 'var(--green)' : 'var(--red)';
+      var aiAcc = st.aiAccuracy;
+      var aiColor = aiAcc ? (aiAcc.accuracy >= 0.55 ? 'var(--green)' : aiAcc.accuracy >= 0.50 ? 'var(--label)' : 'var(--red)') : 'var(--label-secondary)';
 
       advStatsHtml += secHeader('📊', 'var(--purple, #af52de)', '統計的信頼性') +
         '<div class="metric-grid-2">' +
@@ -1528,6 +1530,13 @@ export const JS = `
             '<div class="metric-label">Kelly\u57fa\u6e96</div>' +
             '<div class="metric-value">' + kellyPct + '%</div>' +
           '</div>' +
+          (aiAcc ? '<div class="metric-card">' +
+            '<div class="metric-label">AI\u7684\u4e2d\u7387 <span style="font-size:10px;color:var(--label-tertiary)">n=' + aiAcc.n + '</span></div>' +
+            '<div class="metric-value" style="color:' + aiColor + '">' +
+              (aiAcc.accuracy * 100).toFixed(1) + '% ' +
+              '<span style="font-size:11px;font-weight:400;color:var(--label-secondary)">BS=' + aiAcc.brierScore.toFixed(2) + '</span>' +
+            '</div>' +
+          '</div>' : '') +
           '<div class="metric-card">' +
             '<div class="metric-label">PF / 3\u9023\u6557</div>' +
             '<div class="metric-value">' + (st.profitFactor != null ? st.profitFactor.toFixed(2) : '\u2014') + ' / <span style="color:' + (parseFloat(streakPct) > 20 ? 'var(--red)' : 'var(--label)') + '">' + streakPct + '%</span></div>' +

@@ -142,3 +142,31 @@ export async function setCacheValue(
     .bind(key, value, new Date().toISOString())
     .run();
 }
+
+/**
+ * ポジションクローズ時に対応するdecisionのoutcomeを更新（AI的中率トラッキング用）
+ * 同ペア・同方向で entry_at 直前に作成された最新の未評価 BUY/SELL decision を対象とする。
+ */
+export async function updateDecisionOutcome(
+  db: D1Database,
+  pair: string,
+  direction: 'BUY' | 'SELL',
+  entryAt: string,
+  outcome: 'WIN' | 'LOSE'
+): Promise<void> {
+  try {
+    await db
+      .prepare(
+        `UPDATE decisions SET outcome = ?
+         WHERE id = (
+           SELECT id FROM decisions
+           WHERE pair = ? AND decision = ? AND created_at <= ? AND outcome IS NULL
+           ORDER BY created_at DESC LIMIT 1
+         )`
+      )
+      .bind(outcome, pair, direction, entryAt)
+      .run();
+  } catch {
+    // outcomeカラムが未作成（マイグレーション前）の場合は無視
+  }
+}

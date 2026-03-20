@@ -3,7 +3,7 @@
 import type { Position } from './db';
 import { fetchNews } from './news';
 import { getRiskStatus, type RiskEnv } from './risk-guard';
-import { wilsonCI, sharpeWithSE, varCvar, kellyFraction, markovTransition, maxDrawdown, rollingReturns, pnlVolatility, profitFactor, bootstrapROI } from './stats';
+import { wilsonCI, sharpeWithSE, varCvar, kellyFraction, markovTransition, maxDrawdown, rollingReturns, pnlVolatility, profitFactor, bootstrapROI, aiAccuracy } from './stats';
 
 export interface LatestDecision {
   id: number;
@@ -103,6 +103,7 @@ export interface StatusResponse {
   statistics: {
     winRateCI: { lower: number; upper: number };
     roiCI: { roi: number; ciLower: number; ciUpper: number; n: number };
+    aiAccuracy: { accuracy: number; brierScore: number; n: number; wins: number } | null;
     sharpe: number;
     sharpeSE: number;
     sharpeSignificant: boolean;
@@ -267,9 +268,13 @@ export async function getApiStatus(db: D1Database, tradingEnv?: { TRADING_ENABLE
   let statistics: StatusResponse['statistics'] = null;
   if (totalClosed >= 10) {
     try {
-      const allPnlRaw = await db
-        .prepare('SELECT pnl FROM positions WHERE status = \'CLOSED\' ORDER BY closed_at ASC')
-        .all<{ pnl: number }>();
+      const [allPnlRaw, aiOutcomesRaw] = await Promise.all([
+        db.prepare('SELECT pnl FROM positions WHERE status = \'CLOSED\' ORDER BY closed_at ASC')
+          .all<{ pnl: number }>(),
+        db.prepare('SELECT outcome FROM decisions WHERE decision IN (\'BUY\',\'SELL\') AND outcome IS NOT NULL ORDER BY id ASC')
+          .all<{ outcome: string }>(),
+      ]);
+
       const allPnls = (allPnlRaw.results ?? []).map(r => r.pnl);
       const outcomes = allPnls.map(p => p > 0);
 
@@ -283,9 +288,13 @@ export async function getApiStatus(db: D1Database, tradingEnv?: { TRADING_ENABLE
       const avgLoss = losePnls.length > 0 ? Math.abs(losePnls.reduce((s, v) => s + v, 0) / losePnls.length) : 1;
       const avgRR = avgLoss > 0 ? avgWin / avgLoss : 0;
 
+      const aiOutcomes = (aiOutcomesRaw.results ?? []).map(r => r.outcome as 'WIN' | 'LOSE');
+      const aiResult = aiOutcomes.length >= 5 ? aiAccuracy(aiOutcomes) : null;
+
       statistics = {
         winRateCI: ci,
         roiCI: bootstrapROI(allPnls),
+        aiAccuracy: aiResult,
         sharpe: sharpeResult.sharpe,
         sharpeSE: sharpeResult.se,
         sharpeSignificant: sharpeResult.significant,

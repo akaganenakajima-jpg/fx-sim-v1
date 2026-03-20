@@ -128,6 +128,30 @@ export function profitFactor(pnls: number[]): number {
   return losses > 0 ? gains / losses : gains > 0 ? Infinity : 0;
 }
 
+/**
+ * AI方向的中率 + 決定論的Brier Score
+ *
+ * Brier Score = (1/N) Σ (f_i - o_i)^2
+ * 決定論的な BUY/SELL 判断では f_i = 1（確信度100%固定）なので
+ * BS = (正解率をMissした割合) = 1 - accuracy
+ * 完璧予測 BS=0、ランダム BS=0.5、最悪 BS=1.0
+ *
+ * @param outcomes BUY/SELL判定のoutcome配列（'WIN' | 'LOSE'）
+ */
+export function aiAccuracy(outcomes: Array<'WIN' | 'LOSE'>): {
+  accuracy: number;       // 方向的中率（0〜1）
+  brierScore: number;     // Brier Score（0=完璧, 0.5=ランダム, 1=最悪）
+  n: number;              // 評価済みサンプル数
+  wins: number;           // 的中数
+} {
+  const n = outcomes.length;
+  if (n === 0) return { accuracy: 0, brierScore: 0.5, n: 0, wins: 0 };
+  const wins = outcomes.filter(o => o === 'WIN').length;
+  const accuracy = wins / n;
+  const brierScore = 1 - accuracy; // 決定論的予測（f=1固定）のBrier Score
+  return { accuracy, brierScore, n, wins };
+}
+
 /** ROIブートストラップ95%信頼区間
  *  分布非依存の方法でROIの不確実性を定量化。
  *  B回リサンプリング → パーセンタイル法で [2.5%, 97.5%] を取得。

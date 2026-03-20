@@ -46,6 +46,35 @@ const migrations: Migration[] = [
       await db.prepare(`UPDATE positions SET pnl = pnl * 10 WHERE pair = 'Nikkei225' AND status = 'CLOSED' AND pnl IS NOT NULL`).run();
     },
   },
+  {
+    version: 5,
+    description: 'decisions に outcome カラム追加（AI的中率トラッキング）',
+    async up(db) {
+      try {
+        // 'WIN' | 'LOSE' | null（未確定）
+        await db.prepare(`ALTER TABLE decisions ADD COLUMN outcome TEXT`).run();
+      } catch {} // カラムが既に存在する場合は無視
+
+      // 既存のCLOSEDポジションと対応するdecisionを事後的に紐付け
+      // entry_at直前の同ペア BUY/SELL decision に outcome を設定
+      try {
+        await db.prepare(`
+          UPDATE decisions SET outcome = (
+            SELECT CASE WHEN p.pnl > 0 THEN 'WIN' ELSE 'LOSE' END
+            FROM positions p
+            WHERE p.pair = decisions.pair
+              AND p.direction = decisions.decision
+              AND p.status = 'CLOSED'
+              AND p.entry_at >= decisions.created_at
+              AND p.pnl IS NOT NULL
+            ORDER BY p.entry_at ASC LIMIT 1
+          )
+          WHERE decisions.decision IN ('BUY', 'SELL')
+            AND decisions.outcome IS NULL
+        `).run();
+      } catch {}
+    },
+  },
 ];
 
 /** 未適用マイグレーションを順次実行 */

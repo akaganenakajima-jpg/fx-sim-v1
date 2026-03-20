@@ -1,7 +1,7 @@
 // ポジション管理（TP/SL チェック + ブローカー統合）
 // 同時オープンポジションは銘柄ごとに最大1件
 
-import { getOpenPositions, getOpenPositionByPair, closePosition, insertSystemLog } from './db';
+import { getOpenPositions, getOpenPositionByPair, closePosition, insertSystemLog, updateDecisionOutcome } from './db';
 import type { Position } from './db';
 import type { InstrumentConfig } from './instruments';
 import { getBroker, withFallback, type BrokerEnv } from './broker';
@@ -107,6 +107,7 @@ export async function checkAndCloseAllPositions(
       }
 
       await closePosition(db, pos.id, currentRate, 'TP', pnl);
+      await updateDecisionOutcome(db, pos.pair, pos.direction, pos.entry_at, pnl > 0 ? 'WIN' : 'LOSE');
       await insertSystemLog(db, 'INFO', 'POSITION',
         `TP決済: ${pos.pair} ${pos.direction} PnL ${pnl >= 0 ? '+' : ''}${pnl.toFixed(2)}`,
         JSON.stringify({ id: pos.id, entry: pos.entry_rate, close: currentRate, pnl }));
@@ -126,6 +127,7 @@ export async function checkAndCloseAllPositions(
       }
 
       await closePosition(db, pos.id, currentRate, 'SL', pnl);
+      await updateDecisionOutcome(db, pos.pair, pos.direction, pos.entry_at, pnl > 0 ? 'WIN' : 'LOSE');
       await insertSystemLog(db, 'WARN', 'POSITION',
         `SL決済: ${pos.pair} ${pos.direction} PnL ${pnl >= 0 ? '+' : ''}${pnl.toFixed(2)}`,
         JSON.stringify({ id: pos.id, entry: pos.entry_rate, close: currentRate, pnl }));
