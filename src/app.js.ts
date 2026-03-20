@@ -2324,7 +2324,7 @@ export const JS = `
     if (latest) {
       if (kpiBadge) {
         kpiBadge.textContent = latest.decision;
-        kpiBadge.className = 'dir-badge ' + (latest.decision === 'BUY' ? 'buy' : 'sell');
+        kpiBadge.className = 'dir-badge ' + (latest.decision === 'BUY' ? 'buy' : latest.decision === 'SELL' ? 'sell' : 'hold');
       }
       if (kpiPair) kpiPair.textContent = latest.pair || 'USD/JPY';
       if (kpiTime) kpiTime.textContent = fmtElapsed(latest.created_at);
@@ -2334,9 +2334,9 @@ export const JS = `
     var newsCount = todayD.filter(function(d) { return inferTrigger(d) === 'news'; }).length;
     var rateCount = todayD.filter(function(d) { return inferTrigger(d) === 'rate'; }).length;
     var cronCount = todayD.filter(function(d) { return inferTrigger(d) === 'cron'; }).length;
-    var tn = el('ai-trigger-news'); if (tn) tn.textContent = String(newsCount);
-    var tr = el('ai-trigger-rate'); if (tr) tr.textContent = String(rateCount);
-    var tc = el('ai-trigger-cron'); if (tc) tc.textContent = String(cronCount);
+    var triggerNewsEl = el('ai-trigger-news'); if (triggerNewsEl) triggerNewsEl.textContent = String(newsCount);
+    var triggerRateEl = el('ai-trigger-rate'); if (triggerRateEl) triggerRateEl.textContent = String(rateCount);
+    var triggerCronEl = el('ai-trigger-cron'); if (triggerCronEl) triggerCronEl.textContent = String(cronCount);
 
     // ─ タイムラインカード描画 ─
     if (decisions.length === 0) {
@@ -2346,7 +2346,7 @@ export const JS = `
 
     timeline.innerHTML = decisions.map(function(d, i) {
       var trigger  = inferTrigger(d);
-      var dirCls   = d.decision === 'BUY' ? 'buy' : 'sell';
+      var dirCls   = d.decision === 'BUY' ? 'buy' : d.decision === 'SELL' ? 'sell' : 'hold';
       var reasoning = fmtReasoning(d.reasoning);
 
       // 判断結果の判定（openPositionsとの照合）
@@ -2363,9 +2363,9 @@ export const JS = `
 
       // TP/SL表示（tp_rateがAPIに追加されていれば使用、なければ省略）
       var tpslText = '';
-      if (d.tp_rate || d.sl_rate) {
-        tpslText = ' · TP ' + (d.tp_rate ? fmt(d.tp_rate, 3) : '—') +
-                   ' / SL ' + (d.sl_rate ? fmt(d.sl_rate, 3) : '—');
+      if (d.tp_rate != null || d.sl_rate != null) {
+        tpslText = ' · TP ' + (d.tp_rate != null ? fmt(d.tp_rate, 3) : '—') +
+                   ' / SL ' + (d.sl_rate != null ? fmt(d.sl_rate, 3) : '—');
       }
 
       return '<div class="tl-card" role="listitem" data-ai-idx="' + i + '">' +
