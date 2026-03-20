@@ -102,6 +102,56 @@ export const JS = `
     return text;
   }
 
+  // ── AI判断タブ: ユーティリティ ──
+
+  // 日付文字列が今日（ローカルタイム）かどうか
+  function isToday(dateStr) {
+    if (!dateStr) return false;
+    var d = new Date(dateStr);
+    var now = new Date();
+    return d.getFullYear() === now.getFullYear() &&
+           d.getMonth()    === now.getMonth() &&
+           d.getDate()     === now.getDate();
+  }
+
+  // ISO日時 → 「X分前」「X時間前」形式
+  function fmtElapsed(dateStr) {
+    if (!dateStr) return '—';
+    var diff = Date.now() - new Date(dateStr).getTime();
+    var mins = Math.floor(diff / 60000);
+    if (mins < 1)   return 'たった今';
+    if (mins < 60)  return mins + '分前';
+    var hrs = Math.floor(mins / 60);
+    if (hrs < 24)   return hrs + '時間前';
+    return fmtTime(dateStr);
+  }
+
+  // ISO日時 → 「HH:MM:SS」形式
+  function fmtTimeHMS(dateStr) {
+    if (!dateStr) return '—';
+    var d = new Date(dateStr);
+    var hh = String(d.getHours()).padStart(2, '0');
+    var mm = String(d.getMinutes()).padStart(2, '0');
+    var ss = String(d.getSeconds()).padStart(2, '0');
+    return hh + ':' + mm + ':' + ss;
+  }
+
+  // RecentDecision からトリガー種別を推定
+  function inferTrigger(d) {
+    var r = (d.reasoning  || '').toLowerCase();
+    var n = (d.news_summary || '');
+    if (n.length > 10 || r.indexOf('ニュース') !== -1 || r.indexOf('news') !== -1) return 'news';
+    if (r.indexOf('レート') !== -1 || r.indexOf('rate') !== -1 || r.indexOf('変動') !== -1) return 'rate';
+    return 'cron';
+  }
+
+  // トリガー種別 → 表示ラベル
+  function triggerLabel(type) {
+    if (type === 'news') return 'ニュース起動';
+    if (type === 'rate') return 'レート変動';
+    return '定期 30m';
+  }
+
   function escHtml(s) {
     return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
   }
