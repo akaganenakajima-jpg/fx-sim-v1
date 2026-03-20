@@ -124,10 +124,17 @@ export interface StatusResponse {
     vixBucket: string; session: string; pairCategory: string;
     slCount: number; totalCount: number; slRate: number;
   }>;
+  cronTimings: {
+    fetchMs: number;
+    tpSlMs: number;
+    newsMs: number;
+    aiLoopMs: number;
+    totalMs: number;
+  } | null;
 }
 
 export async function getApiStatus(db: D1Database, tradingEnv?: { TRADING_ENABLED?: string; OANDA_LIVE?: string; RISK_MAX_DAILY_LOSS?: string; RISK_MAX_LIVE_POSITIONS?: string; RISK_MAX_LOT_SIZE?: string; RISK_ANOMALY_THRESHOLD?: string }): Promise<StatusResponse> {
-  const [rateRow, openPositions, perf, latest, recent, sysRow, sparkRaw, perfByPairRaw, recentClosesRaw, newsRaw, sysLogsRaw, logStatsRaw, instrScoresRaw, slPatternsRow] =
+  const [rateRow, openPositions, perf, latest, recent, sysRow, sparkRaw, perfByPairRaw, recentClosesRaw, newsRaw, sysLogsRaw, logStatsRaw, instrScoresRaw, slPatternsRow, cronTimingsRow] =
     await Promise.all([
       db
         .prepare("SELECT value FROM market_cache WHERE key = 'prev_rate_USD/JPY'")
@@ -222,11 +229,19 @@ export async function getApiStatus(db: D1Database, tradingEnv?: { TRADING_ENABLE
       // SLパターン（日次バッチ結果）
       db.prepare("SELECT value FROM market_cache WHERE key = 'sl_patterns'")
         .first<{ value: string }>(),
+      // cronフェーズタイミング
+      db
+        .prepare("SELECT value FROM market_cache WHERE key = 'cron_phase_timings'")
+        .first<{ value: string }>(),
     ]);
 
   const rate = rateRow ? parseFloat(rateRow.value) : null;
   const totalClosed = perf?.totalClosed ?? 0;
   const wins = perf?.wins ?? 0;
+
+  const cronTimings = cronTimingsRow
+    ? (() => { try { return JSON.parse(cronTimingsRow.value); } catch { return null; } })()
+    : null;
 
   // スパークラインを銘柄別にグループ化（降順→時系列に反転）
   const sparklines: Record<string, SparkPoint[]> = {};
@@ -392,6 +407,7 @@ export async function getApiStatus(db: D1Database, tradingEnv?: { TRADING_ENABLE
     slPatterns: (() => {
       try { return slPatternsRow ? JSON.parse(slPatternsRow.value) : []; } catch { return []; }
     })(),
+    cronTimings,
   };
 }
 
