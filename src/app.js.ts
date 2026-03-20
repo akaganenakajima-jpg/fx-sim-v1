@@ -867,9 +867,11 @@ export const JS = `
     var pnlFmt = fmtPnl(pos.pnl, '');
 
     var banner = el('tp-banner');
+    var bannerInner = banner.querySelector('.tp-banner-inner');
     var bannerTitle = el('tp-banner-title');
     var bannerSub   = el('tp-banner-sub');
     var bannerIcon  = banner.querySelector('.tp-banner-icon');
+    if (!bannerInner) return;
 
     var SVG_CHECK = '<svg width="22" height="22" viewBox="0 0 22 22" fill="none"><circle cx="11" cy="11" r="9.5" stroke="currentColor" stroke-width="1.5"/><path d="M6.5 11l3 3 6-6" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>';
     var SVG_CROSS = '<svg width="22" height="22" viewBox="0 0 22 22" fill="none"><circle cx="11" cy="11" r="9.5" stroke="currentColor" stroke-width="1.5"/><path d="M7.5 7.5l7 7M14.5 7.5l-7 7" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>';
@@ -904,7 +906,7 @@ export const JS = `
     }
 
     setTimeout(function() { banner.classList.remove('show'); }, 4000);
-    banner.addEventListener('click', function() { banner.classList.remove('show'); }, { once: true });
+    bannerInner.addEventListener('click', function() { banner.classList.remove('show'); }, { once: true });
   }
 
   // ── 時刻フォーマット（パネル用） ──

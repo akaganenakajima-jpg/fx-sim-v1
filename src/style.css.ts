@@ -1052,8 +1052,17 @@ body.sheet-open .tab-bar {
 }
 
 /* ─── TP Banner（Peak-End Rule 祝福） ─── */
+/* ─── TP/SL バナー（iOS PWA scroll-jump 防止） ───
+   外側 = inset:0 全画面透明オーバーレイ（サイズ不変 → WebKit が reflow しない）
+   内側 = .tp-banner-inner のみアニメーション                                    */
 .tp-banner {
   position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 50;
+}
+.tp-banner-inner {
+  position: absolute;
   top: calc(env(safe-area-inset-top) + 56px);
   left: 16px;
   right: 16px;
@@ -1066,19 +1075,18 @@ body.sheet-open .tab-bar {
   display: flex;
   align-items: center;
   gap: 8px;
-  z-index: 50;
-  transform: translateY(-20px);
+  transform: translateY(-16px);
   opacity: 0;
   pointer-events: none;
   transition: transform 0.4s cubic-bezier(0.34, 1.56, 0.64, 1), opacity 0.3s ease;
   overflow: hidden;
 }
-.tp-banner.show {
+.tp-banner.show .tp-banner-inner {
   transform: translateY(0);
   opacity: 1;
   pointer-events: auto;
 }
-.tp-banner::before {
+.tp-banner-inner::before {
   content: '';
   position: absolute;
   inset: 0;
@@ -1096,13 +1104,11 @@ body.sheet-open .tab-bar {
 .tp-banner-sub   { font-size: 15px; opacity: 1; font-weight: 700; }
 
 /* SLバナー（金継ぎ） */
-.sl-banner {
+.tp-banner.sl-banner .tp-banner-inner {
   background: linear-gradient(135deg, #2C2C2E 0%, #3A3A3C 50%, #2C2C2E 100%);
   color: var(--label);
-  position: relative;
-  overflow: hidden;
 }
-.sl-banner::after {
+.tp-banner.sl-banner .tp-banner-inner::after {
   content: '';
   position: absolute;
   inset: 0;
