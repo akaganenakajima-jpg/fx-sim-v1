@@ -338,6 +338,9 @@ async function run(env: Env): Promise<void> {
     const MAX_GEMINI_PER_RUN = isInCooldown
       ? 0  // 429クールダウン中のみスキップ
       : hasAttentionNews ? Math.min(baseLimit + 3, 10) : baseLimit;
+    // 並列数: 前回実行時間から安全な並列数を計算
+    // Gemini 1呼出 ≒ 4-12秒。60秒制限の2/3(40秒)を上限として並列数を決定
+    const parallelLimit = prevElapsed > 30000 ? 2 : prevElapsed > 15000 ? 3 : 4;
     // 4a. 全銘柄のレート変化・フィルタ結果を事前収集
     const candidateList: Array<{
       instrument: InstrumentConfig;
@@ -496,190 +499,202 @@ async function run(env: Env): Promise<void> {
       }
     }
 
-    // 4c. スコア上位からAI判定（予算チェック: 50s超で打ち切り）
-    for (const candidate of aiCandidates) {
+    // 4c. スコア上位からAI判定（並列バッチ処理: 最大parallelLimit件同時実行）
+    type AIResult = { provider: 'gemini' | 'gpt' | 'claude' | 'fail'; pair: string };
+
+    // 並列数でバッチに分割
+    const batches: typeof aiCandidates[] = [];
+    for (let i = 0; i < aiCandidates.length; i += parallelLimit) {
+      batches.push(aiCandidates.slice(i, i + parallelLimit));
+    }
+
+    for (const batch of batches) {
       if (Date.now() - cronStart > 50_000) {
-        console.warn(`[fx-sim] Cron budget exhausted (${Date.now() - cronStart}ms), skipping remaining AI calls`);
+        console.warn(`[fx-sim] Cron budget exhausted (${Date.now() - cronStart}ms), skipping remaining batches`);
         break;
       }
-      const { instrument, currentRate } = candidate;
 
-      const hasOpenPosition = openPositionSet.has(instrument.pair);
-      const recentTrades = recentTradesMap.get(instrument.pair) ?? [];
-      const sparkRates = sparkMap.get(instrument.pair) ?? [];
+      const batchResults: AIResult[] = [];
 
-      // AI判定（ヘッジリクエスト: Gemini→4秒後GPT並行→最速採用）
-      let geminiResult;
-      try {
-        const hedgeResult = await getDecisionWithHedge({
-          instrument,
-          rate: currentRate,
-          indicators,
-          news,
-          redditSignal,
-          hasOpenPosition,
-          recentTrades,
-          allPositionDirections,
-          sparkRates,
-          geminiApiKey: getApiKey(env),
-          openaiApiKey: env.OPENAI_API_KEY,
-          openaiApiKey2: env.OPENAI_API_KEY_2,
-          anthropicApiKey: env.ANTHROPIC_API_KEY,
-          keyIndex: _keyIndex,
-        });
-        geminiResult = hedgeResult.decision;
-        if (hedgeResult.provider === 'gemini') geminiOkCount++;
-        else if (hedgeResult.provider === 'gpt') gptOkCount++;
-        else claudeOkCount++;
-        if (hedgeResult.provider !== 'gemini') {
-          await insertSystemLog(env.DB, 'INFO', hedgeResult.provider.toUpperCase(), `${hedgeResult.provider}ヘッジ成功 (${instrument.pair}) → ${geminiResult.decision}`);
+      await Promise.allSettled(
+        batch.map(async (candidate): Promise<AIResult> => {
+          const { instrument, currentRate } = candidate;
+
+          const hasOpenPosition = openPositionSet.has(instrument.pair);
+          const recentTrades = recentTradesMap.get(instrument.pair) ?? [];
+          const sparkRates = sparkMap.get(instrument.pair) ?? [];
+
+          // AI判定（ヘッジリクエスト: Gemini→4秒後GPT並行→最速採用）
+          let geminiResult;
+          try {
+            const hedgeResult = await getDecisionWithHedge({
+              instrument,
+              rate: currentRate,
+              indicators,
+              news,
+              redditSignal,
+              hasOpenPosition,
+              recentTrades,
+              allPositionDirections,
+              sparkRates,
+              geminiApiKey: getApiKey(env),
+              openaiApiKey: env.OPENAI_API_KEY,
+              openaiApiKey2: env.OPENAI_API_KEY_2,
+              anthropicApiKey: env.ANTHROPIC_API_KEY,
+              keyIndex: _keyIndex,
+            });
+            geminiResult = hedgeResult.decision;
+            if (hedgeResult.provider !== 'gemini') {
+              await insertSystemLog(env.DB, 'INFO', hedgeResult.provider.toUpperCase(), `${hedgeResult.provider}ヘッジ成功 (${instrument.pair}) → ${geminiResult.decision}`);
+            }
+
+            // decisions 記録
+            await insertDecision(env.DB, {
+              pair: instrument.pair,
+              rate: currentRate,
+              decision: geminiResult.decision,
+              tp_rate: geminiResult.tp_rate,
+              sl_rate: geminiResult.sl_rate,
+              reasoning: geminiResult.reasoning,
+              news_summary: newsSummary || null,
+              reddit_signal: redditSignal.keywords.join(', ') || null,
+              vix: indicators.vix,
+              us10y: indicators.us10y,
+              nikkei: indicators.nikkei,
+              sp500: indicators.sp500,
+              created_at: now.toISOString(),
+              news_sources: activeNewsSources || null,
+            });
+
+            // 最終AI呼び出し時刻を更新（定期強制呼び出し用）
+            await setCacheValue(env.DB, `last_ai_call_${instrument.pair}`, now.toISOString());
+
+            // BUY/SELL なら新規ポジションをオープン
+            if (
+              (geminiResult.decision === 'BUY' || geminiResult.decision === 'SELL') &&
+              !hasOpenPosition
+            ) {
+              // TP/SLサニティチェック: AIが極端な値を返した場合の防御
+              const sanity = checkTpSlSanity({
+                direction: geminiResult.decision,
+                rate: currentRate,
+                tp: geminiResult.tp_rate,
+                sl: geminiResult.sl_rate,
+                instrument,
+              });
+              if (!sanity.valid) {
+                console.warn(`[fx-sim] Sanity rejected: ${instrument.pair} ${sanity.reason}`);
+                await insertSystemLog(env.DB, 'WARN', 'SANITY',
+                  `TP/SL異常値拒否: ${instrument.pair} ${geminiResult.decision}`,
+                  sanity.reason ?? undefined);
+                // ポジション開設をスキップ（decisionsには記録済み）
+              } else {
+                // ブローカー判定 + リスクチェック
+                const broker = getBroker(instrument, brokerEnv);
+                const isLive = broker.name === 'oanda';
+                let source: 'paper' | 'oanda' = 'paper';
+                let oandaTradeId: string | null = null;
+
+                if (isLive) {
+                  // RiskGuard: 実弾発注前の安全チェック
+                  const riskResult = await checkRisk({
+                    db: env.DB,
+                    env: env as RiskEnv,
+                    pair: instrument.pair,
+                    currentRate,
+                    prevRate: candidate.prevRate,
+                    requestedLot: 1, // lot は openPosition 内で動的計算
+                  });
+
+                  if (!riskResult.allowed) {
+                    console.warn(`[fx-sim] RiskGuard blocked: ${instrument.pair} → ${riskResult.reason}`);
+                    await insertSystemLog(env.DB, 'WARN', 'RISK',
+                      `実弾ブロック: ${instrument.pair} ${geminiResult.decision}`,
+                      riskResult.reason);
+                    // ペーパーにフォールバック（記録は残す）
+                  } else {
+                    // OANDA 実弾発注
+                    const brokerResult = await withFallback(broker, () => broker.openPosition({
+                      pair: instrument.pair,
+                      oandaSymbol: instrument.oandaSymbol,
+                      direction: geminiResult!.decision as 'BUY' | 'SELL',
+                      entryRate: currentRate,
+                      tpRate: geminiResult!.tp_rate,
+                      slRate: geminiResult!.sl_rate,
+                      lot: riskResult.adjustedLot ?? 1,
+                    }), env.DB, `open ${instrument.pair} ${geminiResult.decision}`);
+
+                    if (brokerResult.success && !brokerResult.error?.startsWith('Fallback')) {
+                      source = 'oanda';
+                      oandaTradeId = brokerResult.oandaTradeId ?? null;
+                      console.log(`[fx-sim] 🔴 LIVE: ${instrument.pair} ${geminiResult.decision} tradeId=${oandaTradeId}`);
+                    }
+                  }
+                }
+
+                await openPosition(
+                  env.DB,
+                  instrument.pair,
+                  geminiResult.decision,
+                  currentRate,
+                  geminiResult.tp_rate,
+                  geminiResult.sl_rate,
+                  source,
+                  oandaTradeId,
+                  getWebhookUrl(env),
+                );
+                await insertSystemLog(
+                  env.DB, 'INFO', 'POSITION',
+                  `ポジション開設: ${instrument.pair} ${geminiResult.decision} @ ${currentRate} [${source}]`,
+                  JSON.stringify({ tp: geminiResult.tp_rate, sl: geminiResult.sl_rate, source, oandaTradeId, reasoning: geminiResult.reasoning?.slice(0, 100) })
+                );
+              }
+            } else if (geminiResult.decision !== 'HOLD') {
+              // BUY/SELLだがポジション既存のためスキップ
+              await insertSystemLog(env.DB, 'INFO', 'GEMINI', `${instrument.pair} ${geminiResult.decision} シグナル（既存ポジあり）`);
+            }
+
+            console.log(
+              `[fx-sim] ✅ ${instrument.pair} ${geminiResult.decision} @ ${currentRate}` +
+                ` TP=${geminiResult.tp_rate ?? '-'} SL=${geminiResult.sl_rate ?? '-'}` +
+                ` | ${geminiResult.reasoning}`
+            );
+
+            return { provider: hedgeResult.provider as 'gemini' | 'gpt' | 'claude', pair: instrument.pair };
+          } catch (e) {
+            const errMsg = String(e);
+            console.warn(`[fx-sim] All AI failed (${instrument.pair}): ${errMsg.split('\n')[0].slice(0, 120)}`);
+            await insertSystemLog(env.DB, 'ERROR', 'AI', `全プロバイダー失敗 (${instrument.pair})`, errMsg.split('\n')[0].slice(0, 200));
+            await insertDecision(env.DB, {
+              pair: instrument.pair,
+              rate: currentRate,
+              decision: 'HOLD',
+              tp_rate: null,
+              sl_rate: null,
+              reasoning: `AI判定失敗: ${errMsg.split('\n')[0].slice(0, 80)}`,
+              news_summary: null,
+              reddit_signal: redditSignal.keywords.join(', ') || null,
+              vix: indicators.vix,
+              us10y: indicators.us10y,
+              nikkei: indicators.nikkei,
+              sp500: indicators.sp500,
+              created_at: now.toISOString(),
+              news_sources: activeNewsSources || null,
+            });
+            return { provider: 'fail', pair: instrument.pair };
+          }
+        })
+      ).then(results => {
+        for (const r of results) {
+          if (r.status === 'fulfilled') batchResults.push(r.value);
         }
-      } catch (e) {
-        const errMsg = String(e);
-        console.warn(`[fx-sim] All AI failed (${instrument.pair}): ${errMsg.split('\n')[0].slice(0, 120)}`);
-        aiFailCount++;
-        await insertSystemLog(env.DB, 'ERROR', 'AI', `全プロバイダー失敗 (${instrument.pair})`, errMsg.split('\n')[0].slice(0, 200));
-        await insertDecision(env.DB, {
-          pair: instrument.pair,
-          rate: currentRate,
-          decision: 'HOLD',
-          tp_rate: null,
-          sl_rate: null,
-          reasoning: `AI判定失敗: ${errMsg.split('\n')[0].slice(0, 80)}`,
-          news_summary: null,
-          reddit_signal: redditSignal.keywords.join(', ') || null,
-          vix: indicators.vix,
-          us10y: indicators.us10y,
-          nikkei: indicators.nikkei,
-          sp500: indicators.sp500,
-          created_at: now.toISOString(),
-          news_sources: activeNewsSources || null,
-        });
-        continue;
-      }
-
-      // decisions 記録
-      await insertDecision(env.DB, {
-        pair: instrument.pair,
-        rate: currentRate,
-        decision: geminiResult.decision,
-        tp_rate: geminiResult.tp_rate,
-        sl_rate: geminiResult.sl_rate,
-        reasoning: geminiResult.reasoning,
-        news_summary: newsSummary || null,
-        reddit_signal: redditSignal.keywords.join(', ') || null,
-        vix: indicators.vix,
-        us10y: indicators.us10y,
-        nikkei: indicators.nikkei,
-        sp500: indicators.sp500,
-        created_at: now.toISOString(),
-        news_sources: activeNewsSources || null,
-        prompt_version: PROMPT_VERSION,
       });
 
-      // 最終AI呼び出し時刻を更新（定期強制呼び出し用）
-      await setCacheValue(env.DB, `last_ai_call_${instrument.pair}`, now.toISOString());
-
-      // BUY/SELL なら新規ポジションをオープン
-      if (
-        (geminiResult.decision === 'BUY' || geminiResult.decision === 'SELL') &&
-        !hasOpenPosition
-      ) {
-        // TP/SLサニティチェック: AIが極端な値を返した場合の防御
-        const sanity = checkTpSlSanity({
-          direction: geminiResult.decision,
-          rate: currentRate,
-          tp: geminiResult.tp_rate,
-          sl: geminiResult.sl_rate,
-          instrument,
-        });
-        if (!sanity.valid) {
-          console.warn(`[fx-sim] Sanity rejected: ${instrument.pair} ${sanity.reason}`);
-          await insertSystemLog(env.DB, 'WARN', 'SANITY',
-            `TP/SL異常値拒否: ${instrument.pair} ${geminiResult.decision}`,
-            sanity.reason ?? undefined);
-          // ポジション開設をスキップ（decisionsには記録済み）
-          continue;
-        }
-        // 自動補正されたTP/SLがあれば差し替え
-        if (sanity.correctedTp != null && sanity.correctedSl != null) {
-          console.log(`[fx-sim] TP/SL補正: ${instrument.pair} TP ${geminiResult.tp_rate}→${sanity.correctedTp} SL ${geminiResult.sl_rate}→${sanity.correctedSl}`);
-          await insertSystemLog(env.DB, 'INFO', 'SANITY',
-            `TP/SL自動補正: ${instrument.pair} ${geminiResult.decision}`,
-            JSON.stringify({ origTp: geminiResult.tp_rate, origSl: geminiResult.sl_rate, newTp: sanity.correctedTp, newSl: sanity.correctedSl }));
-          geminiResult.tp_rate = sanity.correctedTp;
-          geminiResult.sl_rate = sanity.correctedSl;
-        }
-
-        // ブローカー判定 + リスクチェック
-        const broker = getBroker(instrument, brokerEnv);
-        const isLive = broker.name === 'oanda';
-        let source: 'paper' | 'oanda' = 'paper';
-        let oandaTradeId: string | null = null;
-
-        if (isLive) {
-          // RiskGuard: 実弾発注前の安全チェック
-          const riskResult = await checkRisk({
-            db: env.DB,
-            env: env as RiskEnv,
-            pair: instrument.pair,
-            currentRate,
-            prevRate: candidate.prevRate,
-            requestedLot: 1, // lot は openPosition 内で動的計算
-          });
-
-          if (!riskResult.allowed) {
-            console.warn(`[fx-sim] RiskGuard blocked: ${instrument.pair} → ${riskResult.reason}`);
-            await insertSystemLog(env.DB, 'WARN', 'RISK',
-              `実弾ブロック: ${instrument.pair} ${geminiResult.decision}`,
-              riskResult.reason);
-            // ペーパーにフォールバック（記録は残す）
-          } else {
-            // OANDA 実弾発注
-            const brokerResult = await withFallback(broker, () => broker.openPosition({
-              pair: instrument.pair,
-              oandaSymbol: instrument.oandaSymbol,
-              direction: geminiResult.decision as 'BUY' | 'SELL',
-              entryRate: currentRate,
-              tpRate: geminiResult.tp_rate,
-              slRate: geminiResult.sl_rate,
-              lot: riskResult.adjustedLot ?? 1,
-            }), env.DB, `open ${instrument.pair} ${geminiResult.decision}`);
-
-            if (brokerResult.success && !brokerResult.error?.startsWith('Fallback')) {
-              source = 'oanda';
-              oandaTradeId = brokerResult.oandaTradeId ?? null;
-              console.log(`[fx-sim] 🔴 LIVE: ${instrument.pair} ${geminiResult.decision} tradeId=${oandaTradeId}`);
-            }
-          }
-        }
-
-        await openPosition(
-          env.DB,
-          instrument.pair,
-          geminiResult.decision,
-          currentRate,
-          geminiResult.tp_rate,
-          geminiResult.sl_rate,
-          source,
-          oandaTradeId,
-          getWebhookUrl(env),
-        );
-        await insertSystemLog(
-          env.DB, 'INFO', 'POSITION',
-          `ポジション開設: ${instrument.pair} ${geminiResult.decision} @ ${currentRate} [${source}]`,
-          JSON.stringify({ tp: geminiResult.tp_rate, sl: geminiResult.sl_rate, source, oandaTradeId, reasoning: geminiResult.reasoning?.slice(0, 100) })
-        );
-      } else if (geminiResult.decision !== 'HOLD') {
-        // BUY/SELLだがポジション既存のためスキップ
-        await insertSystemLog(env.DB, 'INFO', 'GEMINI', `${instrument.pair} ${geminiResult.decision} シグナル（既存ポジあり）`);
-      }
-
-      console.log(
-        `[fx-sim] ✅ ${instrument.pair} ${geminiResult.decision} @ ${currentRate}` +
-          ` TP=${geminiResult.tp_rate ?? '-'} SL=${geminiResult.sl_rate ?? '-'}` +
-          ` | ${geminiResult.reasoning}`
-      );
+      // カウント集計
+      geminiOkCount += batchResults.filter(r => r.provider === 'gemini').length;
+      gptOkCount    += batchResults.filter(r => r.provider === 'gpt').length;
+      claudeOkCount += batchResults.filter(r => r.provider === 'claude').length;
+      aiFailCount   += batchResults.filter(r => r.provider === 'fail').length;
     }
     const aiLoopMs = Date.now() - t3;
     const totalMs = Date.now() - cronStart;
