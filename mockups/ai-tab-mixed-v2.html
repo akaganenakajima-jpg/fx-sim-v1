@@ -1,0 +1,602 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=375, initial-scale=1">
+<title>AI判断タブ v2 — トリガーバッジ追加</title>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+:root {
+  --bg: #000; --bg2: #1c1c1e; --bg3: #2c2c2e; --bg4: #3a3a3c;
+  --label: #fff; --label2: rgba(235,235,245,0.6); --label3: rgba(235,235,245,0.3);
+  --green: #30d158; --red: #ff453a; --blue: #0a84ff;
+  --orange: #ff9f0a; --purple: #bf5af2; --teal: #5ac8fa;
+  --sep: rgba(84,84,88,0.65); --radius: 16px;
+}
+body {
+  background: #0a0a0a;
+  font-family: -apple-system, 'SF Pro Text', sans-serif;
+  color: var(--label);
+  display: flex; flex-direction: column; align-items: center;
+  padding: 32px 16px 60px;
+}
+h1 { font-size: 18px; font-weight: 700; margin-bottom: 4px; color: #fff; }
+.sub { font-size: 12px; color: var(--label2); margin-bottom: 24px; }
+
+.phone {
+  width: 375px; background: var(--bg); border-radius: 44px; overflow: hidden;
+  box-shadow: 0 24px 80px rgba(0,0,0,0.9), 0 0 0 1px rgba(255,255,255,0.1);
+}
+.phone-notch {
+  height: 44px; background: #000;
+  display: flex; align-items: center; justify-content: center;
+}
+.notch-bar { width: 120px; height: 34px; background: #111; border-radius: 0 0 20px 20px; }
+
+.header {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 16px 20px;
+  background: rgba(28,28,30,0.95); backdrop-filter: blur(20px);
+  border-bottom: 1px solid var(--sep);
+}
+.header-title { font-size: 26px; font-weight: 700; }
+.header-meta { font-size: 11px; color: var(--label2); margin-top: 1px; }
+.header-icons { display: flex; gap: 10px; }
+.icon-btn {
+  width: 44px; height: 44px; display: flex; align-items: center; justify-content: center;
+  border-radius: 50%; background: rgba(255,255,255,0.06);
+}
+.icon-btn:active { background: rgba(255,255,255,0.14); }
+
+.scroll { overflow-y: auto; max-height: 680px; padding: 16px 16px 24px; }
+
+/* KPI */
+.kpi-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 8px; }
+.kpi-card {
+  background: var(--bg2); border-radius: 14px; padding: 12px 16px;
+  border: 1px solid var(--sep); position: relative; overflow: hidden;
+}
+.kpi-card::before {
+  content: ''; position: absolute; top: 0; left: 0; right: 0; height: 2px;
+}
+.kpi-card.blue::before   { background: rgba(255,255,255,0.1); }
+.kpi-card.orange::before { background: rgba(255,255,255,0.1); }
+.kpi-card.green::before  { background: rgba(255,255,255,0.1); }
+.kpi-card.latest::before { background: rgba(255,255,255,0.1); }
+.kpi-label { font-size: 11px; color: var(--label2); margin-bottom: 5px; }
+.kpi-value { font-size: 24px; font-weight: 700; line-height: 1; }
+.kpi-sub   { font-size: 11px; color: var(--label3); margin-top: 4px; }
+
+/* パターン */
+.pattern-card {
+  background: var(--bg2); border-radius: 14px; padding: 13px 14px;
+  border: 1px solid var(--sep); margin-bottom: 16px;
+}
+.pattern-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; }
+.pattern-title  { font-size: 12px; color: var(--label2); }
+.legend         { display: flex; gap: 8px; }
+.legend-item    { display: flex; align-items: center; gap: 3px; font-size: 10px; color: var(--label3); }
+.legend-dot     { width: 6px; height: 6px; border-radius: 2px; }
+.pattern-dots   { display: flex; gap: 5px; }
+.pd {
+  width: 30px; height: 30px; border-radius: 8px;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 10px; font-weight: 700;
+}
+.pd-buy  { background: rgba(48,209,88,0.15); color: var(--green); }
+.pd-sell { background: rgba(255,69,58,0.15); color: var(--red); }
+.pd-hold { background: rgba(142,142,147,0.08); color: rgba(235,235,245,0.25); }
+.pd.latest { box-shadow: 0 0 0 2px var(--red); }
+
+/* セクションヘッダー */
+.sec-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; }
+.sec-title  { font-size: 13px; font-weight: 600; color: var(--label2); }
+.sec-filter { font-size: 12px; color: var(--blue); padding: 8px 4px; margin: -8px -4px; }
+
+/* ─── トリガーバッジ ─── */
+.trigger {
+  display: inline-flex; align-items: center; gap: 4px;
+  padding: 2px 7px; border-radius: 6px;
+  font-size: 10px; font-weight: 600; letter-spacing: 0.2px;
+  white-space: nowrap;
+}
+/* ニュース：ティール（情報色） */
+.trigger-news {
+  background: rgba(90,200,250,0.12);
+  color: var(--teal);
+  border: 1px solid rgba(90,200,250,0.28);
+}
+/* レート変動：オレンジ */
+.trigger-rate {
+  background: rgba(255,159,10,0.15);
+  color: var(--orange);
+  border: 1px solid rgba(255,159,10,0.3);
+}
+/* 定期チェック：グレー */
+.trigger-cron {
+  background: rgba(142,142,147,0.12);
+  color: #aeaeb2;
+  border: 1px solid rgba(142,142,147,0.25);
+}
+/* トリガーアイコン（SVGの代替として文字記号） */
+.trigger-icon { font-size: 9px; }
+
+/* タイムラインカード */
+.tl-card {
+  border-radius: 14px; margin-bottom: 8px; overflow: hidden;
+  border: 1px solid var(--sep); background: var(--bg2); cursor: pointer;
+}
+.tl-card:active { background: var(--bg3); }
+.tl-card.hold { opacity: 0.42; }
+.tl-accent-wrap { display: flex; }
+.tl-accent { width: 3px; flex-shrink: 0; }
+.tl-inner  { padding: 12px 12px; flex: 1; min-width: 0; }
+
+/* カード1行目: pair + rate + badge + time + chevron */
+.tl-row1 { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; }
+.tl-left { display: flex; align-items: center; gap: 7px; min-width: 0; }
+.tl-pair { font-size: 14px; font-weight: 700; }
+.tl-rate { font-size: 12px; color: var(--label2); }
+.tl-right { display: flex; align-items: center; gap: 6px; flex-shrink: 0; }
+.tl-time  { font-size: 11px; color: var(--label3); }
+.tl-chevron { font-size: 11px; color: var(--label3); transition: transform 0.2s; min-width: 10px; }
+
+/* カード2行目: トリガー + 推論 */
+.tl-row2 { display: flex; align-items: flex-start; gap: 7px; margin-bottom: 8px; }
+.tl-reasoning {
+  font-size: 12px; color: var(--label2); line-height: 1.5; flex: 1; min-width: 0;
+  display: -webkit-box; -webkit-line-clamp: 1; -webkit-box-orient: vertical; overflow: hidden;
+}
+
+/* カード3行目: chips + result */
+.tl-row3 { display: flex; align-items: center; justify-content: space-between; }
+.tl-chips { display: flex; gap: 5px; flex-wrap: wrap; }
+.tl-chip {
+  background: rgba(255,255,255,0.05); border-radius: 6px;
+  padding: 2px 7px; font-size: 11px; color: var(--label2);
+}
+.tl-result { font-size: 12px; font-weight: 700; display: flex; align-items: center; gap: 4px; flex-shrink: 0; }
+.result-dot { width: 5px; height: 5px; border-radius: 50%; }
+
+/* 詳細パネル */
+.detail-panel {
+  max-height: 0; overflow: hidden; opacity: 0;
+  background: var(--bg3); border-top: 0 solid var(--sep);
+  padding: 0 16px 0 15px;
+  transition: max-height 0.3s cubic-bezier(0.4,0,0.2,1), opacity 0.25s ease, padding 0.3s ease, border-top-width 0.3s ease;
+}
+.detail-panel.open {
+  max-height: 600px; opacity: 1;
+  padding: 14px 16px 16px 15px;
+  border-top: 1px solid var(--sep);
+}
+
+/* トリガー詳細行 */
+.detail-trigger-row {
+  display: flex; align-items: center; gap: 8px;
+  margin-bottom: 12px; padding-bottom: 10px; border-bottom: 1px solid var(--sep);
+}
+.detail-trigger-label { font-size: 11px; color: var(--label2); }
+.detail-trigger-desc  { font-size: 11px; color: var(--label3); flex: 1; }
+
+.detail-4pt { display: grid; grid-template-columns: 1fr 1.3fr; gap: 10px; margin-bottom: 12px; }
+.detail-label { font-size: 11px; color: var(--label3); margin-bottom: 3px; text-transform: uppercase; letter-spacing: 0.3px; }
+.detail-value { font-size: 12px; font-weight: 600; line-height: 1.4; }
+.detail-divider { height: 1px; background: var(--sep); margin-bottom: 12px; }
+.detail-reasoning {
+  font-size: 12px; color: var(--label2); line-height: 1.6;
+  padding: 10px 0 10px 10px;
+  border-left: 2px solid rgba(255,255,255,0.12);
+  margin-bottom: 10px;
+}
+.detail-indicators { display: flex; gap: 6px; flex-wrap: wrap; }
+.detail-chip {
+  background: rgba(255,255,255,0.06); border-radius: 8px;
+  padding: 4px 10px; font-size: 11px; color: var(--label2);
+}
+.detail-chip b { color: var(--label); font-weight: 600; }
+
+/* badge */
+.badge {
+  display: inline-flex; align-items: center; justify-content: center;
+  padding: 3px 9px; border-radius: 7px; font-size: 11px; font-weight: 700; letter-spacing: 0.4px;
+}
+.badge-buy  { background: rgba(48,209,88,0.18); color: var(--green); }
+.badge-sell { background: rgba(255,69,58,0.18); color: var(--red); }
+.badge-hold { background: rgba(142,142,147,0.15); color: #8e8e93; }
+
+/* HOLD省略 */
+.hold-sep { display: flex; align-items: center; gap: 8px; margin: 8px 0; }
+.hold-sep-line  { flex: 1; height: 1px; background: var(--sep); }
+.hold-sep-label { font-size: 10px; color: var(--label3); white-space: nowrap; }
+
+/* タブバー */
+.tabbar {
+  display: flex; background: rgba(28,28,30,0.97); backdrop-filter: blur(20px);
+  border-top: 1px solid var(--sep); padding: 8px 0 24px;
+}
+.tab-item {
+  flex: 1; display: flex; flex-direction: column; align-items: center; gap: 3px;
+  font-size: 11px; color: var(--label2); padding: 4px 0; cursor: pointer;
+}
+.tab-item.active { color: var(--blue); font-weight: 600; }
+.tab-item svg { width: 22px; height: 22px; }
+</style>
+</head>
+<body>
+
+<h1>AI判断タブ — ミックス v2</h1>
+<p class="sub">トリガーバッジ（ニュース / レート変動 / 定期）追加</p>
+
+<div class="phone">
+  <div class="phone-notch"><div class="notch-bar"></div></div>
+
+  <div class="header">
+    <div>
+      <div class="header-title">AI判断</div>
+      <div class="header-meta">03:36 更新 · 356件分析済み</div>
+    </div>
+    <div class="header-icons">
+      <div class="icon-btn">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="rgba(235,235,245,0.5)" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
+      </div>
+      <div class="icon-btn">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="rgba(235,235,245,0.5)" stroke-width="2"><path d="M1 4v6h6"/><path d="M3.51 15a9 9 0 1 0 .49-3.51"/></svg>
+      </div>
+    </div>
+  </div>
+
+  <div class="scroll">
+
+    <!-- ─── KPIダッシュボード ─── -->
+    <div class="kpi-grid" style="margin-bottom:16px">
+      <div class="kpi-card blue">
+        <div class="kpi-label">今日の判断</div>
+        <div class="kpi-value">20件</div>
+        <div class="kpi-sub">BUY 3 · SELL 5 · HOLD 12</div>
+      </div>
+      <div class="kpi-card orange">
+        <div class="kpi-label">AI的中率</div>
+        <div class="kpi-value" style="color:var(--orange)">52.1%</div>
+        <div class="kpi-sub">n=356 · Brier 0.48</div>
+      </div>
+      <div class="kpi-card green">
+        <div class="kpi-label">今日の損益</div>
+        <div class="kpi-value" style="color:var(--green)">+¥692</div>
+        <div class="kpi-sub">3勝 2敗</div>
+      </div>
+      <div class="kpi-card latest">
+        <div class="kpi-label">最新判断</div>
+        <div class="kpi-value" style="padding-top:4px"><span class="badge badge-sell">SELL</span></div>
+        <div class="kpi-sub">Gold · 3分前</div>
+      </div>
+    </div>
+
+    <!-- ─── トリガー内訳（小さく） ─── -->
+    <div style="display:flex;gap:8px;margin-bottom:16px;padding:0 2px">
+      <div style="flex:1;background:var(--bg2);border-radius:12px;padding:8px 12px;border:1px solid var(--sep);text-align:center">
+        <div style="font-size:11px;color:var(--label3);margin-bottom:3px">ニュース起動</div>
+        <div style="font-size:16px;font-weight:700;color:var(--teal)">9回</div>
+      </div>
+      <div style="flex:1;background:var(--bg2);border-radius:12px;padding:8px 12px;border:1px solid var(--sep);text-align:center">
+        <div style="font-size:11px;color:var(--label3);margin-bottom:3px">レート変動</div>
+        <div style="font-size:16px;font-weight:700;color:var(--orange)">7回</div>
+      </div>
+      <div style="flex:1;background:var(--bg2);border-radius:12px;padding:8px 12px;border:1px solid var(--sep);text-align:center">
+        <div style="font-size:11px;color:var(--label3);margin-bottom:3px">定期 30m</div>
+        <div style="font-size:16px;font-weight:700;color:#aeaeb2">4回</div>
+      </div>
+    </div>
+
+    <!-- ─── タイムライン ─── -->
+    <div class="sec-header">
+      <span class="sec-title">判断タイムライン</span>
+      <span class="sec-filter">BUY/SELL のみ ›</span>
+    </div>
+
+    <!-- ■ Card 1: SELL Gold — ニュース起動 — Open (展開済み) -->
+    <div class="tl-card" id="c1" onclick="toggle(1)">
+      <div class="tl-accent-wrap">
+        <div class="tl-accent" style="background:var(--blue)"></div>
+        <div class="tl-inner">
+          <div class="tl-row1">
+            <div class="tl-left">
+              <span class="tl-pair">Gold</span>
+              <span class="tl-rate">4,553.70</span>
+              <span class="badge badge-sell">SELL</span>
+            </div>
+            <div class="tl-right">
+              <span class="tl-time">3分前</span>
+              <span class="tl-chevron" id="v1">▾</span>
+            </div>
+          </div>
+          <div class="tl-row2">
+            <span class="trigger trigger-news">
+              <span class="trigger-icon">◆</span> ニュース
+            </span>
+            <span class="tl-reasoning">中短期トレンド一致の下落継続予想。VIX高・リスク管理重視。</span>
+          </div>
+          <div class="tl-row3">
+            <div class="tl-chips">
+              <span class="tl-chip">VIX 26.4</span>
+              <span class="tl-chip">10y 4.38%</span>
+              <span class="tl-chip">ニュース 3件</span>
+            </div>
+            <div class="tl-result">
+              <div class="result-dot" style="background:var(--blue)"></div>
+              <span style="color:var(--blue)">Open</span>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="detail-panel open" id="d1">
+        <!-- トリガー詳細 -->
+        <div class="detail-trigger-row">
+          <span class="trigger trigger-news"><span class="trigger-icon">◆</span> ニュース起動</span>
+          <span class="detail-trigger-desc">「Fed利上げ観測・リスクオフ」3件検知 → Gemini呼出</span>
+        </div>
+        <div class="detail-4pt">
+          <div>
+            <div class="detail-label">判断基準</div>
+            <div class="detail-value">下降トレンド継続</div>
+          </div>
+          <div>
+            <div class="detail-label">判断内容</div>
+            <div class="detail-value">SELL · TP 4,520 / SL 4,580</div>
+          </div>
+          <div>
+            <div class="detail-label">判断結果</div>
+            <div class="detail-value" style="color:var(--blue)">保有中 +¥42含み</div>
+          </div>
+          <div>
+            <div class="detail-label">判断時刻</div>
+            <div class="detail-value">03:33:12</div>
+          </div>
+        </div>
+        <div class="detail-divider"></div>
+        <div class="detail-reasoning">中短期トレンド一致の下落継続予想。VIX高・リスク管理重視でSLを狭くTP広めに設定。下方向の継続性が高いと判断。</div>
+        <div class="detail-indicators">
+          <span class="detail-chip">VIX <b>26.4</b></span>
+          <span class="detail-chip">10y <b>4.38%</b></span>
+          <span class="detail-chip">ニュース <b>3件</b></span>
+          <span class="detail-chip">Reddit <b>利下げ観測</b></span>
+        </div>
+      </div>
+    </div>
+
+    <!-- ■ Card 2: BUY S&P500 — レート変動起動 — TP -->
+    <div class="tl-card" id="c2" onclick="toggle(2)">
+      <div class="tl-accent-wrap">
+        <div class="tl-accent" style="background:var(--green)"></div>
+        <div class="tl-inner">
+          <div class="tl-row1">
+            <div class="tl-left">
+              <span class="tl-pair">S&amp;P 500</span>
+              <span class="tl-rate">5,210</span>
+              <span class="badge badge-buy">BUY</span>
+            </div>
+            <div class="tl-right">
+              <span class="tl-time">1h前</span>
+              <span class="tl-chevron" id="v2">▸</span>
+            </div>
+          </div>
+          <div class="tl-row2">
+            <span class="trigger trigger-rate">
+              <span class="trigger-icon">↕</span> レート変動
+            </span>
+            <span class="tl-reasoning">短期反発シグナル確認。VIX低下・上昇モメンタム継続。</span>
+          </div>
+          <div class="tl-row3">
+            <div class="tl-chips">
+              <span class="tl-chip">VIX 24.1</span>
+              <span class="tl-chip">10y 4.35%</span>
+            </div>
+            <div class="tl-result">
+              <div class="result-dot" style="background:var(--green)"></div>
+              <span style="color:var(--green)">TP +¥812</span>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="detail-panel" id="d2">
+        <div class="detail-trigger-row">
+          <span class="trigger trigger-rate"><span class="trigger-icon">↕</span> レート変動</span>
+          <span class="detail-trigger-desc">+0.08円変動を検知（閾値 ±0.05）→ Gemini呼出</span>
+        </div>
+        <div class="detail-4pt">
+          <div>
+            <div class="detail-label">判断基準</div>
+            <div class="detail-value">短期反発・モメンタム</div>
+          </div>
+          <div>
+            <div class="detail-label">判断内容</div>
+            <div class="detail-value">BUY · TP 5,240 / SL 5,185</div>
+          </div>
+          <div>
+            <div class="detail-label">判断結果</div>
+            <div class="detail-value" style="color:var(--green)">TP達成 +¥812</div>
+          </div>
+          <div>
+            <div class="detail-label">保有時間</div>
+            <div class="detail-value">48分</div>
+          </div>
+        </div>
+        <div class="detail-divider"></div>
+        <div class="detail-reasoning">VIX低下によるリスクオン環境。S&P500の短期反発シグナルと上昇モメンタム継続を確認し買い判断。</div>
+        <div class="detail-indicators">
+          <span class="detail-chip">VIX <b>24.1</b></span>
+          <span class="detail-chip">S&P <b>+0.8%</b></span>
+        </div>
+      </div>
+    </div>
+
+    <!-- ■ Card 3: SELL Silver — 定期チェック — SL -->
+    <div class="tl-card" id="c3" onclick="toggle(3)">
+      <div class="tl-accent-wrap">
+        <div class="tl-accent" style="background:var(--red)"></div>
+        <div class="tl-inner">
+          <div class="tl-row1">
+            <div class="tl-left">
+              <span class="tl-pair">Silver</span>
+              <span class="tl-rate">29.40</span>
+              <span class="badge badge-sell">SELL</span>
+            </div>
+            <div class="tl-right">
+              <span class="tl-time">2h前</span>
+              <span class="tl-chevron" id="v3">▸</span>
+            </div>
+          </div>
+          <div class="tl-row2">
+            <span class="trigger trigger-cron">
+              <span class="trigger-icon">⏱</span> 定期 30m
+            </span>
+            <span class="tl-reasoning">下降トレンド予測もSL到達で損切。反発が想定より強かった。</span>
+          </div>
+          <div class="tl-row3">
+            <div class="tl-chips">
+              <span class="tl-chip">VIX 27.2</span>
+              <span class="tl-chip">Reddit 2KW</span>
+            </div>
+            <div class="tl-result">
+              <div class="result-dot" style="background:var(--red)"></div>
+              <span style="color:var(--red)">SL -¥120</span>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="detail-panel" id="d3">
+        <div class="detail-trigger-row">
+          <span class="trigger trigger-cron"><span class="trigger-icon">⏱</span> 定期チェック</span>
+          <span class="detail-trigger-desc">30分定期スキャン（02:00）→ Gemini呼出</span>
+        </div>
+        <div class="detail-4pt">
+          <div>
+            <div class="detail-label">判断基準</div>
+            <div class="detail-value">下降トレンド・ニュース売り</div>
+          </div>
+          <div>
+            <div class="detail-label">判断内容</div>
+            <div class="detail-value">SELL · TP 29.10 / SL 29.65</div>
+          </div>
+          <div>
+            <div class="detail-label">判断結果</div>
+            <div class="detail-value" style="color:var(--red)">SL損切 -¥120</div>
+          </div>
+          <div>
+            <div class="detail-label">保有時間</div>
+            <div class="detail-value">22分</div>
+          </div>
+        </div>
+        <div class="detail-divider"></div>
+        <div class="detail-reasoning">ニュース3件は売り材料だったが、短期の反発が想定より強くSL到達。VIX上昇環境での逆張りリスクが顕在化した。</div>
+        <div class="detail-indicators">
+          <span class="detail-chip">VIX <b>27.2</b></span>
+          <span class="detail-chip">Reddit <b>介入観測</b></span>
+          <span class="detail-chip">ニュース <b>3件売り</b></span>
+        </div>
+      </div>
+    </div>
+
+    <!-- HOLD省略 -->
+    <div class="hold-sep">
+      <div class="hold-sep-line"></div>
+      <div class="hold-sep-label">HOLD 8件 省略</div>
+      <div class="hold-sep-line"></div>
+    </div>
+
+    <!-- ■ Card 4: BUY 日経225 — ニュース起動 — Open -->
+    <div class="tl-card" id="c4" onclick="toggle(4)">
+      <div class="tl-accent-wrap">
+        <div class="tl-accent" style="background:var(--green)"></div>
+        <div class="tl-inner">
+          <div class="tl-row1">
+            <div class="tl-left">
+              <span class="tl-pair">日経225</span>
+              <span class="tl-rate">37,840</span>
+              <span class="badge badge-buy">BUY</span>
+            </div>
+            <div class="tl-right">
+              <span class="tl-time">4h前</span>
+              <span class="tl-chevron" id="v4">▸</span>
+            </div>
+          </div>
+          <div class="tl-row2">
+            <span class="trigger trigger-news">
+              <span class="trigger-icon">◆</span> ニュース
+            </span>
+            <span class="tl-reasoning">日本株モメンタム継続。日銀YCC維持観測と円安が追い風。</span>
+          </div>
+          <div class="tl-row3">
+            <div class="tl-chips">
+              <span class="tl-chip">Nikkei +1.2%</span>
+              <span class="tl-chip">ニュース 2件</span>
+            </div>
+            <div class="tl-result">
+              <div class="result-dot" style="background:var(--green)"></div>
+              <span style="color:var(--green)">Open +¥1,857含み</span>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="detail-panel" id="d4">
+        <div class="detail-trigger-row">
+          <span class="trigger trigger-news"><span class="trigger-icon">◆</span> ニュース起動</span>
+          <span class="detail-trigger-desc">「日銀YCC維持・円安継続」2件検知 → Gemini呼出</span>
+        </div>
+        <div class="detail-4pt">
+          <div>
+            <div class="detail-label">判断基準</div>
+            <div class="detail-value">円安・株モメンタム</div>
+          </div>
+          <div>
+            <div class="detail-label">判断内容</div>
+            <div class="detail-value">BUY · TP 38,200 / SL 37,600</div>
+          </div>
+          <div>
+            <div class="detail-label">判断結果</div>
+            <div class="detail-value" style="color:var(--green)">保有中 +¥1,857含み</div>
+          </div>
+          <div>
+            <div class="detail-label">経過時間</div>
+            <div class="detail-value">4時間12分</div>
+          </div>
+        </div>
+        <div class="detail-divider"></div>
+        <div class="detail-reasoning">日銀YCC維持観測による円安継続。日経平均の上昇モメンタムが強く、ニュース2件ともポジティブな内容だったため買い判断。</div>
+        <div class="detail-indicators">
+          <span class="detail-chip">Nikkei <b>+1.2%</b></span>
+          <span class="detail-chip">USD/JPY <b>149.8</b></span>
+          <span class="detail-chip">ニュース <b>2件買い</b></span>
+        </div>
+      </div>
+    </div>
+
+  </div><!-- /scroll -->
+
+  <div class="tabbar">
+    <div class="tab-item">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M3 9l9-6 9 6v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V9z"/><path d="M9 22V12h6v10"/></svg>資産
+    </div>
+    <div class="tab-item active">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 2a4 4 0 0 1 4 4c0 1.5-.8 2.8-2 3.5V11h3a3 3 0 0 1 3 3v1.5a2.5 2.5 0 0 1-2.5 2.5H17v2a2 2 0 0 1-2 2H9a2 2 0 0 1-2-2v-2h-.5A2.5 2.5 0 0 1 4 15.5V14a3 3 0 0 1 3-3h3V9.5A4 4 0 0 1 12 2z"/></svg>AI判断
+    </div>
+    <div class="tab-item">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>統計
+    </div>
+    <div class="tab-item">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/></svg>ログ
+    </div>
+  </div>
+</div>
+
+<script>
+function toggle(n) {
+  var d = document.getElementById('d'+n);
+  var v = document.getElementById('v'+n);
+  var open = d.classList.contains('open');
+  d.classList.toggle('open', !open);
+  v.textContent = open ? '▸' : '▾';
+}
+</script>
+</body>
+</html>
