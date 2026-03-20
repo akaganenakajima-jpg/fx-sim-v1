@@ -6,7 +6,7 @@ import { getUSDJPY } from './rate';
 import { fetchNews, type SourceFetchStat } from './news';
 import { fetchRedditSignal } from './reddit';
 import { getMarketIndicators } from './indicators';
-import { getDecision, getDecisionGPT, getDecisionClaude, getDecisionWithHedge, analyzeNews, analyzeNewsGPT, analyzeNewsClaude } from './gemini';
+import { getDecision, getDecisionGPT, getDecisionClaude, getDecisionWithHedge, analyzeNews } from './gemini';
 import { checkAndCloseAllPositions, openPosition } from './position';
 import { shouldCallGemini } from './filter';
 import {
@@ -112,6 +112,110 @@ export default {
   },
 };
 
+interface MarketData {
+  news: ReturnType<typeof fetchNews> extends Promise<infer T> ? T extends { items: infer I } ? I : never : never;
+  newsFetchStats: SourceFetchStat[];
+  activeNewsSources: string;
+  redditSignal: { hasSignal: boolean; keywords: string[]; topPosts: string[] };
+  indicators: Awaited<ReturnType<typeof getMarketIndicators>>;
+  prices: Map<string, number | null>;
+}
+
+/** 市場データ一括取得（RSS/Reddit/Yahoo Finance/Frankfurter + キャッシュフォールバック） */
+async function fetchMarketData(env: Env, now: Date): Promise<MarketData | null> {
+  const [newsResult, redditResult, indicatorsResult, frankfurterResult] = await Promise.allSettled([
+    fetchNews(),
+    fetchRedditSignal(env.REDDIT_CLIENT_ID, env.REDDIT_CLIENT_SECRET),
+    getMarketIndicators(),
+    getUSDJPY(),
+  ]);
+
+  if (newsResult.status === 'rejected') {
+    await insertSystemLog(env.DB, 'WARN', 'NEWS', 'ニュース取得失敗', String(newsResult.reason).slice(0, 200));
+  }
+  if (redditResult.status === 'rejected') {
+    await insertSystemLog(env.DB, 'WARN', 'REDDIT', 'Reddit取得失敗', String(redditResult.reason).slice(0, 200));
+  }
+  if (indicatorsResult.status === 'rejected') {
+    await insertSystemLog(env.DB, 'WARN', 'INDICATORS', '指標取得失敗', String(indicatorsResult.reason).slice(0, 200));
+  }
+
+  const newsData = newsResult.status === 'fulfilled' ? newsResult.value : { items: [], stats: [] as SourceFetchStat[] };
+  const newsFetchStats = newsData.stats;
+
+  // ニュースソース統計をD1に記録
+  if (newsFetchStats.length > 0) {
+    try {
+      const stmt = env.DB.prepare(
+        `INSERT INTO news_fetch_log (source, ok, latency_ms, item_count, avg_freshness, created_at)
+         VALUES (?, ?, ?, ?, ?, ?)`
+      );
+      await env.DB.batch(newsFetchStats.map(s =>
+        stmt.bind(s.source, s.ok ? 1 : 0, s.latencyMs, s.itemCount, s.avgFreshnessMin, now.toISOString())
+      ));
+    } catch (e) {
+      console.warn(`[fx-sim] news_fetch_log insert error: ${String(e).slice(0, 100)}`);
+    }
+  }
+
+  const news = newsData.items;
+  const activeNewsSources = [...new Set(news.map(n => n.source))].join(',');
+  const redditSignal = redditResult.status === 'fulfilled' ? redditResult.value : { hasSignal: false, keywords: [], topPosts: [] };
+  const indicators = indicatorsResult.status === 'fulfilled' ? indicatorsResult.value : { vix: null, us10y: null, nikkei: null, sp500: null, usdjpy: null, btcusd: null, gold: null, eurusd: null, ethusd: null, crudeoil: null, natgas: null, copper: null, silver: null, gbpusd: null, audusd: null, solusd: null, dax: null, nasdaq: null };
+  const frankfurterRate = frankfurterResult.status === 'fulfilled' ? frankfurterResult.value : null;
+
+  const usdJpyRate = indicators.usdjpy ?? frankfurterRate;
+  if (usdJpyRate == null) {
+    console.error('[fx-sim] USD/JPY rate unavailable from all sources');
+    await insertSystemLog(env.DB, 'ERROR', 'RATE', 'USD/JPYレート取得失敗（全ソース）', null);
+    return null;
+  }
+
+  const livePrices: Array<[string, number | null]> = [
+    ['USD/JPY',   usdJpyRate],
+    ['Nikkei225', indicators.nikkei],
+    ['S&P500',    indicators.sp500],
+    ['US10Y',     indicators.us10y],
+    ['BTC/USD',   indicators.btcusd],
+    ['Gold',      indicators.gold],
+    ['EUR/USD',   indicators.eurusd],
+    ['ETH/USD',   indicators.ethusd],
+    ['CrudeOil',  indicators.crudeoil],
+    ['NatGas',    indicators.natgas],
+    ['Copper',    indicators.copper],
+    ['Silver',    indicators.silver],
+    ['GBP/USD',   indicators.gbpusd],
+    ['AUD/USD',   indicators.audusd],
+    ['SOL/USD',   indicators.solusd],
+    ['DAX',       indicators.dax],
+    ['NASDAQ',    indicators.nasdaq],
+  ];
+
+  const fallbackPairs: string[] = [];
+  const prices = new Map<string, number | null>();
+  for (const [pair, liveRate] of livePrices) {
+    if (liveRate != null) {
+      prices.set(pair, liveRate);
+    } else {
+      const cached = await getCacheValue(env.DB, `prev_rate_${pair}`);
+      if (cached) {
+        prices.set(pair, parseFloat(cached));
+        fallbackPairs.push(pair);
+      } else {
+        prices.set(pair, null);
+      }
+    }
+  }
+  if (fallbackPairs.length > 0) {
+    console.warn(`[fx-sim] Yahoo失敗→キャッシュ使用: ${fallbackPairs.join(', ')}`);
+    if (fallbackPairs.length >= 3) {
+      await insertSystemLog(env.DB, 'WARN', 'RATE', `Yahoo障害: ${fallbackPairs.length}銘柄キャッシュフォールバック`, fallbackPairs.join(', '));
+    }
+  }
+
+  return { news, newsFetchStats, activeNewsSources, redditSignal, indicators, prices };
+}
+
 async function run(env: Env): Promise<void> {
   const now = new Date();
   const cronStart = Date.now();
@@ -121,103 +225,11 @@ async function run(env: Env): Promise<void> {
     // スキーママイグレーション（バージョン管理方式）
     await runMigrations(env.DB);
 
-    // 1. 全価格・共通データを一括取得（Yahoo Finance + frankfurterフォールバック）
-    const [newsResult, redditResult, indicatorsResult, frankfurterResult] = await Promise.allSettled([
-      fetchNews(),
-      fetchRedditSignal(env.REDDIT_CLIENT_ID, env.REDDIT_CLIENT_SECRET),
-      getMarketIndicators(),
-      getUSDJPY(),
-    ]);
+    // 1. 全価格・共通データを一括取得
+    const marketData = await fetchMarketData(env, now);
+    if (marketData == null) return;
 
-    if (newsResult.status === 'rejected') {
-      await insertSystemLog(env.DB, 'WARN', 'NEWS', 'ニュース取得失敗', String(newsResult.reason).slice(0, 200));
-    }
-    if (redditResult.status === 'rejected') {
-      await insertSystemLog(env.DB, 'WARN', 'REDDIT', 'Reddit取得失敗', String(redditResult.reason).slice(0, 200));
-    }
-    if (indicatorsResult.status === 'rejected') {
-      await insertSystemLog(env.DB, 'WARN', 'INDICATORS', '指標取得失敗', String(indicatorsResult.reason).slice(0, 200));
-    }
-
-    const newsData = newsResult.status === 'fulfilled' ? newsResult.value : { items: [], stats: [] };
-    const news = newsData.items;
-    const newsFetchStats = newsData.stats;
-
-    // ニュースソース統計をD1に記録（バッチINSERT）
-    if (newsFetchStats.length > 0) {
-      try {
-        const stmt = env.DB.prepare(
-          `INSERT INTO news_fetch_log (source, ok, latency_ms, item_count, avg_freshness, created_at)
-           VALUES (?, ?, ?, ?, ?, ?)`
-        );
-        const batch = newsFetchStats.map(s =>
-          stmt.bind(s.source, s.ok ? 1 : 0, s.latencyMs, s.itemCount, s.avgFreshnessMin, now.toISOString())
-        );
-        await env.DB.batch(batch);
-      } catch (e) {
-        console.warn(`[fx-sim] news_fetch_log insert error: ${String(e).slice(0, 100)}`);
-      }
-    }
-
-    // ニュースソース名リスト（decisions記録用）
-    const activeNewsSources = [...new Set(news.map(n => n.source))].join(',');
-    const redditSignal = redditResult.status === 'fulfilled' ? redditResult.value : { hasSignal: false, keywords: [], topPosts: [] };
-    const indicators = indicatorsResult.status === 'fulfilled' ? indicatorsResult.value : { vix: null, us10y: null, nikkei: null, sp500: null, usdjpy: null, btcusd: null, gold: null, eurusd: null, ethusd: null, crudeoil: null, natgas: null, copper: null, silver: null, gbpusd: null, audusd: null, solusd: null, dax: null, nasdaq: null };
-    const frankfurterRate = frankfurterResult.status === 'fulfilled' ? frankfurterResult.value : null;
-
-    // USD/JPY: Yahoo Finance優先、フォールバックでfrankfurter
-    const usdJpyRate = indicators.usdjpy ?? frankfurterRate;
-    if (usdJpyRate == null) {
-      console.error('[fx-sim] USD/JPY rate unavailable from all sources');
-      await insertSystemLog(env.DB, 'ERROR', 'RATE', 'USD/JPYレート取得失敗（全ソース）', null);
-      return;
-    }
-
-    // 価格マップ（全てYahoo Finance経由 + キャッシュフォールバック）
-    const livePrices: Array<[string, number | null]> = [
-      ['USD/JPY',   usdJpyRate],
-      ['Nikkei225', indicators.nikkei],
-      ['S&P500',    indicators.sp500],
-      ['US10Y',     indicators.us10y],
-      ['BTC/USD',   indicators.btcusd],
-      ['Gold',      indicators.gold],
-      ['EUR/USD',   indicators.eurusd],
-      ['ETH/USD',   indicators.ethusd],
-      ['CrudeOil',  indicators.crudeoil],
-      ['NatGas',    indicators.natgas],
-      ['Copper',    indicators.copper],
-      ['Silver',    indicators.silver],
-      ['GBP/USD',   indicators.gbpusd],
-      ['AUD/USD',   indicators.audusd],
-      ['SOL/USD',   indicators.solusd],
-      ['DAX',       indicators.dax],
-      ['NASDAQ',    indicators.nasdaq],
-    ];
-
-    // Yahoo失敗時はmarket_cacheの前回レートをフォールバック
-    const fallbackPairs: string[] = [];
-    const prices = new Map<string, number | null>();
-    for (const [pair, liveRate] of livePrices) {
-      if (liveRate != null) {
-        prices.set(pair, liveRate);
-      } else {
-        // キャッシュから前回レートを取得
-        const cached = await getCacheValue(env.DB, `prev_rate_${pair}`);
-        if (cached) {
-          prices.set(pair, parseFloat(cached));
-          fallbackPairs.push(pair);
-        } else {
-          prices.set(pair, null);
-        }
-      }
-    }
-    if (fallbackPairs.length > 0) {
-      console.warn(`[fx-sim] Yahoo失敗→キャッシュ使用: ${fallbackPairs.join(', ')}`);
-      // 3件以上のフォールバックは一括WARNのみ（スパム防止）
-      if (fallbackPairs.length >= 3) {
-        await insertSystemLog(env.DB, 'WARN', 'RATE', `Yahoo障害: ${fallbackPairs.length}銘柄キャッシュフォールバック`, fallbackPairs.join(', '));
-      }
-    }
+    const { news, newsFetchStats: _newsFetchStats, activeNewsSources, redditSignal, indicators, prices } = marketData;
 
     // ブローカー環境（TP/SL・ポジション開設で使用）
     const brokerEnv: BrokerEnv = {
@@ -236,55 +248,23 @@ async function run(env: Env): Promise<void> {
     const hasNewNews = currentNewsHash !== (prevNewsHashRaw ?? '');
     await setCacheValue(env.DB, PREV_NEWS_HASH_KEY, currentNewsHash);
 
-    // 一時的: 分析データがなければ強制実行（初回のみ）
-    const existingAnalysis = await getCacheValue(env.DB, 'news_analysis');
-    const forceAnalysis = !existingAnalysis && news.length > 0;
-
-    // 失敗クールダウン: 直近5分以内に失敗していたらスキップ
+    // 失敗クールダウン: 直近2分以内に失敗していたらスキップ（Phase1: 5min→2min短縮）
     const newsFailedAtRaw = await getCacheValue(env.DB, 'news_analysis_failed_at');
     const newsFailedAt = newsFailedAtRaw ? parseInt(newsFailedAtRaw) : 0;
-    const NEWS_COOLDOWN_MS = 5 * 60 * 1000; // 5分
+    const NEWS_COOLDOWN_MS = 2 * 60 * 1000; // 2分
     const inNewsCooldown = (Date.now() - newsFailedAt) < NEWS_COOLDOWN_MS;
 
-    // 新ニュース検出時: Geminiでマーケットインパクト分析
+    // 新ニュース検出時: Gemini 1回のみ（Phase1: 3段fallback廃止）
     let newsAnalysisRan = false;
-    if ((hasNewNews || forceAnalysis) && news.length > 0 && !inNewsCooldown) {
+    if (hasNewNews && news.length > 0 && !inNewsCooldown) {
       let analysis = null;
-      // Gemini → GPT → Claude フォールバック（予算チェック付き）
       try {
         analysis = await analyzeNews({ news, apiKey: getApiKey(env) });
       } catch (e) {
-        console.warn(`[fx-sim] News analysis Gemini error: ${String(e).split('\n')[0].slice(0, 80)}`);
-        // 残り予算チェック: 銘柄判定に20s確保
-        const elapsedSoFar = Date.now() - cronStart;
-        const budgetLeft = 45_000 - elapsedSoFar; // 45s予算（60s制限 - 15sマージン）
-        if (budgetLeft < 10_000) {
-          console.warn(`[fx-sim] News analysis skipped: budget exhausted (${elapsedSoFar}ms elapsed)`);
-        } else {
-          // GPT フォールバック（全エラーで試行）
-          if (!analysis && env.OPENAI_API_KEY) {
-            try {
-              analysis = await analyzeNewsGPT({ news, apiKey: env.OPENAI_API_KEY });
-              console.log('[fx-sim] News analysis: GPT fallback success');
-            } catch (gptErr) {
-              console.warn(`[fx-sim] News analysis GPT failed: ${String(gptErr).split('\n')[0].slice(0, 80)}`);
-            }
-          }
-          // Claude フォールバック
-          if (!analysis && env.ANTHROPIC_API_KEY && (Date.now() - cronStart) < 35_000) {
-            try {
-              analysis = await analyzeNewsClaude({ news, apiKey: env.ANTHROPIC_API_KEY });
-              console.log('[fx-sim] News analysis: Claude fallback success');
-            } catch (claudeErr) {
-              console.warn(`[fx-sim] News analysis Claude failed: ${String(claudeErr).split('\n')[0].slice(0, 80)}`);
-            }
-          }
-        }
-        if (!analysis) {
-          // 全プロバイダー失敗 → 5分クールダウン開始
-          await setCacheValue(env.DB, 'news_analysis_failed_at', String(Date.now()));
-          await insertSystemLog(env.DB, 'WARN', 'NEWS', 'ニュース分析失敗（全プロバイダー）→5分クールダウン', String(e).split('\n')[0].slice(0, 120));
-        }
+        console.warn(`[fx-sim] News analysis failed: ${String(e).split('\n')[0].slice(0, 80)}`);
+        // 失敗 → 2分クールダウン開始（次のcronで再試行）
+        await setCacheValue(env.DB, 'news_analysis_failed_at', String(Date.now()));
+        await insertSystemLog(env.DB, 'WARN', 'NEWS', 'ニュース分析失敗→2分クールダウン', String(e).split('\n')[0].slice(0, 120));
       }
       if (analysis && analysis.length > 0) {
         // 分析結果にニュースタイトルを紐付け（index→titleマッチング用）
@@ -341,8 +321,9 @@ async function run(env: Env): Promise<void> {
     const prevElapsedRaw = await getCacheValue(env.DB, 'prev_cron_elapsed');
     const prevElapsed = prevElapsedRaw ? parseInt(prevElapsedRaw) : 0;
     const baseLimit = prevElapsed > 30000 ? 3 : prevElapsed > 15000 ? 5 : 8;
-    const MAX_GEMINI_PER_RUN = (newsAnalysisRan || isInCooldown)
-      ? 0  // ニュース分析済 or クールダウン中 → AI呼出スキップ
+    // Phase1: newsAnalysisRan ? 0 を廃止（ニュース分析後も銘柄判定を実行する）
+    const MAX_GEMINI_PER_RUN = isInCooldown
+      ? 0  // 429クールダウン中のみスキップ
       : hasAttentionNews ? Math.min(baseLimit + 3, 10) : baseLimit;
     // 4a. 全銘柄のレート変化・フィルタ結果を事前収集
     const candidateList: Array<{
@@ -684,39 +665,10 @@ async function run(env: Env): Promise<void> {
       await insertSystemLog(env.DB, 'WARN', 'CRON', `実行時間超過: ${elapsed}ms`, null);
     }
 
-    // 日次処理判定
+    // 日次処理（JST 0:00 = UTC 15:00 に実行）
     const jstHour = (now.getUTCHours() + 9) % 24;
-
-    // ログパージ: 日次のみ実行（毎分→日次に変更で1-2秒短縮）
     if (jstHour === 0 && now.getUTCMinutes() === 0) {
-      try {
-        await env.DB.prepare(`DELETE FROM system_logs WHERE id NOT IN (SELECT id FROM system_logs ORDER BY id DESC LIMIT 500)`).run();
-        await env.DB.prepare(`DELETE FROM news_fetch_log WHERE id NOT IN (SELECT id FROM news_fetch_log ORDER BY id DESC LIMIT 5000)`).run();
-      } catch {}
-    }
-
-    // 日次サマリー（JST 0:00〜0:01 = UTC 15:00〜15:01 に1日1回記録）
-    if (jstHour === 0 && now.getUTCMinutes() === 0) {
-      try {
-        const dailyPerf = await env.DB.prepare(
-          `SELECT COUNT(*) AS total, COALESCE(SUM(CASE WHEN pnl > 0 THEN 1 ELSE 0 END), 0) AS wins,
-           COALESCE(SUM(pnl), 0) AS totalPnl
-           FROM positions WHERE status = 'CLOSED'`
-        ).first<{ total: number; wins: number; totalPnl: number }>();
-        const openCount = (await env.DB.prepare(`SELECT COUNT(*) AS c FROM positions WHERE status = 'OPEN'`).first<{ c: number }>())?.c ?? 0;
-        const balance = 10000 + (dailyPerf?.totalPnl ?? 0);
-        const wr = dailyPerf && dailyPerf.total > 0 ? (dailyPerf.wins / dailyPerf.total * 100).toFixed(1) : '0';
-        await insertSystemLog(env.DB, 'INFO', 'DAILY',
-          `日次サマリー: ¥${Math.round(balance).toLocaleString()} ROI ${((balance - 10000) / 100).toFixed(1)}% 勝率${wr}% ${dailyPerf?.total ?? 0}件 OP${openCount}`,
-          null);
-      } catch {}
-
-      // 銘柄スコア更新（日次バッチ）
-      try {
-        await updateInstrumentScores(env.DB);
-      } catch (e) {
-        console.error('[fx-sim] instrument_scores update failed:', e);
-      }
+      await runDailyTasks(env, now);
     }
 
   } catch (e) {
@@ -724,6 +676,36 @@ async function run(env: Env): Promise<void> {
     try {
       await insertSystemLog(env.DB, 'ERROR', 'CRON', '予期しないエラー', String(e).slice(0, 300));
     } catch {}
+  }
+}
+
+// ── 日次タスク（ログパージ・サマリー・銘柄スコア更新）──
+async function runDailyTasks(env: Env, _now: Date): Promise<void> {
+  // ログパージ
+  try {
+    await env.DB.prepare(`DELETE FROM system_logs WHERE id NOT IN (SELECT id FROM system_logs ORDER BY id DESC LIMIT 500)`).run();
+    await env.DB.prepare(`DELETE FROM news_fetch_log WHERE id NOT IN (SELECT id FROM news_fetch_log ORDER BY id DESC LIMIT 5000)`).run();
+  } catch {}
+
+  // 日次サマリー記録
+  try {
+    const dailyPerf = await env.DB.prepare(
+      `SELECT COUNT(*) AS total, COALESCE(SUM(CASE WHEN pnl > 0 THEN 1 ELSE 0 END), 0) AS wins,
+       COALESCE(SUM(pnl), 0) AS totalPnl FROM positions WHERE status = 'CLOSED'`
+    ).first<{ total: number; wins: number; totalPnl: number }>();
+    const openCount = (await env.DB.prepare(`SELECT COUNT(*) AS c FROM positions WHERE status = 'OPEN'`).first<{ c: number }>())?.c ?? 0;
+    const balance = 10000 + (dailyPerf?.totalPnl ?? 0);
+    const wr = dailyPerf && dailyPerf.total > 0 ? (dailyPerf.wins / dailyPerf.total * 100).toFixed(1) : '0';
+    await insertSystemLog(env.DB, 'INFO', 'DAILY',
+      `日次サマリー: ¥${Math.round(balance).toLocaleString()} ROI ${((balance - 10000) / 100).toFixed(1)}% 勝率${wr}% ${dailyPerf?.total ?? 0}件 OP${openCount}`,
+      null);
+  } catch {}
+
+  // 銘柄スコア更新
+  try {
+    await updateInstrumentScores(env.DB);
+  } catch (e) {
+    console.error('[fx-sim] instrument_scores update failed:', e);
   }
 }
 

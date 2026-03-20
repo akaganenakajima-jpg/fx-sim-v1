@@ -3,7 +3,7 @@
 import type { Position } from './db';
 import { fetchNews } from './news';
 import { getRiskStatus, type RiskEnv } from './risk-guard';
-import { wilsonCI, sharpeWithSE, varCvar, kellyFraction, markovTransition, maxDrawdown, rollingReturns, pnlVolatility, profitFactor, bootstrapROI, aiAccuracy } from './stats';
+import { wilsonCI, sharpeWithSE, varCvar, kellyFraction, markovTransition, maxDrawdown, rollingReturns, pnlVolatility, profitFactor, bootstrapROI, aiAccuracy, randomBaselineComparison, pairCorrelation } from './stats';
 
 export interface LatestDecision {
   id: number;
@@ -115,6 +115,8 @@ export interface StatusResponse {
     rolling: Record<number, { roi: number; sharpe: number; winRate: number; count: number }>;
     volatility: { overallStd: number; recentStd: number; volRatio: number; isHighVol: boolean };
     profitFactor: number;
+    randomBaseline: { mwu: { u: number; z: number; pValue: number; significant: boolean }; randomMean: number; aiMean: number; beatRate: number } | null;
+    pairCorrelations: Array<{ pair1: string; pair2: string; r: number; n: number }>;
   } | null;
 }
 
@@ -275,7 +277,8 @@ export async function getApiStatus(db: D1Database, tradingEnv?: { TRADING_ENABLE
           .all<{ outcome: string }>(),
       ]);
 
-      const allPnls = (allPnlRaw.results ?? []).map(r => r.pnl);
+      const allPnlRows = allPnlRaw.results ?? [];
+      const allPnls = allPnlRows.map(r => r.pnl);
       const outcomes = allPnls.map(p => p > 0);
 
       const ci = wilsonCI(wins, totalClosed);
@@ -290,6 +293,15 @@ export async function getApiStatus(db: D1Database, tradingEnv?: { TRADING_ENABLE
 
       const aiOutcomes = (aiOutcomesRaw.results ?? []).map(r => r.outcome as 'WIN' | 'LOSE');
       const aiResult = aiOutcomes.length >= 5 ? aiAccuracy(aiOutcomes) : null;
+
+      // 銘柄別PnL（相関行列用）
+      const pnlByPairRawForCorr = await db.prepare(
+        'SELECT pair, pnl FROM positions WHERE status = \'CLOSED\' ORDER BY pair, closed_at ASC'
+      ).all<{ pair: string; pnl: number }>();
+      const pnlByPair: Record<string, number[]> = {};
+      for (const r of pnlByPairRawForCorr.results ?? []) {
+        (pnlByPair[r.pair] ??= []).push(r.pnl);
+      }
 
       statistics = {
         winRateCI: ci,
@@ -306,6 +318,8 @@ export async function getApiStatus(db: D1Database, tradingEnv?: { TRADING_ENABLE
         rolling: rollingReturns(allPnls, [7, 14, 30]),
         volatility: pnlVolatility(allPnls),
         profitFactor: profitFactor(allPnls),
+        randomBaseline: allPnls.length >= 10 ? randomBaselineComparison(allPnls) : null,
+        pairCorrelations: pairCorrelation(pnlByPair),
       };
     } catch {}
   }

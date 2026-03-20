@@ -29,17 +29,19 @@ interface SourceDef {
 }
 
 const SOURCES: SourceDef[] = [
-  // === 日本語速報 ===
-  { name: 'NHK', url: 'https://www3.nhk.or.jp/rss/news/cat6.xml' },
-  { name: 'Investing', url: 'https://jp.investing.com/rss/news.rss' },
-  { name: 'Reuters_JP', url: 'https://assets.wor.jp/rss/rdf/reuters/top.rdf' },
-  { name: '2NN_Biz', url: 'https://www.2nn.jp/rss/bizplus.rdf' },
-  // === 英語速報 ===
+  // === 英語速報（description付き、直接使用）===
+  { name: 'CNBC',      url: 'https://search.cnbc.com/rs/search/combinedcms/view.xml?partnerId=wrss01&id=100003114' },
+  { name: 'CoinDesk',  url: 'https://www.coindesk.com/arc/outboundfeeds/rss/' },
+  { name: 'FXStreet',  url: 'https://www.fxstreet.com/rss' },
   { name: 'Bloomberg', url: 'https://feeds.bloomberg.com/markets/news.rss' },
-  { name: 'CNBC', url: 'https://search.cnbc.com/rs/search/combinedcms/view.xml?partnerId=wrss01&id=100003114' },
-  { name: 'FXStreet', url: 'https://www.fxstreet.com/rss' },
-  { name: 'CoinDesk', url: 'https://www.coindesk.com/arc/outboundfeeds/rss/' },
-  // WSJ削除: RSSフィードが2025年1月で停止（更新されない）
+  // === 日本語速報（wor.jp経由、超低レイテンシ）===
+  { name: 'Reuters_Markets',    url: 'https://assets.wor.jp/rss/rdf/reuters/markets.rdf' },
+  { name: 'Reuters_World',      url: 'https://assets.wor.jp/rss/rdf/reuters/world.rdf' },
+  { name: 'Nikkei',             url: 'https://assets.wor.jp/rss/rdf/nikkei/news.rdf' },
+  { name: 'Minkabu_FX',         url: 'https://assets.wor.jp/rss/rdf/minkabufx/statement.rdf' },
+  { name: 'Minkabu_Stock',      url: 'https://assets.wor.jp/rss/rdf/minkabufx/stock.rdf' },
+  { name: 'Minkabu_Commodity',  url: 'https://assets.wor.jp/rss/rdf/minkabufx/commodity.rdf' },
+  // 削除: NHK(経済少ない), Investing(9h停止多発), 2NN_Biz(7日前混在), Reuters_JP/top.rdf(Markets+Worldに分割)
 ];
 
 function extractCdata(tag: string, xml: string): string {

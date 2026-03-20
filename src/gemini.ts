@@ -16,7 +16,7 @@ const GEMINI_ENDPOINT =
   'https://generativelanguage.googleapis.com/v1beta/models/gemini-3.1-pro-preview:generateContent';
 
 const AI_TIMEOUT_MS = 12_000; // AI API呼び出し12秒タイムアウト
-const NEWS_ANALYSIS_TIMEOUT_MS = 10_000; // ニュース分析 10秒タイムアウト（ニュース変化時のみ実行）
+const NEWS_ANALYSIS_TIMEOUT_MS = 12_000; // ニュース分析 12秒タイムアウト（Phase1: 10→12s緩和）
 const HEDGE_DELAY_MS = 4_000; // ヘッジリクエスト: Gemini開始後4秒でGPTも並行開始
 
 function fetchWithTimeout(url: string, init: RequestInit, timeoutMs = AI_TIMEOUT_MS): Promise<Response> {

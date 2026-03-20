@@ -180,6 +180,178 @@ export function bootstrapROI(
   return { roi, ciLower: bootstrapROIs[lo], ciUpper: bootstrapROIs[hi], n };
 }
 
+/** 標準正規分布のCDF（Abramowitz & Stegun近似 §26.2.17） */
+function normalCDF(z: number): number {
+  const t = 1 / (1 + 0.2316419 * Math.abs(z));
+  const d = 0.3989422820 * Math.exp(-z * z / 2);
+  const p = d * t * (0.3193815 + t * (-0.3565638 + t * (1.7814779 + t * (-1.8212560 + t * 1.3302744))));
+  return z > 0 ? 1 - p : p;
+}
+
+/** Mann-Whitney U検定（AI戦略 vs ランダム戦略の中央値比較）
+ *  帰無仮説: 両群のPnL中央値に差がない
+ *  タイ補正付き正規近似（n≥10推奨）
+ */
+export function mannWhitneyU(
+  aiPnls: number[],
+  randomPnls: number[],
+): { u: number; z: number; pValue: number; significant: boolean } {
+  const m = aiPnls.length;
+  const n = randomPnls.length;
+  if (m < 10 || n < 10) return { u: 0, z: 0, pValue: 1, significant: false };
+
+  const combined = [
+    ...aiPnls.map(v => ({ v, isAi: true })),
+    ...randomPnls.map(v => ({ v, isAi: false })),
+  ].sort((a, b) => a.v - b.v);
+
+  // タイ補正付き順位付け
+  let i = 0;
+  const ranks: number[] = new Array(combined.length);
+  let tieCorrSum = 0;
+  while (i < combined.length) {
+    let j = i;
+    while (j < combined.length && combined[j].v === combined[i].v) j++;
+    const avgRank = (i + j + 1) / 2; // 1-indexed
+    for (let k = i; k < j; k++) ranks[k] = avgRank;
+    const t = j - i;
+    tieCorrSum += t * t * t - t;
+    i = j;
+  }
+
+  let R1 = 0;
+  for (let k = 0; k < combined.length; k++) {
+    if (combined[k].isAi) R1 += ranks[k];
+  }
+
+  const u1 = R1 - m * (m + 1) / 2; // AI群のU統計量
+  const u2 = m * n - u1;
+  const u = Math.min(u1, u2);
+  const N = m + n;
+  const meanU = m * n / 2;
+  const varU = (m * n / (N * (N - 1))) * ((N * N * N - N - tieCorrSum) / 12);
+  const z = varU > 0 ? (u1 - meanU) / Math.sqrt(varU) : 0;
+  const pValue = 2 * normalCDF(-Math.abs(z)); // 両側p値
+  return { u, z, pValue, significant: pValue < 0.05 };
+}
+
+/** ランダムベースライン比較（モンテカルロ + Mann-Whitney U）
+ *  AI戦略PnLがランダム（シャッフル）より有意に優れているか検定する
+ */
+export function randomBaselineComparison(
+  aiPnls: number[],
+  B = 500,
+): {
+  mwu: { u: number; z: number; pValue: number; significant: boolean };
+  randomMean: number;
+  aiMean: number;
+  beatRate: number;  // AIがランダムを上回った確率（ブートストラップ）
+} {
+  const n = aiPnls.length;
+  if (n < 10) return {
+    mwu: { u: 0, z: 0, pValue: 1, significant: false },
+    randomMean: 0, aiMean: 0, beatRate: 0,
+  };
+
+  // ランダム戦略: 同一PnL分布からB回リサンプリング
+  const randomPnls: number[] = [];
+  for (let b = 0; b < B; b++) {
+    randomPnls.push(aiPnls[Math.floor(Math.random() * n)]);
+  }
+
+  const mwu = mannWhitneyU(aiPnls, randomPnls);
+  const aiMean = aiPnls.reduce((s, v) => s + v, 0) / n;
+  const randomMean = randomPnls.reduce((s, v) => s + v, 0) / B;
+
+  // ビートレート: ブートストラップ200回でAI合計 > ランダム合計の割合
+  let beatCount = 0;
+  for (let b = 0; b < 200; b++) {
+    let aiSum = 0;
+    let randSum = 0;
+    for (let k = 0; k < n; k++) {
+      aiSum += aiPnls[Math.floor(Math.random() * n)];
+      randSum += randomPnls[Math.floor(Math.random() * B)];
+    }
+    if (aiSum > randSum) beatCount++;
+  }
+  return { mwu, randomMean, aiMean, beatRate: beatCount / 200 };
+}
+
+/** ピアソン相関係数（補助関数） */
+function pearsonR(a: number[], b: number[]): number {
+  const n = Math.min(a.length, b.length);
+  if (n < 3) return 0;
+  const sa = a.slice(0, n);
+  const sb = b.slice(0, n);
+  const meanA = sa.reduce((s, v) => s + v, 0) / n;
+  const meanB = sb.reduce((s, v) => s + v, 0) / n;
+  let num = 0, denA = 0, denB = 0;
+  for (let i = 0; i < n; i++) {
+    const da = sa[i] - meanA;
+    const db = sb[i] - meanB;
+    num += da * db;
+    denA += da * da;
+    denB += db * db;
+  }
+  const den = Math.sqrt(denA * denB);
+  return den > 0 ? num / den : 0;
+}
+
+/** 銘柄間PnL相関行列（過集中リスク検出用）
+ *  |r| > 0.7: 高相関 → 同方向リスクの集中に注意
+ */
+export function pairCorrelation(
+  pnlByPair: Record<string, number[]>,
+  minN = 5,
+): Array<{ pair1: string; pair2: string; r: number; n: number }> {
+  const pairs = Object.keys(pnlByPair);
+  const result: Array<{ pair1: string; pair2: string; r: number; n: number }> = [];
+  for (let i = 0; i < pairs.length; i++) {
+    for (let j = i + 1; j < pairs.length; j++) {
+      const a = pnlByPair[pairs[i]];
+      const b = pnlByPair[pairs[j]];
+      const n = Math.min(a.length, b.length);
+      if (n < minN) continue;
+      result.push({ pair1: pairs[i], pair2: pairs[j], r: pearsonR(a, b), n });
+    }
+  }
+  return result.sort((a, b) => Math.abs(b.r) - Math.abs(a.r));
+}
+
+/** Bonferroni補正（保守的・第一種過誤を厳密制御）
+ *  各p値をm（検定数）倍 → 多重検定での偽陽性を防ぐ
+ */
+export function bonferroniCorrection(
+  pValues: number[],
+  alpha = 0.05,
+): { corrected: number[]; rejected: boolean[] } {
+  const m = pValues.length;
+  const corrected = pValues.map(p => Math.min(p * m, 1));
+  return { corrected, rejected: corrected.map(p => p < alpha) };
+}
+
+/** Benjamini-Hochberg FDR補正（検出力維持・偽発見率制御）
+ *  保守的なBonferroniより多くの有意差を検出できる
+ */
+export function fdrCorrection(
+  pValues: number[],
+  alpha = 0.05,
+): { corrected: number[]; rejected: boolean[] } {
+  const m = pValues.length;
+  const indexed = pValues.map((p, i) => ({ p, i })).sort((a, b) => a.p - b.p);
+  let maxRejected = -1;
+  for (let k = 0; k < m; k++) {
+    if (indexed[k].p <= ((k + 1) / m) * alpha) maxRejected = k;
+  }
+  const corrected = new Array<number>(m);
+  for (let k = 0; k < m; k++) {
+    corrected[indexed[k].i] = Math.min(indexed[k].p * m / (k + 1), 1);
+  }
+  const rejected = new Array<boolean>(m).fill(false);
+  for (let k = 0; k <= maxRejected; k++) rejected[indexed[k].i] = true;
+  return { corrected, rejected };
+}
+
 /** マルコフ遷移行列（WIN/LOSE） */
 export function markovTransition(outcomes: boolean[]): {
   ww: number; wl: number; lw: number; ll: number;

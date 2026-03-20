@@ -152,6 +152,31 @@ export async function checkAndCloseAllPositions(
   }
 }
 
+/** 直近の連続損失数を取得（全銘柄通算: 縮退判定用）
+ *  最新クローズからSLまたはpnl<=0が続く件数を返す
+ */
+export async function getConsecutiveLosses(db: D1Database): Promise<number> {
+  const recent = await db
+    .prepare(`SELECT pnl FROM positions WHERE status = 'CLOSED' ORDER BY closed_at DESC LIMIT 10`)
+    .all<{ pnl: number }>();
+  let streak = 0;
+  for (const row of (recent.results ?? [])) {
+    if (row.pnl <= 0) streak++;
+    else break;
+  }
+  return streak;
+}
+
+/** 連敗縮退: 連続損失数からロット乗数を計算
+ *  3連敗 → ×0.5, 5連敗 → ×0.25, 7連敗以上 → ×0（当日停止）
+ */
+export function drawdownLotMultiplier(consecutiveLosses: number): number {
+  if (consecutiveLosses >= 7) return 0;   // 当日停止
+  if (consecutiveLosses >= 5) return 0.25; // 75%削減
+  if (consecutiveLosses >= 3) return 0.5;  // 50%削減
+  return 1.0;
+}
+
 export async function openPosition(
   db: D1Database,
   pair: string,
@@ -186,6 +211,25 @@ export async function openPosition(
     // kelly 0〜0.25 → lot 0.5〜2.0
     lot = Math.max(0.5, Math.min(0.5 + kelly * 6, 2.0));
     console.log(`[position] Kelly: ${pair} wr=${(winRate*100).toFixed(0)}% rr=${avgRR.toFixed(2)} f=${kelly.toFixed(3)} → lot=${lot.toFixed(1)}`);
+  }
+
+  // 連敗縮退: 直近連続損失数に応じてロットを削減
+  const consecutiveLosses = await getConsecutiveLosses(db);
+  const ddMultiplier = drawdownLotMultiplier(consecutiveLosses);
+  if (ddMultiplier === 0) {
+    await insertSystemLog(db, 'WARN', 'DRAWDOWN',
+      `7連敗縮退: ${pair} ${direction} 当日発注停止`,
+      JSON.stringify({ consecutiveLosses, lot }));
+    console.warn(`[position] 7連敗縮退: ${pair} 発注停止`);
+    return;
+  }
+  if (ddMultiplier < 1.0) {
+    const prevLot = lot;
+    lot = Math.max(0.1, lot * ddMultiplier);
+    console.log(`[position] 連敗縮退: ${consecutiveLosses}連敗 ×${ddMultiplier} lot ${prevLot.toFixed(1)} → ${lot.toFixed(1)}`);
+    await insertSystemLog(db, 'INFO', 'DRAWDOWN',
+      `連敗縮退 ${consecutiveLosses}連敗 → lot×${ddMultiplier}: ${pair}`,
+      null);
   }
 
   await db
