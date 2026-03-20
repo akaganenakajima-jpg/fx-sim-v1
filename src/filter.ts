@@ -1,7 +1,6 @@
 // Gemini呼び出し要否判定・スキップ判定
 // 全て UTC で処理
-
-import type { RedditSignal } from './reddit';
+// v2: hasNewNews/redditSignal は Path B が担当するため削除
 
 export interface FilterResult {
   shouldCall: boolean;
@@ -81,23 +80,21 @@ function isSkipSchedule(now: Date): { skip: boolean; matchedRule?: string } {
 }
 
 /**
- * Gemini を呼ぶべきか判定
+ * Gemini を呼ぶべきか判定（Path A / Path C 専用）
+ * ニュース・Redditシグナルは Path B が担当するため含まない
  * 以下の条件で true を返す:
  *   1. スキップ時間帯でない かつ
- *   2. レート変化が閾値以上 OR 新規ニュースあり OR Redditキーワード検出
- *      OR 前回呼び出しから30分以上経過（定期強制）
+ *   2. レート変化が閾値以上（Path A） OR 前回呼び出しから30分以上経過（Path C）
  */
 export function shouldCallGemini(params: {
   currentRate: number;
   prevRate: number;
   rateChangeTh: number;
-  hasNewNews: boolean;
-  redditSignal: RedditSignal;
   now: Date;
   lastCallTime?: string | null;
   thompsonScore?: number;   // トンプソン・サンプリングスコア（0〜1）
 }): FilterResult {
-  const { currentRate, prevRate, rateChangeTh, hasNewNews, redditSignal, now, lastCallTime, thompsonScore } = params;
+  const { currentRate, prevRate, rateChangeTh, now, lastCallTime, thompsonScore } = params;
 
   // トンプソンスコアが低い銘柄は低優先度として HOLD
   if (thompsonScore !== undefined && thompsonScore < 0.3) {
@@ -122,18 +119,7 @@ export function shouldCallGemini(params: {
     };
   }
 
-  if (hasNewNews) {
-    return { shouldCall: true, reason: '新規ニュースあり' };
-  }
-
-  if (redditSignal.hasSignal) {
-    return {
-      shouldCall: true,
-      reason: `Redditシグナル: ${redditSignal.keywords.join(', ')}`,
-    };
-  }
-
-  // 3. 定期強制呼び出し: 前回から30分以上経過していたら強制
+  // 3. 定期強制呼び出し（Path C）: 前回から30分以上経過していたら強制
   if (lastCallTime) {
     const lastCall = new Date(lastCallTime);
     const elapsed = (now.getTime() - lastCall.getTime()) / 60_000;
@@ -147,6 +133,6 @@ export function shouldCallGemini(params: {
 
   return {
     shouldCall: false,
-    reason: `変化なし (変化=${rateChange.toFixed(3)}, ニュースなし, Redditシグナルなし)`,
+    reason: `変化なし (変化=${rateChange.toFixed(3)})`,
   };
 }

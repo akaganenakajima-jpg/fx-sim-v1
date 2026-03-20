@@ -6,15 +6,15 @@ import { getUSDJPY } from './rate';
 import { fetchNews, type SourceFetchStat } from './news';
 import { fetchRedditSignal } from './reddit';
 import { getMarketIndicators } from './indicators';
-import { getDecision, getDecisionGPT, getDecisionClaude, getDecisionWithHedge, analyzeNews, PROMPT_VERSION } from './gemini';
+import { getDecisionWithHedge, fetchOgDescription, newsStage1, newsStage2, type NewsAnalysisItem, type NewsStage1Result } from './gemini';
 import { checkAndCloseAllPositions, openPosition } from './position';
 import { shouldCallGemini } from './filter';
 import {
-  getOpenPositionByPair,
   insertDecision,
   insertSystemLog,
   getCacheValue,
   setCacheValue,
+  closePosition,
 } from './db';
 import { slPatternAnalysis } from './stats';
 import { getDashboardHtml } from './dashboard';
@@ -237,12 +237,37 @@ interface AIRunContext {
   redditSignal: { hasSignal: boolean; keywords: string[]; topPosts: string[] };
   newsSummary: string | null;
   activeNewsSources: string;
-  hasAttentionNews: boolean;
   brokerEnv: BrokerEnv;
   now: Date;
   prices: Map<string, number | null>;
-  hasNewNews: boolean;
   prevElapsed: number;
+  /** Path B が処理した銘柄（Path A/C でスキップする） */
+  excludedPairs?: Set<string>;
+}
+
+// ── v2: 3Path並列 型定義 ──
+
+interface SharedNewsStore {
+  items: MarketData['news'];
+  hash: string;
+  hasChanged: boolean;
+}
+
+interface PathDecision {
+  pair: string;
+  decision: 'BUY' | 'SELL' | 'HOLD';
+  tp_rate: number | null;
+  sl_rate: number | null;
+  reasoning: string;
+  rate: number;
+  source: 'PATH_A' | 'PATH_B' | 'PATH_C';
+  news_analysis?: NewsAnalysisItem[];
+}
+
+interface PathBResult {
+  decisions: PathDecision[];  // BUY/SELLのみ
+  reversals: string[];        // REVERSE対象のpair一覧
+  newsAnalysis: NewsAnalysisItem[];
 }
 
 async function runAIDecisions(
@@ -252,7 +277,7 @@ async function runAIDecisions(
 ): Promise<AIDecisionSummary> {
   const {
     indicators, news, redditSignal, newsSummary, activeNewsSources,
-    hasAttentionNews, brokerEnv, now, prices, hasNewNews, prevElapsed,
+    brokerEnv, now, prices, prevElapsed, excludedPairs,
   } = context;
 
   // 429クールダウンチェック
@@ -264,9 +289,7 @@ async function runAIDecisions(
 
   // 動的上限: 前回実行時間に応じて調整
   const baseLimit = prevElapsed > 30000 ? 3 : prevElapsed > 15000 ? 5 : 8;
-  const MAX_GEMINI_PER_RUN = isInCooldown
-    ? 0  // 429クールダウン中のみスキップ
-    : hasAttentionNews ? Math.min(baseLimit + 3, 10) : baseLimit;
+  const MAX_GEMINI_PER_RUN = isInCooldown ? 0 : baseLimit;
   // 並列数: 前回実行時間から安全な並列数を計算
   const parallelLimit = prevElapsed > 30000 ? 2 : prevElapsed > 15000 ? 3 : 4;
 
@@ -328,11 +351,14 @@ async function runAIDecisions(
     const lastCallKey = `last_ai_call_${instrument.pair}`;
     const lastCallTime = cacheMap.get(lastCallKey) ?? null;
 
+    // Path B が処理した銘柄はスキップ
+    if (excludedPairs?.has(instrument.pair)) continue;
+
     const thompsonScore = thompsonMap.get(instrument.pair);
     const filterResult = shouldCallGemini({
       currentRate, prevRate,
       rateChangeTh: instrument.rateChangeTh,
-      hasNewNews, redditSignal, now, lastCallTime,
+      now, lastCallTime,
       thompsonScore,
     });
 
@@ -361,8 +387,8 @@ async function runAIDecisions(
   }
 
   // 4b. フィルタ通過銘柄をスコア降順でソート
-  const passed = candidateList.filter(c => c.filterResult.shouldCall || hasAttentionNews);
-  const skipped = candidateList.filter(c => !c.filterResult.shouldCall && !hasAttentionNews);
+  const passed = candidateList.filter(c => c.filterResult.shouldCall);
+  const skipped = candidateList.filter(c => !c.filterResult.shouldCall);
   passed.sort((a, b) => b.totalScore - a.totalScore);
 
   // スキップ銘柄 + 上限超過分をバッチINSERT（D1クエリ削減）
@@ -631,6 +657,137 @@ async function runAIDecisions(
   return { geminiOk: geminiOkCount, gptOk: gptOkCount, claudeOk: claudeOkCount, fail: aiFailCount };
 }
 
+// ── Path B: ニュースドリブン 2段階AI判定 ──
+
+/**
+ * Path B: ニュースハッシュ変化時に起動
+ * B1（タイトル即断）→ og:description取得 → B2（補正）の2段階で売買シグナルを生成
+ */
+async function runPathB(
+  env: Env,
+  sharedNewsStore: SharedNewsStore,
+  indicators: Awaited<ReturnType<typeof getMarketIndicators>>,
+  redditSignal: { hasSignal: boolean; keywords: string[]; topPosts: string[] },
+  openPairs: Set<string>,
+  apiKey: string,
+): Promise<PathBResult> {
+  const news = sharedNewsStore.items;
+  if (news.length === 0) return { decisions: [], reversals: [], newsAnalysis: [] };
+
+  // 失敗クールダウンチェック（2分）
+  const failedAtRaw = await getCacheValue(env.DB, 'news_analysis_failed_at');
+  const failedAt = failedAtRaw ? parseInt(failedAtRaw) : 0;
+  if ((Date.now() - failedAt) < 2 * 60 * 1000) {
+    console.log('[fx-sim] Path B: クールダウン中のためスキップ');
+    return { decisions: [], reversals: [], newsAnalysis: [] };
+  }
+
+  const instrumentList = INSTRUMENTS.map(i => ({
+    pair: i.pair,
+    hasOpenPosition: openPairs.has(i.pair),
+  }));
+
+  // B1: タイトル即断（タイムアウト10秒）
+  let stage1: NewsStage1Result;
+  try {
+    stage1 = await newsStage1({ news, redditSignal, indicators, instruments: instrumentList, apiKey });
+    console.log(`[fx-sim] Path B B1: ${stage1.news_analysis.filter((a: NewsAnalysisItem) => a.attention).length}件注目, ${stage1.trade_signals.length}件シグナル`);
+  } catch (e) {
+    await setCacheValue(env.DB, 'news_analysis_failed_at', String(Date.now()));
+    await insertSystemLog(env.DB, 'WARN', 'PATH_B', 'B1失敗→2分クールダウン', String(e).split('\n')[0].slice(0, 120));
+    throw e;
+  }
+
+  // B1成功後: og:description 並列取得（attention上位5件, 英語4ソースはスキップ）
+  const attentionItems = stage1.news_analysis.filter((a: NewsAnalysisItem) => a.attention).slice(0, 5);
+  const ogResults = await Promise.allSettled(
+    attentionItems.map(async (a: NewsAnalysisItem) => {
+      const item = news[a.index];
+      if (!item) return { index: a.index, og: null };
+      const og = await fetchOgDescription((item as any).link ?? '', (item as any).source ?? '');
+      return { index: a.index, og };
+    })
+  );
+  // og_description を news_analysis に付与
+  for (const r of ogResults) {
+    if (r.status === 'fulfilled' && r.value.og) {
+      const target = stage1.news_analysis.find((a: NewsAnalysisItem) => a.index === r.value.index);
+      if (target) target.og_description = r.value.og;
+    }
+  }
+
+  // 過剰検出ガード: 10件超は先頭5件のみ採用
+  let signals = stage1.trade_signals;
+  if (signals.length > 10) {
+    signals = signals.slice(0, 5);
+    console.log(`[fx-sim] Path B: 過剰検出ガード (${stage1.trade_signals.length}件→5件)`);
+  }
+
+  if (signals.length === 0) {
+    // B3: market_cache保存（非同期、売買をブロックしない）
+    void (async () => {
+      try {
+        await setCacheValue(env.DB, 'news_analysis_failed_at', '0');
+      } catch {}
+    })();
+    return { decisions: [], reversals: [], newsAnalysis: stage1.news_analysis };
+  }
+
+  // B2: og:desc付きで補正（タイムアウト8秒）
+  let b2Corrections: { pair: string; action: 'CONFIRM' | 'REVISE' | 'REVERSE'; new_tp_rate?: number; new_sl_rate?: number; reasoning: string }[] = [];
+  try {
+    const stage2 = await newsStage2({ stage1Result: stage1, news, apiKey });
+    b2Corrections = stage2.corrections;
+    console.log(`[fx-sim] Path B B2: ${b2Corrections.filter(c => c.action === 'CONFIRM').length}件CONFIRM, ${b2Corrections.filter(c => c.action === 'REVISE').length}件REVISE, ${b2Corrections.filter(c => c.action === 'REVERSE').length}件REVERSE`);
+  } catch (e) {
+    // B2タイムアウト/失敗 → B1シグナルをそのまま採用
+    console.warn(`[fx-sim] Path B B2 failed/timeout → B1採用: ${String(e).split('\n')[0].slice(0, 80)}`);
+    await insertSystemLog(env.DB, 'WARN', 'PATH_B', 'B2失敗→B1シグナルそのまま採用', String(e).split('\n')[0].slice(0, 120));
+  }
+
+  // B2補正適用
+  const decisions: PathDecision[] = [];
+  const reversals: string[] = [];
+
+  for (const signal of signals) {
+    const correction = b2Corrections.find(c => c.pair === signal.pair);
+    const action = correction?.action ?? 'CONFIRM';
+
+    if (action === 'REVERSE') {
+      reversals.push(signal.pair);
+      continue; // toCloseに追加、同サイクル再オープン禁止
+    }
+
+    let tp = signal.tp_rate;
+    let sl = signal.sl_rate;
+    if (action === 'REVISE') {
+      if (correction?.new_tp_rate != null) tp = correction.new_tp_rate;
+      if (correction?.new_sl_rate != null) sl = correction.new_sl_rate;
+    }
+
+    decisions.push({
+      pair: signal.pair,
+      decision: signal.decision,
+      tp_rate: tp,
+      sl_rate: sl,
+      reasoning: `${signal.reasoning}${action === 'REVISE' ? ` [B2:REVISE]` : ''}`,
+      rate: 0, // 呼び出し元でprices.get(pair)で補完
+      source: 'PATH_B',
+      news_analysis: stage1.news_analysis,
+    });
+  }
+
+  // B3: market_cache保存（非同期、売買をブロックしない）
+  void (async () => {
+    try {
+      await setCacheValue(env.DB, 'news_analysis_failed_at', '0');
+      await insertSystemLog(env.DB, 'INFO', 'PATH_B', `Path B完了: ${decisions.length}件決定, ${reversals.length}件REVERSE`, JSON.stringify({ signals: decisions.map(d => `${d.pair}:${d.decision}`) }));
+    } catch {}
+  })();
+
+  return { decisions, reversals, newsAnalysis: stage1.news_analysis };
+}
+
 async function run(env: Env): Promise<void> {
   const now = new Date();
   const cronStart = Date.now();
@@ -661,49 +818,21 @@ async function run(env: Env): Promise<void> {
     await checkAndCloseAllPositions(env.DB, prices, INSTRUMENTS, brokerEnv, getWebhookUrl(env));
     const tpSlMs = Date.now() - t1;
 
-    // 3. ニュースハッシュ更新（計測開始）
+    // 3. 共有ニュースストア構築 + Path B 実行（計測開始）
     const t2 = Date.now();
     const prevNewsHashRaw = await getCacheValue(env.DB, PREV_NEWS_HASH_KEY);
     const currentNewsHash = newsHash(news.map((n) => n.title));
-    const hasNewNews = currentNewsHash !== (prevNewsHashRaw ?? '');
+    const hasChanged = currentNewsHash !== (prevNewsHashRaw ?? '');
     await setCacheValue(env.DB, PREV_NEWS_HASH_KEY, currentNewsHash);
 
-    // 失敗クールダウン: 直近2分以内に失敗していたらスキップ（Phase1: 5min→2min短縮）
-    const newsFailedAtRaw = await getCacheValue(env.DB, 'news_analysis_failed_at');
-    const newsFailedAt = newsFailedAtRaw ? parseInt(newsFailedAtRaw) : 0;
-    const NEWS_COOLDOWN_MS = 2 * 60 * 1000; // 2分
-    const inNewsCooldown = (Date.now() - newsFailedAt) < NEWS_COOLDOWN_MS;
+    const sharedNewsStore: SharedNewsStore = { items: news, hash: currentNewsHash, hasChanged };
 
-    // 新ニュース検出時: Gemini 1回のみ（Phase1: 3段fallback廃止）
+    /* DEPRECATED_v2: newsAnalysisRan / hasAttentionNews ロジック → runPathB() に置換
     let newsAnalysisRan = false;
-    if (hasNewNews && news.length > 0 && !inNewsCooldown) {
-      let analysis = null;
-      try {
-        analysis = await analyzeNews({ news, apiKey: getApiKey(env) });
-      } catch (e) {
-        console.warn(`[fx-sim] News analysis failed: ${String(e).split('\n')[0].slice(0, 80)}`);
-        // 失敗 → 2分クールダウン開始（次のcronで再試行）
-        await setCacheValue(env.DB, 'news_analysis_failed_at', String(Date.now()));
-        await insertSystemLog(env.DB, 'WARN', 'NEWS', 'ニュース分析失敗→2分クールダウン', String(e).split('\n')[0].slice(0, 120));
-      }
-      if (analysis && analysis.length > 0) {
-        // 分析結果にニュースタイトルを紐付け（index→titleマッチング用）
-        const enriched = analysis.map((a: { index: number; attention: boolean; impact: string | null; title_ja: string | null }) => ({
-          ...a,
-          title: news[a.index]?.title ?? null,
-          pubDate: news[a.index]?.pubDate ?? null,
-          description: news[a.index]?.description ?? null,
-          source: (news[a.index] as any)?.source ?? null,
-        }));
-        await setCacheValue(env.DB, 'news_analysis', JSON.stringify(enriched));
-        // 分析と同じニュースセットをキャッシュ（APIで同期を保証）
-        await setCacheValue(env.DB, 'latest_news', JSON.stringify(news.slice(0, 30)));
-        // 成功時はクールダウンをクリア
-        await setCacheValue(env.DB, 'news_analysis_failed_at', '0');
-        newsAnalysisRan = true;
-        console.log(`[fx-sim] News analysis: ${analysis.filter(a => a.attention).length}/${analysis.length} flagged`);
-      }
-    }
+    ...
+    let hasAttentionNews = false;
+    ...
+    */
 
     // news_summary: JSON形式で保存（titleのみ、切り詰めなし）
     const newsSummary = news.length > 0
@@ -712,21 +841,112 @@ async function run(env: Env): Promise<void> {
         })))
       : null;
 
-    // 🔥ニュースドリブン: 注目ニュースがあればフィルタをスキップ
-    let hasAttentionNews = false;
-    if (newsAnalysisRan) {
-      // 今回分析した結果から注目フラグを確認
+    // Path B 実行（ニュースハッシュ変化時のみ）
+    const allOpenRawForPathB = await env.DB
+      .prepare(`SELECT pair FROM positions WHERE status = 'OPEN'`)
+      .all<{ pair: string }>();
+    const openPairsForPathB = new Set((allOpenRawForPathB.results ?? []).map(p => p.pair));
+
+    let pathBResult: PathBResult = { decisions: [], reversals: [], newsAnalysis: [] };
+    if (sharedNewsStore.hasChanged) {
       try {
-        const analysisRaw = await getCacheValue(env.DB, 'news_analysis');
-        if (analysisRaw) {
-          const analysis = JSON.parse(analysisRaw);
-          hasAttentionNews = Array.isArray(analysis) && analysis.some((a: { attention: boolean }) => a.attention);
-          if (hasAttentionNews) {
-            console.log('[fx-sim] 🔥 Attention news detected! Forcing Gemini calls for all instruments');
-            await insertSystemLog(env.DB, 'INFO', 'NEWS', '🔥注目ニュース検出 → 全銘柄即時判定');
+        pathBResult = await runPathB(env, sharedNewsStore, indicators, redditSignal, openPairsForPathB, getApiKey(env));
+        console.log(`[fx-sim] Path B: ${pathBResult.decisions.length}件シグナル, ${pathBResult.reversals.length}件REVERSE`);
+      } catch (e) {
+        console.warn(`[fx-sim] Path B failed: ${String(e).split('\n')[0].slice(0, 80)}`);
+        await insertSystemLog(env.DB, 'WARN', 'PATH_B', 'Path B実行失敗', String(e).split('\n')[0].slice(0, 120));
+      }
+    }
+
+    // Path B が処理した銘柄（BUY/SELL + REVERSE）を Path A/C から除外
+    const pathBHandledPairs = new Set([
+      ...pathBResult.decisions.map(d => d.pair),
+      ...pathBResult.reversals,
+    ]);
+
+    // Path B REVERSE: 既存ポジションをクローズ
+    if (pathBResult.reversals.length > 0) {
+      const revPrices = new Map<string, number>();
+      for (const pair of pathBResult.reversals) {
+        const rate = prices.get(pair);
+        if (rate != null) revPrices.set(pair, rate);
+      }
+      for (const [pair, rate] of revPrices) {
+        try {
+          // pair のオープンポジションをクローズ
+          const openPos = await env.DB.prepare(
+            `SELECT id, direction, entry_rate FROM positions WHERE pair = ? AND status = 'OPEN' LIMIT 1`
+          ).bind(pair).first<{ id: number; direction: string; entry_rate: number }>();
+          if (openPos) {
+            const pnl = openPos.direction === 'BUY'
+              ? (rate - openPos.entry_rate) * 100
+              : (openPos.entry_rate - rate) * 100;
+              await closePosition(env.DB, openPos.id, rate, 'B2_REVERSE', pnl);
+            await insertSystemLog(env.DB, 'INFO', 'PATH_B', `B2_REVERSE クローズ: ${pair} @ ${rate}`);
           }
+        } catch (e) {
+          console.warn(`[fx-sim] Path B REVERSE close failed (${pair}): ${String(e).slice(0, 80)}`);
         }
-      } catch {}
+      }
+    }
+
+    // Path B BUY/SELL: ポジション開設
+    if (pathBResult.decisions.length > 0) {
+      for (const dec of pathBResult.decisions) {
+        if (dec.decision === 'HOLD') continue;
+        const currentRate = prices.get(dec.pair);
+        if (currentRate == null) continue;
+        const hasOpenPos = openPairsForPathB.has(dec.pair);
+        if (hasOpenPos) continue; // REVERSE後の再オープン禁止（同サイクル内）
+        try {
+          const instrument = INSTRUMENTS.find(i => i.pair === dec.pair);
+          if (!instrument) continue;
+          const sanity = checkTpSlSanity({
+            direction: dec.decision as 'BUY' | 'SELL',
+            rate: currentRate,
+            tp: dec.tp_rate,
+            sl: dec.sl_rate,
+            instrument,
+          });
+          if (!sanity.valid) {
+            await insertSystemLog(env.DB, 'WARN', 'SANITY', `Path B TP/SL異常値拒否: ${dec.pair}`, sanity.reason ?? undefined);
+            continue;
+          }
+          await openPosition(env.DB, dec.pair, dec.decision as 'BUY' | 'SELL', currentRate, dec.tp_rate, dec.sl_rate, 'paper', null, getWebhookUrl(env));
+          await insertSystemLog(env.DB, 'INFO', 'PATH_B', `ポジション開設: ${dec.pair} ${dec.decision} @ ${currentRate}`, JSON.stringify({ tp: dec.tp_rate, sl: dec.sl_rate }));
+        } catch (e) {
+          console.warn(`[fx-sim] Path B openPosition failed (${dec.pair}): ${String(e).slice(0, 80)}`);
+        }
+      }
+    }
+
+    // Path B decisions を decisions テーブルに記録
+    if (pathBResult.decisions.length > 0) {
+      const stmt = env.DB.prepare(
+        `INSERT INTO decisions (pair, rate, decision, tp_rate, sl_rate, reasoning, news_summary, vix, us10y, nikkei, sp500, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      );
+      await env.DB.batch(pathBResult.decisions.map(d =>
+        stmt.bind(
+          d.pair, prices.get(d.pair) ?? d.rate, d.decision, d.tp_rate, d.sl_rate,
+          `[PATH_B] ${d.reasoning}`, newsSummary,
+          indicators.vix, indicators.us10y, indicators.nikkei, indicators.sp500,
+          now.toISOString()
+        )
+      ));
+    }
+
+    // news_analysis キャッシュ更新（Path B分析結果）
+    if (pathBResult.newsAnalysis.length > 0) {
+      const enriched = pathBResult.newsAnalysis.map(a => ({
+        ...a,
+        title: news[a.index]?.title ?? null,
+        pubDate: news[a.index]?.pubDate ?? null,
+        description: news[a.index]?.description ?? null,
+        source: (news[a.index] as any)?.source ?? null,
+      }));
+      await setCacheValue(env.DB, 'news_analysis', JSON.stringify(enriched));
+      await setCacheValue(env.DB, 'latest_news', JSON.stringify(news.slice(0, 30)));
     }
 
     const newsMs = Date.now() - t2;
@@ -738,7 +958,8 @@ async function run(env: Env): Promise<void> {
     const t3 = Date.now();
     const aiSummary = await runAIDecisions(env, {
       indicators, news, redditSignal, newsSummary, activeNewsSources,
-      hasAttentionNews, brokerEnv, now, prices, hasNewNews, prevElapsed,
+      brokerEnv, now, prices, prevElapsed,
+      excludedPairs: pathBHandledPairs,
     }, cronStart);
     const aiLoopMs = Date.now() - t3;
     const totalMs = Date.now() - cronStart;

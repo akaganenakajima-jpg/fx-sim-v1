@@ -19,7 +19,7 @@ const GEMINI_ENDPOINT =
   'https://generativelanguage.googleapis.com/v1beta/models/gemini-3.1-pro-preview:generateContent';
 
 const AI_TIMEOUT_MS = 12_000; // AI API呼び出し12秒タイムアウト
-const NEWS_ANALYSIS_TIMEOUT_MS = 12_000; // ニュース分析 12秒タイムアウト（Phase1: 10→12s緩和）
+// const NEWS_ANALYSIS_TIMEOUT_MS = 12_000; // DEPRECATED_v2: analyzeNews系で使用していたが削除
 const HEDGE_DELAY_MS = 4_000; // ヘッジリクエスト: Gemini開始後4秒でGPTも並行開始
 
 function fetchWithTimeout(url: string, init: RequestInit, timeoutMs = AI_TIMEOUT_MS): Promise<Response> {
@@ -345,15 +345,46 @@ export async function getDecisionWithHedge(params: {
   return Promise.any([geminiPromise, hedgePromise]);
 }
 
-// ── ニュース注目フラグ分析 ──
+// ── ニュース分析型定義（v2: Path B用に拡張）──
 
+/** Path B newsStage1/newsStage2 で使用するニュース分析アイテム */
 export interface NewsAnalysisItem {
   index: number;
   attention: boolean;
-  impact: string | null;
-  title_ja: string | null; // 英語ニュースの日本語訳タイトル（日本語ニュースはnull）
+  impact: string;
+  title_ja: string;
+  affected_pairs: string[];
+  link?: string;
+  og_description?: string; // B2でfetch後に付与
 }
 
+/** Path B B1出力 */
+export interface NewsStage1Result {
+  news_analysis: NewsAnalysisItem[];
+  trade_signals: Array<{
+    pair: string;
+    decision: 'BUY' | 'SELL';
+    tp_rate: number;
+    sl_rate: number;
+    reasoning: string;
+  }>;
+}
+
+/** Path B B2出力 */
+export interface NewsStage2Result {
+  corrections: Array<{
+    pair: string;
+    action: 'CONFIRM' | 'REVISE' | 'REVERSE';
+    new_tp_rate?: number; // REVISE時のみ。省略=B1値を維持
+    new_sl_rate?: number;
+    reasoning: string;
+  }>;
+}
+
+// ── DEPRECATED_v2: 旧ニュース分析関数（Path B実装後にコメントアウト）──
+// 本番でPath Bが連続10回以上成功した段階で完全削除する
+
+/* DEPRECATED_v2: analyzeNews() replaced by newsStage1()/newsStage2()
 export async function analyzeNews(params: {
   news: NewsItem[];
   apiKey: string;
@@ -391,7 +422,9 @@ export async function analyzeNews(params: {
   const text = data.candidates[0].content.parts[0].text;
   return JSON.parse(text) as NewsAnalysisItem[];
 }
+*/
 
+/* DEPRECATED_v2: NEWS_ANALYSIS_SYSTEM_PROMPT
 const NEWS_ANALYSIS_SYSTEM_PROMPT =
   'あなたは金融マーケットアナリストです。以下のニュース一覧を分析し、' +
   'マーケット（為替・株式・債券・暗号資産・コモディティ）に影響がありそうなニュースに注目フラグを付けてください。' +
@@ -405,7 +438,9 @@ function buildNewsList(news: NewsItem[]): string {
     `[${i}] ${n.title}${n.description ? ' — ' + n.description.slice(0, 100) : ''}`
   ).join('\n');
 }
+*/
 
+/* DEPRECATED_v2: analyzeNewsGPT() replaced by newsStage1()/newsStage2()
 export async function analyzeNewsGPT(params: {
   news: NewsItem[];
   apiKey: string;
@@ -438,10 +473,11 @@ export async function analyzeNewsGPT(params: {
   const data = await res.json<{ choices: Array<{ message: { content: string } }> }>();
   const text = data.choices[0].message.content;
   const parsed = JSON.parse(text);
-  // GPTはjson_objectモードで配列を返せないことがある（ラッパーオブジェクト）
   return Array.isArray(parsed) ? parsed : (parsed.items ?? parsed.results ?? parsed.analysis ?? []);
 }
+*/
 
+/* DEPRECATED_v2: analyzeNewsClaude() replaced by newsStage1()/newsStage2()
 export async function analyzeNewsClaude(params: {
   news: NewsItem[];
   apiKey: string;
@@ -477,4 +513,175 @@ export async function analyzeNewsClaude(params: {
   const jsonMatch = text.match(/\[[\s\S]*\]/);
   if (!jsonMatch) throw new Error('Claude news analysis: no JSON array');
   return JSON.parse(jsonMatch[0]) as NewsAnalysisItem[];
+}
+*/
+
+// ── Path B: og:description フェッチ ──
+
+/** og:descriptionを取得しない英語ソース（RSSのdescriptionを使用） */
+const OG_EXCLUDED_SOURCES = ['CNBC', 'Bloomberg', 'FXStreet', 'CoinDesk'];
+
+/**
+ * 指定URLからog:descriptionを取得する
+ * - 英語4ソースはスキップしてnullを返す
+ * - タイムアウト3秒、失敗時はnullを返す（例外を投げない）
+ */
+export async function fetchOgDescription(url: string, sourceName?: string): Promise<string | null> {
+  if (sourceName && OG_EXCLUDED_SOURCES.some(s => sourceName.toLowerCase().includes(s.toLowerCase()))) {
+    return null;
+  }
+  try {
+    const res = await fetchWithTimeout(url, {}, 3_000);
+    if (!res.ok) return null;
+    const html = await res.text();
+    const match = html.match(/<meta\s+(?:property|name)=["']og:description["']\s+content=["']([^"']+)["']/i)
+      ?? html.match(/<meta\s+content=["']([^"']+)["']\s+(?:property|name)=["']og:description["']/i);
+    return match?.[1]?.trim() ?? null;
+  } catch {
+    return null;
+  }
+}
+
+// ── Path B: newsStage1 ──
+
+const STAGE1_TIMEOUT_MS = 10_000;
+
+/**
+ * B1: ニュースタイトル即断 → trade_signals 収集
+ * タイムアウト10秒。失敗時は例外を投げる（呼び出し元でcatch→Path Bスキップ）
+ */
+export async function newsStage1(params: {
+  news: NewsItem[];
+  redditSignal: { hasSignal: boolean; keywords: string[]; topPosts: string[] };
+  indicators: MarketIndicators;
+  instruments: Array<{ pair: string; hasOpenPosition: boolean }>;
+  apiKey: string;
+}): Promise<NewsStage1Result> {
+  const { news, redditSignal, indicators, instruments, apiKey } = params;
+
+  const newsList = news.slice(0, 20).map((n, i) =>
+    `[${i}] ${n.title}${(n as any).source ? ` (${(n as any).source})` : ''}`
+  ).join('\n');
+
+  const instrumentList = instruments.map(inst =>
+    inst.hasOpenPosition ? `${inst.pair}[OP]` : inst.pair
+  ).join(', ');
+
+  const userMessage = [
+    `【ニュース一覧】`,
+    newsList,
+    ``,
+    `【市場状況】`,
+    `米10年債利回り: ${indicators.us10y != null ? indicators.us10y.toFixed(2) + '%' : 'N/A'}`,
+    `VIX: ${indicators.vix != null ? indicators.vix.toFixed(2) : 'N/A'}`,
+    `日経平均: ${indicators.nikkei != null ? indicators.nikkei.toFixed(0) : 'N/A'}`,
+    `S&P500: ${indicators.sp500 != null ? indicators.sp500.toFixed(0) : 'N/A'}`,
+    `Redditシグナル: ${redditSignal.hasSignal ? redditSignal.keywords.join(', ') : 'なし'}`,
+    ``,
+    `【対象銘柄】（[OP]=既存ポジションあり、trade_signalsに含めない）`,
+    instrumentList,
+  ].join('\n');
+
+  const systemPrompt =
+    'あなたは為替FXトレーダーのAIアシスタントです。\n' +
+    '以下のニュース一覧と市場状況を分析し、次の2つのことを返してください。\n' +
+    '1. 各ニュースの注目度評価（news_analysis）\n' +
+    '2. ニュースに基づいた売買シグナル（trade_signals）\n\n' +
+    '必ず以下のJSON形式のみで返答してください:\n' +
+    '{"news_analysis":[{"index":0,"attention":true,"impact":"円安要因（50文字以内）","title_ja":"日本語タイトル","affected_pairs":["USD/JPY"]}],' +
+    '"trade_signals":[{"pair":"USD/JPY","decision":"BUY","tp_rate":150.50,"sl_rate":149.80,"reasoning":"日本語100文字以内"}]}\n\n' +
+    'ルール:\n' +
+    '- trade_signalsはBUYまたはSELLのみ（HOLDは含めない）\n' +
+    '- [OP]マークの銘柄はtrade_signalsに含めない\n' +
+    '- tp_rate/sl_rateは必ず数値で返す（nullは不可）\n' +
+    '- リスクリワード比は1.5以上\n' +
+    '- 確信度が低いニュースはtrade_signalsに含めない\n' +
+    '- attention:falseのニュースはimpact/title_jaを空文字列、affected_pairsを[]にする';
+
+  const res = await fetchWithTimeout(`${GEMINI_ENDPOINT}?key=${apiKey}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      systemInstruction: { parts: [{ text: systemPrompt }] },
+      contents: [{ role: 'user', parts: [{ text: userMessage }] }],
+      generationConfig: { responseMimeType: 'application/json' },
+    }),
+  }, STAGE1_TIMEOUT_MS);
+
+  if (!res.ok) {
+    const body = await res.text();
+    throw new Error(`newsStage1 API error ${res.status}: ${body.slice(0, 200)}`);
+  }
+
+  const data = await res.json<GeminiResponse>();
+  const text = data.candidates[0].content.parts[0].text;
+  return JSON.parse(text) as NewsStage1Result;
+}
+
+// ── Path B: newsStage2 ──
+
+const STAGE2_TIMEOUT_MS = 8_000;
+
+/**
+ * B2: og:description付きで補正 → CONFIRM/REVISE/REVERSE
+ * タイムアウト8秒。失敗時は例外を投げる（呼び出し元でcatch→B1シグナルをそのまま採用）
+ */
+export async function newsStage2(params: {
+  stage1Result: NewsStage1Result;
+  news: NewsItem[];
+  apiKey: string;
+}): Promise<NewsStage2Result> {
+  const { stage1Result, news, apiKey } = params;
+
+  const signalList = stage1Result.trade_signals.map(s =>
+    `${s.pair}: ${s.decision} TP=${s.tp_rate} SL=${s.sl_rate} / ${s.reasoning}`
+  ).join('\n');
+
+  const attentionNews = stage1Result.news_analysis
+    .filter(a => a.attention)
+    .slice(0, 5)
+    .map(a => {
+      const item = news[a.index];
+      const ogDesc = a.og_description ?? item?.description ?? '（詳細なし）';
+      return `[${a.index}] ${item?.title ?? ''}\nog:description: ${ogDesc.slice(0, 300)}`;
+    })
+    .join('\n\n');
+
+  const userMessage = [
+    `【B1シグナル（再評価対象）】`,
+    signalList || '（シグナルなし）',
+    ``,
+    `【注目ニュース詳細（og:description付き）】`,
+    attentionNews || '（詳細取得なし）',
+  ].join('\n');
+
+  const systemPrompt =
+    'あなたは為替FXトレーダーのAIアシスタントです。\n' +
+    'B1（速報）の売買シグナルをog:description（詳細情報）で再評価してください。\n\n' +
+    '必ず以下のJSON形式のみで返答してください:\n' +
+    '{"corrections":[{"pair":"USD/JPY","action":"CONFIRM","reasoning":"詳細を確認、B1判断を維持"}]}\n\n' +
+    'actionの種類:\n' +
+    '- CONFIRM: B1の判断を維持（tp_rate/sl_rateはB1値をそのまま使用）\n' +
+    '- REVISE: TP/SLを修正（方向は変えない）。new_tp_rate/new_sl_rateを指定（省略=B1値を維持）\n' +
+    '- REVERSE: 反対方向に変更推奨（既存ポジションがあれば決済）\n' +
+    'B1シグナルの全pairに対してcorrectionsを返すこと。';
+
+  const res = await fetchWithTimeout(`${GEMINI_ENDPOINT}?key=${apiKey}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      systemInstruction: { parts: [{ text: systemPrompt }] },
+      contents: [{ role: 'user', parts: [{ text: userMessage }] }],
+      generationConfig: { responseMimeType: 'application/json' },
+    }),
+  }, STAGE2_TIMEOUT_MS);
+
+  if (!res.ok) {
+    const body = await res.text();
+    throw new Error(`newsStage2 API error ${res.status}: ${body.slice(0, 200)}`);
+  }
+
+  const data = await res.json<GeminiResponse>();
+  const text = data.candidates[0].content.parts[0].text;
+  return JSON.parse(text) as NewsStage2Result;
 }
