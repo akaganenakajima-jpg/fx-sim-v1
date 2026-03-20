@@ -2,6 +2,7 @@
 
 import type { Position } from './db';
 import { fetchNews } from './news';
+import { getRiskStatus, type RiskEnv } from './risk-guard';
 
 export interface LatestDecision {
   id: number;
@@ -82,10 +83,26 @@ export interface StatusResponse {
   latestNews: Array<{ title: string; pubDate: string; description: string }>;
   newsAnalysis: Array<{ index: number; attention: boolean; impact: string | null; title_ja: string | null }>;
   tradingMode: 'paper' | 'demo' | 'live';
+  riskStatus: {
+    killSwitchActive: boolean;
+    todayLoss: number;
+    maxDailyLoss: number;
+    livePositions: number;
+    maxPositions: number;
+  } | null;
+  instrumentScores: Array<{
+    pair: string;
+    total_trades: number;
+    win_rate: number;
+    avg_rr: number;
+    sharpe: number;
+    score: number;
+    updated_at: string | null;
+  }>;
 }
 
-export async function getApiStatus(db: D1Database, tradingEnv?: { TRADING_ENABLED?: string; OANDA_LIVE?: string }): Promise<StatusResponse> {
-  const [rateRow, openPositions, perf, latest, recent, sysRow, sparkRaw, perfByPairRaw, recentClosesRaw, newsRaw, sysLogsRaw, logStatsRaw] =
+export async function getApiStatus(db: D1Database, tradingEnv?: { TRADING_ENABLED?: string; OANDA_LIVE?: string; RISK_MAX_DAILY_LOSS?: string; RISK_MAX_LIVE_POSITIONS?: string; RISK_MAX_LOT_SIZE?: string; RISK_ANOMALY_THRESHOLD?: string }): Promise<StatusResponse> {
+  const [rateRow, openPositions, perf, latest, recent, sysRow, sparkRaw, perfByPairRaw, recentClosesRaw, newsRaw, sysLogsRaw, logStatsRaw, instrScoresRaw] =
     await Promise.all([
       db
         .prepare("SELECT value FROM market_cache WHERE key = 'prev_rate_USD/JPY'")
@@ -171,6 +188,11 @@ export async function getApiStatus(db: D1Database, tradingEnv?: { TRADING_ENABLE
            MAX(created_at) AS lastRun
            FROM decisions`)
         .first<{ totalRuns: number; geminiCalls: number; holdCount: number; lastRun: string }>(),
+
+      // 銘柄スコア
+      db
+        .prepare(`SELECT pair, total_trades, win_rate, avg_rr, sharpe, score, updated_at FROM instrument_scores ORDER BY score DESC`)
+        .all<{ pair: string; total_trades: number; win_rate: number; avg_rr: number; sharpe: number; score: number; updated_at: string | null }>(),
     ]);
 
   const rate = rateRow ? parseFloat(rateRow.value) : null;
@@ -219,6 +241,14 @@ export async function getApiStatus(db: D1Database, tradingEnv?: { TRADING_ENABLE
       ? (tradingEnv?.OANDA_LIVE === 'true' ? 'live' : 'demo')
       : 'paper';
 
+  // RiskGuard状態（実弾モード時のみ取得）
+  let riskStatus: StatusResponse['riskStatus'] = null;
+  if (tradingMode !== 'paper') {
+    try {
+      riskStatus = await getRiskStatus(db, tradingEnv as RiskEnv);
+    } catch {}
+  }
+
   return {
     rate,
     tradingMode,
@@ -239,6 +269,8 @@ export async function getApiStatus(db: D1Database, tradingEnv?: { TRADING_ENABLE
     sparklines,
     performanceByPair,
     recentCloses: recentClosesRaw.results ?? [],
+    riskStatus,
+    instrumentScores: instrScoresRaw.results ?? [],
     latestNews,
     newsAnalysis: await getNewsAnalysis(db),
     systemLogs: sysLogs,

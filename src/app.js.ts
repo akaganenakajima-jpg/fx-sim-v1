@@ -17,23 +17,23 @@ export const JS = `
 
   // 銘柄設定（順番は気にしなくてOK — categoryで自動ソート）
   var INSTRUMENTS = [
-    { pair: 'USD/JPY',   label: 'USD / JPY', unit: '円', multiplier: 100,   category: '為替' },
-    { pair: 'EUR/USD',   label: 'EUR / USD', unit: '円', multiplier: 10000, category: '為替' },
-    { pair: 'GBP/USD',   label: 'GBP / USD', unit: '円', multiplier: 10000, category: '為替' },
-    { pair: 'AUD/USD',   label: 'AUD / USD', unit: '円', multiplier: 10000, category: '為替' },
-    { pair: 'S&P500',    label: 'S&P 500',   unit: '円', multiplier: 10,    category: '株式指数' },
-    { pair: 'NASDAQ',    label: 'NASDAQ',    unit: '円', multiplier: 1,     category: '株式指数' },
-    { pair: 'Nikkei225', label: '日経225',    unit: '円', multiplier: 1,     category: '株式指数' },
-    { pair: 'DAX',       label: 'DAX',       unit: '円', multiplier: 1,     category: '株式指数' },
-    { pair: 'BTC/USD',   label: 'BTC',       unit: '円', multiplier: 1,     category: '暗号資産' },
-    { pair: 'ETH/USD',   label: 'ETH',       unit: '円', multiplier: 1,     category: '暗号資産' },
-    { pair: 'SOL/USD',   label: 'SOL',       unit: '円', multiplier: 10,    category: '暗号資産' },
-    { pair: 'Gold',      label: 'Gold',      unit: '円', multiplier: 10,    category: 'コモディティ' },
-    { pair: 'Silver',    label: 'Silver',    unit: '円', multiplier: 100,   category: 'コモディティ' },
-    { pair: 'Copper',    label: '銅',        unit: '円', multiplier: 1000,  category: 'コモディティ' },
-    { pair: 'CrudeOil',  label: '原油',      unit: '円', multiplier: 100,   category: 'コモディティ' },
-    { pair: 'NatGas',    label: '天然ガス',   unit: '円', multiplier: 1000,  category: 'コモディティ' },
-    { pair: 'US10Y',     label: '米10年債',   unit: '円', multiplier: 5000,  category: '債券' },
+    { pair: 'USD/JPY',   label: 'USD / JPY', unit: '円', multiplier: 100,   category: '為替',       broker: 'oanda' },
+    { pair: 'EUR/USD',   label: 'EUR / USD', unit: '円', multiplier: 10000, category: '為替',       broker: 'oanda' },
+    { pair: 'GBP/USD',   label: 'GBP / USD', unit: '円', multiplier: 10000, category: '為替',       broker: 'oanda' },
+    { pair: 'AUD/USD',   label: 'AUD / USD', unit: '円', multiplier: 10000, category: '為替',       broker: 'oanda' },
+    { pair: 'S&P500',    label: 'S&P 500',   unit: '円', multiplier: 10,    category: '株式指数',   broker: 'oanda' },
+    { pair: 'NASDAQ',    label: 'NASDAQ',    unit: '円', multiplier: 1,     category: '株式指数',   broker: 'oanda' },
+    { pair: 'Nikkei225', label: '日経225',    unit: '円', multiplier: 1,     category: '株式指数',   broker: 'oanda' },
+    { pair: 'DAX',       label: 'DAX',       unit: '円', multiplier: 1,     category: '株式指数',   broker: 'oanda' },
+    { pair: 'BTC/USD',   label: 'BTC',       unit: '円', multiplier: 1,     category: '暗号資産',   broker: 'paper' },
+    { pair: 'ETH/USD',   label: 'ETH',       unit: '円', multiplier: 1,     category: '暗号資産',   broker: 'paper' },
+    { pair: 'SOL/USD',   label: 'SOL',       unit: '円', multiplier: 10,    category: '暗号資産',   broker: 'paper' },
+    { pair: 'Gold',      label: 'Gold',      unit: '円', multiplier: 10,    category: 'コモディティ', broker: 'oanda' },
+    { pair: 'Silver',    label: 'Silver',    unit: '円', multiplier: 100,   category: 'コモディティ', broker: 'oanda' },
+    { pair: 'Copper',    label: '銅',        unit: '円', multiplier: 1000,  category: 'コモディティ', broker: 'oanda' },
+    { pair: 'CrudeOil',  label: '原油',      unit: '円', multiplier: 100,   category: 'コモディティ', broker: 'oanda' },
+    { pair: 'NatGas',    label: '天然ガス',   unit: '円', multiplier: 1000,  category: 'コモディティ', broker: 'oanda' },
+    { pair: 'US10Y',     label: '米10年債',   unit: '円', multiplier: 5000,  category: '債券',       broker: 'oanda' },
   ].sort(function(a, b) {
     return CATEGORY_ORDER.indexOf(a.category) - CATEGORY_ORDER.indexOf(b.category);
   });
@@ -887,6 +887,13 @@ export const JS = `
       var dirClass = pos ? 'watch-direction-' + pos.direction.toLowerCase() : 'watch-direction-hold';
       var dirText  = pos ? (pos.direction === 'BUY' ? '買い' : '空売り') : 'HOLD';
       var subText  = pos ? 'Entry ' + fmtPrice(instr.pair, pos.entry_rate) : '—';
+      // LIVE/PAPERソースバッジ（保有中のみ表示）
+      var sourceBadge = '';
+      if (pos && pos.source === 'oanda') {
+        sourceBadge = '<span class="watch-source-badge watch-source-live">LIVE</span>';
+      } else if (pos && data.tradingMode !== 'paper') {
+        sourceBadge = '<span class="watch-source-badge watch-source-paper">PAPER</span>';
+      }
       var badgeCls = 'watch-pnl-' + pnlFmt.cls;
 
       // スパークライン
@@ -901,6 +908,7 @@ export const JS = `
           '<div class="watch-pair">' + escHtml(instr.label) + '</div>' +
           '<div class="watch-sub">' +
             '<span class="watch-direction ' + dirClass + '">' + dirText + '</span>' +
+            sourceBadge +
             '<span>' + subText + '</span>' +
           '</div>' +
         '</div>' +
@@ -1269,7 +1277,42 @@ export const JS = `
       '</div>';
     }
 
-    container.innerHTML = html + histHtml +
+    // 銘柄スコアランキング（instrument_scores）
+    var scoresHtml = '';
+    var scores = data.instrumentScores || [];
+    if (scores.length > 0) {
+      scoresHtml = '<div style="margin-top:16px">' +
+        '<div class="list-header" style="padding:0 0 8px">銘柄スコア</div>' +
+        scores.map(function(s, idx) {
+          var instrS = INSTRUMENTS.filter(function(i) { return i.pair === s.pair; })[0];
+          var label = instrS ? instrS.label : s.pair;
+          var wr = (s.win_rate * 100).toFixed(0);
+          var qualified = s.win_rate >= 0.55 && s.avg_rr >= 1.0 && s.total_trades >= 5;
+          var barColor = qualified ? 'var(--green)' : 'var(--label-secondary)';
+          var barWidth = Math.max(s.score * 100, 3);
+          return '<div style="display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid var(--separator)">' +
+            '<span style="font-size:11px;font-weight:700;color:var(--label-tertiary);width:18px;text-align:right">' + (idx + 1) + '</span>' +
+            '<div style="flex:1;min-width:0">' +
+              '<div style="display:flex;justify-content:space-between;margin-bottom:4px">' +
+                '<span style="font-size:13px;font-weight:600">' + escHtml(label) +
+                  (qualified ? ' <span style="font-size:10px;color:var(--green)">QUALIFIED</span>' : '') +
+                '</span>' +
+                '<span style="font-size:13px;font-weight:600;font-variant-numeric:tabular-nums">' + (s.score * 100).toFixed(0) + '点</span>' +
+              '</div>' +
+              '<div style="height:4px;background:var(--bg-tertiary);border-radius:2px;overflow:hidden"><div style="height:100%;width:' + barWidth + '%;background:' + barColor + ';border-radius:2px"></div></div>' +
+              '<div style="display:flex;gap:8px;margin-top:3px;font-size:10px;color:var(--label-secondary)">' +
+                '<span>勝率' + wr + '%</span>' +
+                '<span>RR ' + s.avg_rr.toFixed(2) + '</span>' +
+                '<span>Sharpe ' + s.sharpe.toFixed(2) + '</span>' +
+                '<span>' + s.total_trades + '件</span>' +
+              '</div>' +
+            '</div>' +
+          '</div>';
+        }).join('') +
+      '</div>';
+    }
+
+    container.innerHTML = html + scoresHtml + histHtml +
       (totalTrades === 0
         ? '<div class="secondary-text" style="padding:8px 0 4px;text-align:center;font-size:13px">まだ決済された取引はありません<br>Cronが蓄積されると成績が表示されます</div>'
         : '');
@@ -1335,6 +1378,42 @@ export const JS = `
   function render(data) {
     var prev = lastData;
     lastData = data;
+
+    // ヘッダー: トレーディングモードバッジ
+    var modeBadgeEl = document.getElementById('mode-badge');
+    if (modeBadgeEl) {
+      if (data.tradingMode === 'live') {
+        modeBadgeEl.textContent = 'LIVE';
+        modeBadgeEl.className = 'mode-badge mode-live';
+        modeBadgeEl.style.display = '';
+      } else if (data.tradingMode === 'demo') {
+        modeBadgeEl.textContent = 'DEMO';
+        modeBadgeEl.className = 'mode-badge mode-demo';
+        modeBadgeEl.style.display = '';
+      } else {
+        modeBadgeEl.style.display = 'none';
+      }
+    }
+
+    // RiskGuard状態（ログタブに表示）
+    var riskEl = document.getElementById('risk-status');
+    if (riskEl && data.riskStatus) {
+      var rs = data.riskStatus;
+      var killCls = rs.killSwitchActive ? 'negative' : 'positive';
+      var killText = rs.killSwitchActive ? 'ON' : 'OFF';
+      riskEl.innerHTML =
+        '<div class="risk-status-card">' +
+          '<div class="risk-status-title">RiskGuard</div>' +
+          '<div class="risk-status-grid">' +
+            '<div class="risk-item"><span class="risk-label">キルスイッチ</span><span class="risk-value ' + killCls + '">' + killText + '</span></div>' +
+            '<div class="risk-item"><span class="risk-label">本日損失</span><span class="risk-value ' + (rs.todayLoss < 0 ? 'negative' : '') + '">\\u00A5' + Math.round(rs.todayLoss).toLocaleString('ja-JP') + ' / -\\u00A5' + Math.round(rs.maxDailyLoss).toLocaleString('ja-JP') + '</span></div>' +
+            '<div class="risk-item"><span class="risk-label">実弾ポジション</span><span class="risk-value">' + rs.livePositions + ' / ' + rs.maxPositions + '</span></div>' +
+          '</div>' +
+        '</div>';
+      riskEl.style.display = '';
+    } else if (riskEl) {
+      riskEl.style.display = 'none';
+    }
 
     // TP/SLバナー検出
     detectAndShowBanner(data);

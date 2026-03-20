@@ -80,7 +80,11 @@ export default {
         });
       case '/api/status':
         try {
-          const status = await getApiStatus(env.DB, { TRADING_ENABLED: env.TRADING_ENABLED, OANDA_LIVE: env.OANDA_LIVE });
+          const status = await getApiStatus(env.DB, {
+            TRADING_ENABLED: env.TRADING_ENABLED, OANDA_LIVE: env.OANDA_LIVE,
+            RISK_MAX_DAILY_LOSS: env.RISK_MAX_DAILY_LOSS, RISK_MAX_LIVE_POSITIONS: env.RISK_MAX_LIVE_POSITIONS,
+            RISK_MAX_LOT_SIZE: env.RISK_MAX_LOT_SIZE, RISK_ANOMALY_THRESHOLD: env.RISK_ANOMALY_THRESHOLD,
+          });
           // unpaired surrogateを除去して不正JSONを防止
           const json = JSON.stringify(status).replace(/[\uD800-\uDFFF]/g, '');
           return new Response(json, {
@@ -705,6 +709,13 @@ async function run(env: Env): Promise<void> {
           `日次サマリー: ¥${Math.round(balance).toLocaleString()} ROI ${((balance - 10000) / 100).toFixed(1)}% 勝率${wr}% ${dailyPerf?.total ?? 0}件 OP${openCount}`,
           null);
       } catch {}
+
+      // 銘柄スコア更新（日次バッチ）
+      try {
+        await updateInstrumentScores(env.DB);
+      } catch (e) {
+        console.error('[fx-sim] instrument_scores update failed:', e);
+      }
     }
 
   } catch (e) {
@@ -712,5 +723,81 @@ async function run(env: Env): Promise<void> {
     try {
       await insertSystemLog(env.DB, 'ERROR', 'CRON', '予期しないエラー', String(e).slice(0, 300));
     } catch {}
+  }
+}
+
+// ── 銘柄スコア日次更新 ──
+async function updateInstrumentScores(db: D1Database): Promise<void> {
+  // 各銘柄のクローズ済みポジションから統計を計算
+  const rows = await db.prepare(
+    `SELECT pair,
+       COUNT(*) AS total_trades,
+       COALESCE(SUM(CASE WHEN pnl > 0 THEN 1 ELSE 0 END), 0) AS wins,
+       COALESCE(SUM(CASE WHEN pnl > 0 THEN pnl ELSE 0 END), 0) AS total_win_pnl,
+       COALESCE(SUM(CASE WHEN pnl <= 0 THEN ABS(pnl) ELSE 0 END), 0) AS total_loss_pnl,
+       COALESCE(AVG(pnl), 0) AS avg_pnl,
+       COALESCE(SUM(pnl), 0) AS total_pnl
+     FROM positions WHERE status = 'CLOSED'
+     GROUP BY pair`
+  ).all<{
+    pair: string; total_trades: number; wins: number;
+    total_win_pnl: number; total_loss_pnl: number;
+    avg_pnl: number; total_pnl: number;
+  }>();
+
+  if (!rows.results || rows.results.length === 0) return;
+
+  // PnL配列（Sharpe計算用）
+  const pnlByPair: Record<string, number[]> = {};
+  const allPnl = await db.prepare(
+    `SELECT pair, pnl FROM positions WHERE status = 'CLOSED' ORDER BY closed_at ASC`
+  ).all<{ pair: string; pnl: number }>();
+  for (const r of (allPnl.results ?? [])) {
+    if (!pnlByPair[r.pair]) pnlByPair[r.pair] = [];
+    pnlByPair[r.pair].push(r.pnl);
+  }
+
+  const now = new Date().toISOString();
+  const stmt = db.prepare(
+    `INSERT INTO instrument_scores (pair, total_trades, win_rate, avg_rr, sharpe, correlation, score, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+     ON CONFLICT(pair) DO UPDATE SET
+       total_trades = excluded.total_trades,
+       win_rate = excluded.win_rate,
+       avg_rr = excluded.avg_rr,
+       sharpe = excluded.sharpe,
+       correlation = excluded.correlation,
+       score = excluded.score,
+       updated_at = excluded.updated_at`
+  );
+
+  const batch = [];
+  for (const r of rows.results) {
+    const winRate = r.total_trades > 0 ? r.wins / r.total_trades : 0;
+    const avgWin = r.wins > 0 ? r.total_win_pnl / r.wins : 0;
+    const losses = r.total_trades - r.wins;
+    const avgLoss = losses > 0 ? r.total_loss_pnl / losses : 0;
+    const avgRR = avgLoss > 0 ? avgWin / avgLoss : 0;
+
+    // Sharpe = mean / stdev
+    const pnls = pnlByPair[r.pair] || [];
+    let sharpe = 0;
+    if (pnls.length >= 3) {
+      const mean = pnls.reduce((s, v) => s + v, 0) / pnls.length;
+      const variance = pnls.reduce((s, v) => s + (v - mean) ** 2, 0) / pnls.length;
+      const stdev = Math.sqrt(variance);
+      sharpe = stdev > 0 ? mean / stdev : 0;
+    }
+
+    // 総合スコア: 勝率30% + RR比30% + Sharpe20% + 取引数20%（最低サンプル数考慮）
+    const tradeScore = Math.min(r.total_trades / 20, 1); // 20件で満点
+    const score = winRate * 0.3 + Math.min(avgRR / 2, 1) * 0.3 + Math.min(Math.max(sharpe, 0) / 1, 1) * 0.2 + tradeScore * 0.2;
+
+    batch.push(stmt.bind(r.pair, r.total_trades, winRate, avgRR, sharpe, 0, score, now));
+  }
+
+  if (batch.length > 0) {
+    await db.batch(batch);
+    console.log(`[fx-sim] instrument_scores updated: ${batch.length} pairs`);
   }
 }

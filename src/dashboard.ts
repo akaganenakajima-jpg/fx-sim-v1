@@ -18,7 +18,7 @@ export function getDashboardHtml(): string {
 
     <!-- ヘッダー -->
     <header class="header" role="banner">
-      <h1 class="header-title">FX Sim</h1>
+      <h1 class="header-title">FX Sim <span id="mode-badge" class="mode-badge" style="display:none"></span></h1>
       <div class="header-right">
         <span id="last-updated" class="header-time" aria-live="polite">—</span>
         <button id="theme-btn" class="refresh-btn" aria-label="テーマ切替" title="テーマ切替">
@@ -169,6 +169,7 @@ export function getDashboardHtml(): string {
 
     <!-- ─── ログ タブ ─── -->
     <div id="tab-log" class="content tab-panel" role="region" aria-label="ログ">
+      <div id="risk-status" style="display:none"></div>
       <div id="log-stats-grid" class="stat-grid"></div>
       <div class="card" style="margin-top:4px">
         <div id="log-list"></div>

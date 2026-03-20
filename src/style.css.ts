@@ -1161,4 +1161,77 @@ body.sheet-open .tab-bar {
   transform: scale(0.97);
   background: var(--bg-secondary);
 }
+
+/* ─── Mode Badge (LIVE/DEMO) ─── */
+.mode-badge {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.5px;
+  padding: 2px 8px;
+  border-radius: 6px;
+  vertical-align: middle;
+  margin-left: 6px;
+}
+.mode-live {
+  background: rgba(255,69,58,0.18);
+  color: var(--red);
+}
+.mode-demo {
+  background: rgba(255,159,10,0.18);
+  color: var(--orange);
+}
+
+/* ─── Source Badge (LIVE/PAPER on watch row) ─── */
+.watch-source-badge {
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.5px;
+  padding: 1px 5px;
+  border-radius: 4px;
+}
+.watch-source-live {
+  background: rgba(255,69,58,0.15);
+  color: var(--red);
+}
+.watch-source-paper {
+  background: rgba(142,142,147,0.15);
+  color: var(--label-secondary);
+}
+
+/* ─── RiskGuard Status ─── */
+.risk-status-card {
+  background: var(--bg-elevated);
+  border-radius: var(--radius);
+  padding: 12px 16px;
+  margin-bottom: 8px;
+  border: 1px solid var(--separator);
+}
+.risk-status-title {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--label-tertiary);
+  letter-spacing: 0.8px;
+  text-transform: uppercase;
+  margin-bottom: 8px;
+}
+.risk-status-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.risk-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+.risk-label {
+  font-size: 13px;
+  color: var(--label-secondary);
+}
+.risk-value {
+  font-size: 13px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  color: var(--label);
+}
 `;
