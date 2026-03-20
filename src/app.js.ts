@@ -733,15 +733,16 @@ export const JS = `
       newsAnalysisData = analysis || [];
       drawer.classList.add('visible');
       if (tab) tab.classList.add('news-visible');
-      // 分析データをindexでマップ化
-      var analysisMap = {};
-      newsAnalysisData.forEach(function(a) { analysisMap[a.index] = a; });
+      // 分析データをtitleでマップ化（indexズレ防止）
+      var analysisByTitle = {};
+      newsAnalysisData.forEach(function(a) { if (a.title) analysisByTitle[a.title] = a; });
       body.innerHTML = news.map(function(item, i) {
         var dateStr = '';
         if (item.pubDate) {
           try { dateStr = new Date(item.pubDate).toLocaleString('ja-JP', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' }); } catch(e) { dateStr = item.pubDate; }
         }
-        var a = analysisMap[i];
+        var title = typeof item === 'string' ? item : item.title;
+        var a = analysisByTitle[title] || null;
         var flag = (a && a.attention) ? '<span class="news-flag">🔥</span>' : '';
         return '<div class="news-item' + (a && a.attention ? ' news-attention' : '') + '" data-news-idx="' + i + '">' +
           '<div class="news-item-title">' + flag + escHtml(a && a.title_ja ? a.title_ja : (typeof item === 'string' ? item : item.title)) + '</div>' +
@@ -761,11 +762,11 @@ export const JS = `
       if (item.pubDate) {
         try { dateStr = new Date(item.pubDate).toLocaleString('ja-JP', { year: 'numeric', month: 'long', day: 'numeric', hour: '2-digit', minute: '2-digit' }); } catch(e) { dateStr = item.pubDate; }
       }
-      // 分析データからインパクトコメント取得
-      var idx = parseInt(row.dataset.newsIdx, 10);
-      var analysisMap2 = {};
-      newsAnalysisData.forEach(function(a) { analysisMap2[a.index] = a; });
-      var ana = analysisMap2[idx];
+      // 分析データからインパクトコメント取得（titleベースマッチング）
+      var itemTitle = typeof item === 'string' ? item : item.title;
+      var analysisByTitle2 = {};
+      newsAnalysisData.forEach(function(a) { if (a.title) analysisByTitle2[a.title] = a; });
+      var ana = analysisByTitle2[itemTitle] || null;
       var impactHtml = '';
       if (ana && ana.attention && ana.impact) {
         impactHtml = '<div style="background:rgba(255,149,0,0.1);border-left:3px solid #FF9500;padding:10px 12px;border-radius:8px;margin-bottom:12px">' +

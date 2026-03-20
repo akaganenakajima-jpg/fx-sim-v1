@@ -313,8 +313,13 @@ async function run(env: Env): Promise<void> {
           await insertSystemLog(env.DB, 'WARN', 'NEWS', 'ニュース分析失敗（全プロバイダー）→5分クールダウン', String(e).split('\n')[0].slice(0, 120));
         }
       }
-      if (analysis) {
-        await setCacheValue(env.DB, 'news_analysis', JSON.stringify(analysis));
+      if (analysis && analysis.length > 0) {
+        // 分析結果にニュースタイトルを紐付け（index→titleマッチング用）
+        const enriched = analysis.map((a: { index: number; attention: boolean; impact: string | null; title_ja: string | null }) => ({
+          ...a,
+          title: news[a.index]?.title ?? null,
+        }));
+        await setCacheValue(env.DB, 'news_analysis', JSON.stringify(enriched));
         // 成功時はクールダウンをクリア
         await setCacheValue(env.DB, 'news_analysis_failed_at', '0');
         newsAnalysisRan = true;
