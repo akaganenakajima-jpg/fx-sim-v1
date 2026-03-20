@@ -12,6 +12,9 @@ export interface GeminiDecision {
   reasoning: string; // 日本語100文字以内
 }
 
+/** プロンプトバージョン: プロンプトを変更したらこの値を更新する */
+export const PROMPT_VERSION = 'v4'; // 現在のバージョン
+
 const GEMINI_ENDPOINT =
   'https://generativelanguage.googleapis.com/v1beta/models/gemini-3.1-pro-preview:generateContent';
 

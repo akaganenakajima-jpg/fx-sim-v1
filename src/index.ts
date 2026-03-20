@@ -6,7 +6,7 @@ import { getUSDJPY } from './rate';
 import { fetchNews, type SourceFetchStat } from './news';
 import { fetchRedditSignal } from './reddit';
 import { getMarketIndicators } from './indicators';
-import { getDecision, getDecisionGPT, getDecisionClaude, getDecisionWithHedge, analyzeNews } from './gemini';
+import { getDecision, getDecisionGPT, getDecisionClaude, getDecisionWithHedge, analyzeNews, PROMPT_VERSION } from './gemini';
 import { checkAndCloseAllPositions, openPosition } from './position';
 import { shouldCallGemini } from './filter';
 import {
@@ -16,6 +16,7 @@ import {
   getCacheValue,
   setCacheValue,
 } from './db';
+import { slPatternAnalysis } from './stats';
 import { getDashboardHtml } from './dashboard';
 import { getApiStatus } from './api';
 import { CSS } from './style.css';
@@ -565,6 +566,7 @@ async function run(env: Env): Promise<void> {
         sp500: indicators.sp500,
         created_at: now.toISOString(),
         news_sources: activeNewsSources || null,
+        prompt_version: PROMPT_VERSION,
       });
 
       // 最終AI呼び出し時刻を更新（定期強制呼び出し用）
@@ -590,6 +592,15 @@ async function run(env: Env): Promise<void> {
             sanity.reason ?? undefined);
           // ポジション開設をスキップ（decisionsには記録済み）
           continue;
+        }
+        // 自動補正されたTP/SLがあれば差し替え
+        if (sanity.correctedTp != null && sanity.correctedSl != null) {
+          console.log(`[fx-sim] TP/SL補正: ${instrument.pair} TP ${geminiResult.tp_rate}→${sanity.correctedTp} SL ${geminiResult.sl_rate}→${sanity.correctedSl}`);
+          await insertSystemLog(env.DB, 'INFO', 'SANITY',
+            `TP/SL自動補正: ${instrument.pair} ${geminiResult.decision}`,
+            JSON.stringify({ origTp: geminiResult.tp_rate, origSl: geminiResult.sl_rate, newTp: sanity.correctedTp, newSl: sanity.correctedSl }));
+          geminiResult.tp_rate = sanity.correctedTp;
+          geminiResult.sl_rate = sanity.correctedSl;
         }
 
         // ブローカー判定 + リスクチェック
@@ -716,6 +727,25 @@ async function runDailyTasks(env: Env, _now: Date): Promise<void> {
     await updateInstrumentScores(env.DB);
   } catch (e) {
     console.error('[fx-sim] instrument_scores update failed:', e);
+  }
+
+  // SL パターン分析（日次バッチ）
+  try {
+    const slRows = await env.DB.prepare(
+      `SELECT p.close_reason, p.closed_at, p.pair, d.vix
+       FROM positions p
+       LEFT JOIN decisions d ON d.pair = p.pair
+         AND d.created_at <= p.closed_at
+       WHERE p.status = 'CLOSED'
+         AND p.close_reason IS NOT NULL
+       ORDER BY p.closed_at DESC
+       LIMIT 500`
+    ).all<{ close_reason: string; closed_at: string; vix: number | null; pair: string }>();
+    const patterns = slPatternAnalysis(slRows.results ?? []);
+    await setCacheValue(env.DB, 'sl_patterns', JSON.stringify(patterns));
+    console.log(`[daily] SL patterns: ${patterns.length} buckets`);
+  } catch (e) {
+    console.error('[daily] SL pattern analysis failed:', e);
   }
 
   // 日次サマリー Webhook 通知（前日の取引実績）

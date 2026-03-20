@@ -5,7 +5,7 @@ import { getOpenPositions, getOpenPositionByPair, closePosition, insertSystemLog
 import type { Position } from './db';
 import type { InstrumentConfig } from './instruments';
 import { getBroker, withFallback, type BrokerEnv } from './broker';
-import { kellyFraction } from './stats';
+import { kellyFraction, logReturn } from './stats';
 import { sendNotification, buildTpSlMessage, buildDrawdownMessage } from './notify';
 
 function calcPnl(
@@ -95,6 +95,7 @@ export async function checkAndCloseAllPositions(
 
     if (shouldTriggerTP(pos, currentRate)) {
       const pnl = calcPnl(pos.direction, pos.entry_rate, currentRate, multiplier);
+      const lr = logReturn(pos.entry_rate, currentRate);
       console.log(`[position] TP hit: ${pos.pair} id=${pos.id} pnl=${pnl.toFixed(2)}`);
 
       // OANDA実弾: ブローカー側もクローズ
@@ -108,7 +109,7 @@ export async function checkAndCloseAllPositions(
         }
       }
 
-      await closePosition(db, pos.id, currentRate, 'TP', pnl);
+      await closePosition(db, pos.id, currentRate, 'TP', pnl, lr);
       // TP 通知（currentRate はこの時点で number に絞り込まれている）
       await sendNotification(webhookUrl, buildTpSlMessage({
         pair: pos.pair,
@@ -124,6 +125,7 @@ export async function checkAndCloseAllPositions(
         JSON.stringify({ id: pos.id, entry: pos.entry_rate, close: currentRate, pnl }));
     } else if (shouldTriggerSL(pos, currentRate)) {
       const pnl = calcPnl(pos.direction, pos.entry_rate, currentRate, multiplier);
+      const lr = logReturn(pos.entry_rate, currentRate);
       console.log(`[position] SL hit: ${pos.pair} id=${pos.id} pnl=${pnl.toFixed(2)}`);
 
       // OANDA実弾: ブローカー側もクローズ
@@ -137,7 +139,7 @@ export async function checkAndCloseAllPositions(
         }
       }
 
-      await closePosition(db, pos.id, currentRate, 'SL', pnl);
+      await closePosition(db, pos.id, currentRate, 'SL', pnl, lr);
       // SL 通知
       await sendNotification(webhookUrl, buildTpSlMessage({
         pair: pos.pair,
