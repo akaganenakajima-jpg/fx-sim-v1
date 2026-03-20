@@ -48,6 +48,8 @@ interface Env {
   RISK_MAX_LIVE_POSITIONS?: string;
   RISK_MAX_LOT_SIZE?: string;
   RISK_ANOMALY_THRESHOLD?: string;
+  // Twelve Data フォールバック
+  TWELVE_DATA_API_KEY?: string;
 }
 
 let _keyIndex = 0;
@@ -126,7 +128,7 @@ async function fetchMarketData(env: Env, now: Date): Promise<MarketData | null> 
   const [newsResult, redditResult, indicatorsResult, frankfurterResult] = await Promise.allSettled([
     fetchNews(),
     fetchRedditSignal(env.REDDIT_CLIENT_ID, env.REDDIT_CLIENT_SECRET),
-    getMarketIndicators(),
+    getMarketIndicators(env.TWELVE_DATA_API_KEY),
     getUSDJPY(),
   ]);
 
