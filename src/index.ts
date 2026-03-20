@@ -245,7 +245,7 @@ async function run(env: Env): Promise<void> {
     };
 
     // 2. 全銘柄のTP/SLを一括チェック（OANDA実弾ポジションはブローカー経由でクローズ）
-    await checkAndCloseAllPositions(env.DB, prices, INSTRUMENTS, brokerEnv);
+    await checkAndCloseAllPositions(env.DB, prices, INSTRUMENTS, brokerEnv, getWebhookUrl(env));
 
     // 3. ニュースハッシュ更新
     const prevNewsHashRaw = await getCacheValue(env.DB, PREV_NEWS_HASH_KEY);
