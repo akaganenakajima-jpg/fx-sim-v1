@@ -1,9 +1,10 @@
-// 仮想ポジション管理（TP/SL チェック）
+// ポジション管理（TP/SL チェック + ブローカー統合）
 // 同時オープンポジションは銘柄ごとに最大1件
 
 import { getOpenPositions, getOpenPositionByPair, closePosition, insertSystemLog } from './db';
 import type { Position } from './db';
 import type { InstrumentConfig } from './instruments';
+import { getBroker, withFallback, type BrokerEnv } from './broker';
 
 function calcPnl(
   direction: 'BUY' | 'SELL',
@@ -34,7 +35,8 @@ function shouldTriggerSL(pos: Position, currentRate: number): boolean {
 export async function checkAndCloseAllPositions(
   db: D1Database,
   prices: Map<string, number | null>,
-  instruments: InstrumentConfig[]
+  instruments: InstrumentConfig[],
+  brokerEnv?: BrokerEnv
 ): Promise<void> {
   const positions = await getOpenPositions(db);
   const instrMap = new Map(instruments.map((i) => [i.pair, i]));
@@ -72,6 +74,18 @@ export async function checkAndCloseAllPositions(
             `トレイリングSL: ${pos.pair} ${oldSl.toFixed(4)} → ${newSl.toFixed(4)}`,
             JSON.stringify({ id: pos.id, direction: pos.direction, entry: pos.entry_rate, oldSl, newSl, currentRate }));
           pos.sl_rate = newSl; // 以降のSLチェックで新しいSLを使う
+
+          // OANDA実弾: ブローカーのSLも更新
+          if (pos.source === 'oanda' && pos.oanda_trade_id && instr && brokerEnv) {
+            const broker = getBroker(instr, brokerEnv);
+            if (broker.name === 'oanda') {
+              await withFallback(broker, () => broker.updateStopLoss({
+                positionId: pos.id,
+                oandaTradeId: pos.oanda_trade_id,
+                newSlRate: newSl,
+              }), db, `trailing-sl ${pos.pair}`);
+            }
+          }
         }
       }
     }
@@ -79,6 +93,18 @@ export async function checkAndCloseAllPositions(
     if (shouldTriggerTP(pos, currentRate)) {
       const pnl = calcPnl(pos.direction, pos.entry_rate, currentRate, multiplier);
       console.log(`[position] TP hit: ${pos.pair} id=${pos.id} pnl=${pnl.toFixed(2)}`);
+
+      // OANDA実弾: ブローカー側もクローズ
+      if (pos.source === 'oanda' && pos.oanda_trade_id && instr && brokerEnv) {
+        const broker = getBroker(instr, brokerEnv);
+        if (broker.name === 'oanda') {
+          await withFallback(broker, () => broker.closePosition({
+            positionId: pos.id, oandaTradeId: pos.oanda_trade_id,
+            pair: pos.pair, closeRate: currentRate, reason: 'TP', pnl,
+          }), db, `tp-close ${pos.pair}`);
+        }
+      }
+
       await closePosition(db, pos.id, currentRate, 'TP', pnl);
       await insertSystemLog(db, 'INFO', 'POSITION',
         `TP決済: ${pos.pair} ${pos.direction} PnL ${pnl >= 0 ? '+' : ''}${pnl.toFixed(2)}`,
@@ -86,6 +112,18 @@ export async function checkAndCloseAllPositions(
     } else if (shouldTriggerSL(pos, currentRate)) {
       const pnl = calcPnl(pos.direction, pos.entry_rate, currentRate, multiplier);
       console.log(`[position] SL hit: ${pos.pair} id=${pos.id} pnl=${pnl.toFixed(2)}`);
+
+      // OANDA実弾: ブローカー側もクローズ
+      if (pos.source === 'oanda' && pos.oanda_trade_id && instr && brokerEnv) {
+        const broker = getBroker(instr, brokerEnv);
+        if (broker.name === 'oanda') {
+          await withFallback(broker, () => broker.closePosition({
+            positionId: pos.id, oandaTradeId: pos.oanda_trade_id,
+            pair: pos.pair, closeRate: currentRate, reason: 'SL', pnl,
+          }), db, `sl-close ${pos.pair}`);
+        }
+      }
+
       await closePosition(db, pos.id, currentRate, 'SL', pnl);
       await insertSystemLog(db, 'WARN', 'POSITION',
         `SL決済: ${pos.pair} ${pos.direction} PnL ${pnl >= 0 ? '+' : ''}${pnl.toFixed(2)}`,
@@ -117,7 +155,9 @@ export async function openPosition(
   direction: 'BUY' | 'SELL',
   entryRate: number,
   tpRate: number | null,
-  slRate: number | null
+  slRate: number | null,
+  source: 'paper' | 'oanda' = 'paper',
+  oandaTradeId: string | null = null
 ): Promise<void> {
   const existing = await getOpenPositionByPair(db, pair);
   if (existing) {
@@ -142,11 +182,11 @@ export async function openPosition(
   await db
     .prepare(
       `INSERT INTO positions
-         (pair, direction, entry_rate, tp_rate, sl_rate, lot, status, entry_at)
-       VALUES (?, ?, ?, ?, ?, ?, 'OPEN', ?)`
+         (pair, direction, entry_rate, tp_rate, sl_rate, lot, status, entry_at, source, oanda_trade_id)
+       VALUES (?, ?, ?, ?, ?, ?, 'OPEN', ?, ?, ?)`
     )
-    .bind(pair, direction, entryRate, tpRate, slRate, lot, new Date().toISOString())
+    .bind(pair, direction, entryRate, tpRate, slRate, lot, new Date().toISOString(), source, oandaTradeId)
     .run();
 
-  console.log(`[position] Opened ${pair} ${direction} @ ${entryRate} TP=${tpRate} SL=${slRate}`);
+  console.log(`[position] Opened ${pair} ${direction} @ ${entryRate} TP=${tpRate} SL=${slRate} [${source}${oandaTradeId ? ` trade=${oandaTradeId}` : ''}]`);
 }

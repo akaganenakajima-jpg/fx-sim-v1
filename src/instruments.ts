@@ -2,6 +2,10 @@
 
 export interface InstrumentConfig {
   pair: string;
+  /** ブローカー: 'oanda' = OANDA API経由、'paper' = D1記録のみ */
+  broker: 'oanda' | 'paper';
+  /** OANDA銘柄コード（broker='oanda'の場合必須） */
+  oandaSymbol: string | null;
   /** フィルタ: この変化量以上でGeminiを呼ぶ */
   rateChangeTh: number;
   /** Geminiプロンプト用TP/SL範囲ヒント */
@@ -19,6 +23,8 @@ export interface InstrumentConfig {
 export const INSTRUMENTS: InstrumentConfig[] = [
   {
     pair: 'USD/JPY',
+    broker: 'oanda',
+    oandaSymbol: 'USD_JPY',
     rateChangeTh: 0.015,
     tpSlHint: '現在レートから±0.3〜1.0円（TPはSLの1.5倍以上離すこと）',
     pnlUnit: '円',
@@ -28,6 +34,8 @@ export const INSTRUMENTS: InstrumentConfig[] = [
   },
   {
     pair: 'Nikkei225',
+    broker: 'oanda',
+    oandaSymbol: 'JP225_USD',
     rateChangeTh: 15,
     tpSlHint: '現在値から±100〜500ポイント（TPはSLの1.5倍以上離すこと）',
     pnlUnit: '円',
@@ -37,6 +45,8 @@ export const INSTRUMENTS: InstrumentConfig[] = [
   },
   {
     pair: 'S&P500',
+    broker: 'oanda',
+    oandaSymbol: 'SPX500_USD',
     rateChangeTh: 1.5,
     tpSlHint: '現在値から±10〜30ポイント（SLは狭め、TPはSLの2倍以上）',
     pnlUnit: '円',
@@ -46,6 +56,8 @@ export const INSTRUMENTS: InstrumentConfig[] = [
   },
   {
     pair: 'US10Y',
+    broker: 'oanda',
+    oandaSymbol: 'USB10Y_USD',
     rateChangeTh: 0.015,
     tpSlHint: '現在利回りから±0.1〜0.3%（TPはSLの1.5倍以上）',
     pnlUnit: '円',
@@ -55,6 +67,8 @@ export const INSTRUMENTS: InstrumentConfig[] = [
   },
   {
     pair: 'BTC/USD',
+    broker: 'paper',
+    oandaSymbol: null,
     rateChangeTh: 25,
     tpSlHint: '現在価格から±$300〜$1,500（TPはSLの1.5倍以上）',
     pnlUnit: '円',
@@ -64,6 +78,8 @@ export const INSTRUMENTS: InstrumentConfig[] = [
   },
   {
     pair: 'Gold',
+    broker: 'oanda',
+    oandaSymbol: 'XAU_USD',
     rateChangeTh: 1.5,
     tpSlHint: '現在価格から±$10〜$30（SLは狭め$10以内、TPはSLの2倍以上）',
     pnlUnit: '円',
@@ -73,6 +89,8 @@ export const INSTRUMENTS: InstrumentConfig[] = [
   },
   {
     pair: 'EUR/USD',
+    broker: 'oanda',
+    oandaSymbol: 'EUR_USD',
     rateChangeTh: 0.001,
     tpSlHint: '現在レートから±0.005〜0.015（TPはSLの1.5倍以上）',
     pnlUnit: '円',
@@ -82,6 +100,8 @@ export const INSTRUMENTS: InstrumentConfig[] = [
   },
   {
     pair: 'ETH/USD',
+    broker: 'paper',
+    oandaSymbol: null,
     rateChangeTh: 8,
     tpSlHint: '現在価格から±$30〜$100（TPはSLの1.5倍以上）',
     pnlUnit: '円',
@@ -91,6 +111,8 @@ export const INSTRUMENTS: InstrumentConfig[] = [
   },
   {
     pair: 'CrudeOil',
+    broker: 'oanda',
+    oandaSymbol: 'WTICO_USD',
     rateChangeTh: 0.15,
     tpSlHint: '現在価格から±$0.5〜$2.0（TPはSLの1.5倍以上）',
     pnlUnit: '円',
@@ -100,6 +122,8 @@ export const INSTRUMENTS: InstrumentConfig[] = [
   },
   {
     pair: 'NatGas',
+    broker: 'oanda',
+    oandaSymbol: 'NATGAS_USD',
     rateChangeTh: 0.015,
     tpSlHint: '現在価格から±$0.05〜$0.2（TPはSLの1.5倍以上）',
     pnlUnit: '円',
@@ -109,6 +133,8 @@ export const INSTRUMENTS: InstrumentConfig[] = [
   },
   {
     pair: 'Copper',
+    broker: 'oanda',
+    oandaSymbol: 'COPPER',
     rateChangeTh: 0.01,
     tpSlHint: '現在価格から±$0.03〜$0.1（TPはSLの1.5倍以上）',
     pnlUnit: '円',
@@ -118,6 +144,8 @@ export const INSTRUMENTS: InstrumentConfig[] = [
   },
   {
     pair: 'Silver',
+    broker: 'oanda',
+    oandaSymbol: 'XAG_USD',
     rateChangeTh: 0.08,
     tpSlHint: '現在価格から±$0.3〜$1.0（TPはSLの1.5倍以上）',
     pnlUnit: '円',
@@ -127,6 +155,8 @@ export const INSTRUMENTS: InstrumentConfig[] = [
   },
   {
     pair: 'GBP/USD',
+    broker: 'oanda',
+    oandaSymbol: 'GBP_USD',
     rateChangeTh: 0.001,
     tpSlHint: '現在レートから±0.005〜0.015（TPはSLの1.5倍以上）',
     pnlUnit: '円',
@@ -136,6 +166,8 @@ export const INSTRUMENTS: InstrumentConfig[] = [
   },
   {
     pair: 'AUD/USD',
+    broker: 'oanda',
+    oandaSymbol: 'AUD_USD',
     rateChangeTh: 0.001,
     tpSlHint: '現在レートから±0.005〜0.015（TPはSLの1.5倍以上）',
     pnlUnit: '円',
@@ -145,6 +177,8 @@ export const INSTRUMENTS: InstrumentConfig[] = [
   },
   {
     pair: 'SOL/USD',
+    broker: 'paper',
+    oandaSymbol: null,
     rateChangeTh: 0.5,
     tpSlHint: '現在価格から±$2〜$8（TPはSLの1.5倍以上）',
     pnlUnit: '円',
@@ -154,6 +188,8 @@ export const INSTRUMENTS: InstrumentConfig[] = [
   },
   {
     pair: 'DAX',
+    broker: 'oanda',
+    oandaSymbol: 'DE30_EUR',
     rateChangeTh: 15,
     tpSlHint: '現在値から±50〜200ポイント（TPはSLの1.5倍以上）',
     pnlUnit: '円',
@@ -163,6 +199,8 @@ export const INSTRUMENTS: InstrumentConfig[] = [
   },
   {
     pair: 'NASDAQ',
+    broker: 'oanda',
+    oandaSymbol: 'NAS100_USD',
     rateChangeTh: 15,
     tpSlHint: '現在値から±50〜200ポイント（TPはSLの1.5倍以上）',
     pnlUnit: '円',

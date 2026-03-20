@@ -81,9 +81,10 @@ export interface StatusResponse {
   logStats: LogStats;
   latestNews: Array<{ title: string; pubDate: string; description: string }>;
   newsAnalysis: Array<{ index: number; attention: boolean; impact: string | null; title_ja: string | null }>;
+  tradingMode: 'paper' | 'demo' | 'live';
 }
 
-export async function getApiStatus(db: D1Database): Promise<StatusResponse> {
+export async function getApiStatus(db: D1Database, tradingEnv?: { TRADING_ENABLED?: string; OANDA_LIVE?: string }): Promise<StatusResponse> {
   const [rateRow, openPositions, perf, latest, recent, sysRow, sparkRaw, perfByPairRaw, recentClosesRaw, newsRaw, sysLogsRaw, logStatsRaw] =
     await Promise.all([
       db
@@ -212,8 +213,15 @@ export async function getApiStatus(db: D1Database): Promise<StatusResponse> {
     }
   }
 
+  // トレーディングモード判定
+  const tradingMode: 'paper' | 'demo' | 'live' =
+    tradingEnv?.TRADING_ENABLED === 'true'
+      ? (tradingEnv?.OANDA_LIVE === 'true' ? 'live' : 'demo')
+      : 'paper';
+
   return {
     rate,
+    tradingMode,
     openPositions: openPositions.results ?? [],
     performance: {
       totalPnl: perf?.totalPnl ?? 0,

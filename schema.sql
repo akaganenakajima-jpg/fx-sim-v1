@@ -11,7 +11,9 @@ CREATE TABLE IF NOT EXISTS positions (
   entry_at     TEXT    NOT NULL,
   closed_at    TEXT,
   close_rate   REAL,
-  close_reason TEXT                        -- 'TP' | 'SL' | 'MANUAL'
+  close_reason TEXT,                       -- 'TP' | 'SL' | 'MANUAL'
+  source       TEXT    DEFAULT 'paper',   -- 'paper' | 'oanda'
+  oanda_trade_id TEXT                     -- OANDAトレードID（実弾時のみ）
 );
 
 CREATE TABLE IF NOT EXISTS decisions (

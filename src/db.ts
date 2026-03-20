@@ -12,6 +12,8 @@ export interface Position {
   closed_at: string | null;
   close_rate: number | null;
   close_reason: string | null;
+  source: string | null;
+  oanda_trade_id: string | null;
 }
 
 export interface DecisionRecord {

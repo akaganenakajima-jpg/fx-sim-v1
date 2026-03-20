@@ -21,6 +21,8 @@ import { getApiStatus } from './api';
 import { CSS } from './style.css';
 import { JS } from './app.js';
 import { INSTRUMENTS } from './instruments';
+import { getBroker, withFallback, type BrokerEnv } from './broker';
+import { checkRisk, type RiskEnv } from './risk-guard';
 
 interface Env {
   DB: D1Database;
@@ -34,6 +36,16 @@ interface Env {
   ANTHROPIC_API_KEY?: string;
   REDDIT_CLIENT_ID?: string;
   REDDIT_CLIENT_SECRET?: string;
+  // OANDA実弾取引
+  OANDA_API_TOKEN?: string;
+  OANDA_ACCOUNT_ID?: string;
+  OANDA_LIVE?: string;
+  TRADING_ENABLED?: string;
+  // RiskGuard
+  RISK_MAX_DAILY_LOSS?: string;
+  RISK_MAX_LIVE_POSITIONS?: string;
+  RISK_MAX_LOT_SIZE?: string;
+  RISK_ANOMALY_THRESHOLD?: string;
 }
 
 let _keyIndex = 0;
@@ -68,7 +80,7 @@ export default {
         });
       case '/api/status':
         try {
-          const status = await getApiStatus(env.DB);
+          const status = await getApiStatus(env.DB, { TRADING_ENABLED: env.TRADING_ENABLED, OANDA_LIVE: env.OANDA_LIVE });
           // unpaired surrogateを除去して不正JSONを防止
           const json = JSON.stringify(status).replace(/[\uD800-\uDFFF]/g, '');
           return new Response(json, {
@@ -100,6 +112,27 @@ async function run(env: Env): Promise<void> {
   console.log(`[fx-sim] cron start ${now.toISOString()}`);
 
   try {
+    // ワンタイムマイグレーション v2: positions に source, oanda_trade_id カラム追加
+    const v2Migrated = await getCacheValue(env.DB, 'schema_v2_migrated');
+    if (!v2Migrated) {
+      try {
+        await env.DB.prepare(`ALTER TABLE positions ADD COLUMN source TEXT DEFAULT 'paper'`).run();
+        await env.DB.prepare(`ALTER TABLE positions ADD COLUMN oanda_trade_id TEXT`).run();
+        console.log('[fx-sim] Schema v2 migration: added source + oanda_trade_id');
+      } catch (e) {
+        // カラムが既に存在する場合は無視
+        console.log(`[fx-sim] Schema v2 migration skipped: ${String(e).slice(0, 80)}`);
+      }
+      try {
+        await env.DB.prepare(`CREATE TABLE IF NOT EXISTS instrument_scores (
+          pair TEXT PRIMARY KEY, total_trades INTEGER DEFAULT 0,
+          win_rate REAL DEFAULT 0, avg_rr REAL DEFAULT 0,
+          sharpe REAL DEFAULT 0, correlation REAL DEFAULT 0,
+          score REAL DEFAULT 0, updated_at TEXT)`).run();
+      } catch {}
+      await setCacheValue(env.DB, 'schema_v2_migrated', '1');
+    }
+
     // ワンタイムマイグレーション: 旧PnL(pt)→円に変換（S&P500: ×100, US10Y: ×50）
     const migrated = await getCacheValue(env.DB, 'pnl_yen_migrated');
     if (!migrated) {
@@ -184,8 +217,16 @@ async function run(env: Env): Promise<void> {
       ['NASDAQ',    indicators.nasdaq],
     ]);
 
-    // 2. 全銘柄のTP/SLを一括チェック
-    await checkAndCloseAllPositions(env.DB, prices, INSTRUMENTS);
+    // ブローカー環境（TP/SL・ポジション開設で使用）
+    const brokerEnv: BrokerEnv = {
+      OANDA_API_TOKEN: env.OANDA_API_TOKEN,
+      OANDA_ACCOUNT_ID: env.OANDA_ACCOUNT_ID,
+      OANDA_LIVE: env.OANDA_LIVE,
+      TRADING_ENABLED: env.TRADING_ENABLED,
+    };
+
+    // 2. 全銘柄のTP/SLを一括チェック（OANDA実弾ポジションはブローカー経由でクローズ）
+    await checkAndCloseAllPositions(env.DB, prices, INSTRUMENTS, brokerEnv);
 
     // 3. ニュースハッシュ更新
     const prevNewsHashRaw = await getCacheValue(env.DB, PREV_NEWS_HASH_KEY);
@@ -529,18 +570,63 @@ async function run(env: Env): Promise<void> {
         (geminiResult.decision === 'BUY' || geminiResult.decision === 'SELL') &&
         !hasOpenPosition
       ) {
+        // ブローカー判定 + リスクチェック
+        const broker = getBroker(instrument, brokerEnv);
+        const isLive = broker.name === 'oanda';
+        let source: 'paper' | 'oanda' = 'paper';
+        let oandaTradeId: string | null = null;
+
+        if (isLive) {
+          // RiskGuard: 実弾発注前の安全チェック
+          const riskResult = await checkRisk({
+            db: env.DB,
+            env: env as RiskEnv,
+            pair: instrument.pair,
+            currentRate,
+            prevRate: candidate.prevRate,
+            requestedLot: 1, // lot は openPosition 内で動的計算
+          });
+
+          if (!riskResult.allowed) {
+            console.warn(`[fx-sim] RiskGuard blocked: ${instrument.pair} → ${riskResult.reason}`);
+            await insertSystemLog(env.DB, 'WARN', 'RISK',
+              `実弾ブロック: ${instrument.pair} ${geminiResult.decision}`,
+              riskResult.reason);
+            // ペーパーにフォールバック（記録は残す）
+          } else {
+            // OANDA 実弾発注
+            const brokerResult = await withFallback(broker, () => broker.openPosition({
+              pair: instrument.pair,
+              oandaSymbol: instrument.oandaSymbol,
+              direction: geminiResult.decision,
+              entryRate: currentRate,
+              tpRate: geminiResult.tp_rate,
+              slRate: geminiResult.sl_rate,
+              lot: riskResult.adjustedLot ?? 1,
+            }), env.DB, `open ${instrument.pair} ${geminiResult.decision}`);
+
+            if (brokerResult.success && !brokerResult.error?.startsWith('Fallback')) {
+              source = 'oanda';
+              oandaTradeId = brokerResult.oandaTradeId ?? null;
+              console.log(`[fx-sim] 🔴 LIVE: ${instrument.pair} ${geminiResult.decision} tradeId=${oandaTradeId}`);
+            }
+          }
+        }
+
         await openPosition(
           env.DB,
           instrument.pair,
           geminiResult.decision,
           currentRate,
           geminiResult.tp_rate,
-          geminiResult.sl_rate
+          geminiResult.sl_rate,
+          source,
+          oandaTradeId
         );
         await insertSystemLog(
           env.DB, 'INFO', 'POSITION',
-          `ポジション開設: ${instrument.pair} ${geminiResult.decision} @ ${currentRate}`,
-          JSON.stringify({ tp: geminiResult.tp_rate, sl: geminiResult.sl_rate, reasoning: geminiResult.reasoning?.slice(0, 100) })
+          `ポジション開設: ${instrument.pair} ${geminiResult.decision} @ ${currentRate} [${source}]`,
+          JSON.stringify({ tp: geminiResult.tp_rate, sl: geminiResult.sl_rate, source, oandaTradeId, reasoning: geminiResult.reasoning?.slice(0, 100) })
         );
       } else if (geminiResult.decision !== 'HOLD') {
         // BUY/SELLだがポジション既存のためスキップ
