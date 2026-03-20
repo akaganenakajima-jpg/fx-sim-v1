@@ -352,6 +352,128 @@ export function fdrCorrection(
   return { corrected, rejected };
 }
 
+/** 対数リターン（連続複利ベース）
+ *  FXの小幅変動では算術リターンと近似等価だが、歪度・尖度の計算に理論的に正しい
+ */
+export function logReturn(entry: number, close: number): number {
+  if (entry <= 0 || close <= 0) return 0;
+  return Math.log(close / entry) * 100; // %表示
+}
+
+/** 対数リターン系列の分布統計
+ *  歪度: 正 = 大勝ち稀、負 = 大負け稀
+ *  尖度: >3 = テールリスク大（ファットテール）
+ */
+export function logReturnStats(logReturns: number[]): {
+  mean: number;
+  stdev: number;
+  skewness: number;
+  kurtosis: number;
+} {
+  const n = logReturns.length;
+  if (n < 4) return { mean: 0, stdev: 0, skewness: 0, kurtosis: 0 };
+  const mean = logReturns.reduce((s, v) => s + v, 0) / n;
+  const variance = logReturns.reduce((s, v) => s + (v - mean) ** 2, 0) / (n - 1);
+  const stdev = Math.sqrt(variance);
+  if (stdev === 0) return { mean, stdev: 0, skewness: 0, kurtosis: 0 };
+  const skewness = logReturns.reduce((s, v) => s + ((v - mean) / stdev) ** 3, 0) / n;
+  const kurtosis = logReturns.reduce((s, v) => s + ((v - mean) / stdev) ** 4, 0) / n;
+  return { mean, stdev, skewness, kurtosis };
+}
+
+/** SL損切りパターン分析（条件別SL率）
+ *  入力: ポジション+決定のJOINデータ
+ *  出力: VIX水準×時間帯×銘柄カテゴリ別のSL率
+ */
+export interface SLPattern {
+  vixBucket: 'low' | 'mid' | 'high' | 'unknown';   // <15 / 15-25 / >25
+  session: 'tokyo' | 'london' | 'ny' | 'other';    // JST 時間帯
+  pairCategory: 'fx' | 'equity' | 'crypto' | 'commodity' | 'bond';
+  slCount: number;
+  totalCount: number;
+  slRate: number;  // SL率
+}
+
+export function slPatternAnalysis(
+  rows: Array<{
+    close_reason: string;
+    closed_at: string;
+    vix: number | null;
+    pair: string;
+  }>
+): SLPattern[] {
+  const buckets = new Map<string, { sl: number; total: number }>();
+
+  for (const row of rows) {
+    const vixBucket: SLPattern['vixBucket'] =
+      row.vix == null ? 'unknown' :
+      row.vix < 15 ? 'low' :
+      row.vix < 25 ? 'mid' : 'high';
+
+    const hour = (new Date(row.closed_at).getUTCHours() + 9) % 24;
+    const session: SLPattern['session'] =
+      hour >= 8 && hour < 15 ? 'tokyo' :
+      hour >= 15 && hour < 22 ? 'london' :
+      (hour >= 22 || hour < 7) ? 'ny' : 'other';
+
+    const pair = row.pair;
+    const pairCategory: SLPattern['pairCategory'] =
+      ['USD/JPY','EUR/USD','GBP/USD','AUD/USD'].includes(pair) ? 'fx' :
+      ['Nikkei225','S&P500','DAX','NASDAQ'].includes(pair) ? 'equity' :
+      ['BTC/USD','ETH/USD','SOL/USD'].includes(pair) ? 'crypto' :
+      ['Gold','Silver','Copper','CrudeOil','NatGas'].includes(pair) ? 'commodity' : 'bond';
+
+    const key = `${vixBucket}|${session}|${pairCategory}`;
+    const bucket = buckets.get(key) ?? { sl: 0, total: 0 };
+    bucket.total++;
+    if (row.close_reason === 'SL') bucket.sl++;
+    buckets.set(key, bucket);
+  }
+
+  return Array.from(buckets.entries())
+    .map(([key, v]) => {
+      const [vixBucket, session, pairCategory] = key.split('|') as [SLPattern['vixBucket'], SLPattern['session'], SLPattern['pairCategory']];
+      return { vixBucket, session, pairCategory, slCount: v.sl, totalCount: v.total, slRate: v.total > 0 ? v.sl / v.total : 0 };
+    })
+    .filter(p => p.totalCount >= 3)  // サンプル数が少ないパターンは除外
+    .sort((a, b) => b.slRate - a.slRate);
+}
+
+/** 検出力分析: 勝率の差を統計的に検出するのに必要なサンプル数
+ *  Cohen の方法: n = (z_α + z_β)^2 / (2 * arcsin(√p1) - 2 * arcsin(√p0))^2
+ *  簡略化: p0=0.5（ランダム）、p1=目標勝率（例: 0.55）、α=0.05、β=0.2
+ */
+export function powerAnalysis(
+  currentN: number,
+  currentWins: number,
+  targetWinRate = 0.55,
+  baselineWinRate = 0.5,
+  alpha = 0.05,
+  power = 0.8,
+): {
+  requiredN: number;   // 必要サンプル数
+  currentN: number;    // 現在のサンプル数
+  currentWinRate: number;
+  progressPct: number; // 達成率%
+  isAdequate: boolean; // 十分なサンプルか
+} {
+  void alpha; void power; // 使用パラメータ（将来の拡張用）
+  // arcsin 変換（アーキサイン変換）
+  const arcsin = (p: number) => Math.asin(Math.sqrt(Math.max(0, Math.min(1, p))));
+  const zAlpha = 1.645; // 片側 α=0.05
+  const zBeta  = 0.842; // 検出力 80%
+  const h = 2 * arcsin(Math.sqrt(targetWinRate)) - 2 * arcsin(Math.sqrt(baselineWinRate));
+  const requiredN = h !== 0 ? Math.ceil((zAlpha + zBeta) ** 2 / h ** 2) : 9999;
+  const currentWinRate = currentN > 0 ? currentWins / currentN : 0;
+  return {
+    requiredN,
+    currentN,
+    currentWinRate,
+    progressPct: Math.min(100, (currentN / requiredN) * 100),
+    isAdequate: currentN >= requiredN,
+  };
+}
+
 /** マルコフ遷移行列（WIN/LOSE） */
 export function markovTransition(outcomes: boolean[]): {
   ww: number; wl: number; lw: number; ll: number;

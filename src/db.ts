@@ -31,6 +31,7 @@ export interface DecisionRecord {
   sp500: number | null;
   created_at: string;
   news_sources?: string | null;  // カンマ区切りソース名
+  prompt_version?: string | null; // AIプロンプトバージョン
 }
 
 export async function getOpenPositions(db: D1Database): Promise<Position[]> {
@@ -59,8 +60,8 @@ export async function insertDecision(
     .prepare(
       `INSERT INTO decisions
         (pair, rate, decision, tp_rate, sl_rate, reasoning, news_summary,
-         reddit_signal, vix, us10y, nikkei, sp500, created_at, news_sources)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+         reddit_signal, vix, us10y, nikkei, sp500, created_at, news_sources, prompt_version)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     )
     .bind(
       record.pair,
@@ -76,7 +77,8 @@ export async function insertDecision(
       record.nikkei,
       record.sp500,
       record.created_at,
-      record.news_sources ?? null
+      record.news_sources ?? null,
+      record.prompt_version ?? null
     )
     .run();
 }
@@ -86,7 +88,8 @@ export async function closePosition(
   id: number,
   closeRate: number,
   reason: string,
-  pnl: number
+  pnl: number,
+  logReturnVal?: number,
 ): Promise<void> {
   await db
     .prepare(
@@ -95,10 +98,11 @@ export async function closePosition(
            close_rate   = ?,
            close_reason = ?,
            closed_at    = ?,
-           pnl          = ?
+           pnl          = ?,
+           log_return   = ?
        WHERE id = ?`
     )
-    .bind(closeRate, reason, new Date().toISOString(), pnl, id)
+    .bind(closeRate, reason, new Date().toISOString(), pnl, logReturnVal ?? null, id)
     .run();
 }
 

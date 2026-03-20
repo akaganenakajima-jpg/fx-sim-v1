@@ -56,6 +56,16 @@ const MIGRATIONS: Array<{ version: number; description: string; sql: string }> =
     description: '決定履歴インデックス',
     sql: `CREATE INDEX IF NOT EXISTS idx_decisions_created ON decisions(created_at DESC)`,
   },
+  {
+    version: 102,
+    description: 'positions.log_return カラム追加',
+    sql: 'ALTER TABLE positions ADD COLUMN log_return REAL',
+  },
+  {
+    version: 103,
+    description: 'decisions.prompt_version カラム追加',
+    sql: 'ALTER TABLE decisions ADD COLUMN prompt_version TEXT',
+  },
 ];
 
 export async function runMigrations(db: D1Database): Promise<void> {
@@ -143,7 +153,7 @@ export async function runMigrations(db: D1Database): Promise<void> {
       console.log(`[migration] Applied v${m.version}: ${m.description}`);
     } catch (e) {
       const msg = String(e);
-      if (msg.includes('already exists')) {
+      if (msg.includes('already exists') || msg.includes('duplicate column name')) {
         await db.prepare(
           'INSERT OR IGNORE INTO schema_version (version, description, applied_at) VALUES (?, ?, ?)'
         ).bind(m.version, m.description, new Date().toISOString()).run();

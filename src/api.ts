@@ -3,7 +3,7 @@
 import type { Position } from './db';
 import { fetchNews } from './news';
 import { getRiskStatus, type RiskEnv } from './risk-guard';
-import { wilsonCI, sharpeWithSE, varCvar, kellyFraction, markovTransition, maxDrawdown, rollingReturns, pnlVolatility, profitFactor, bootstrapROI, aiAccuracy, randomBaselineComparison, pairCorrelation } from './stats';
+import { wilsonCI, sharpeWithSE, varCvar, kellyFraction, markovTransition, maxDrawdown, rollingReturns, pnlVolatility, profitFactor, bootstrapROI, aiAccuracy, randomBaselineComparison, pairCorrelation, logReturnStats, powerAnalysis } from './stats';
 
 export interface LatestDecision {
   id: number;
@@ -117,11 +117,17 @@ export interface StatusResponse {
     profitFactor: number;
     randomBaseline: { mwu: { u: number; z: number; pValue: number; significant: boolean }; randomMean: number; aiMean: number; beatRate: number } | null;
     pairCorrelations: Array<{ pair1: string; pair2: string; r: number; n: number }>;
+    logReturnStats: { mean: number; stdev: number; skewness: number; kurtosis: number } | null;
+    powerAnalysis: { requiredN: number; currentN: number; currentWinRate: number; progressPct: number; isAdequate: boolean } | null;
   } | null;
+  slPatterns: Array<{
+    vixBucket: string; session: string; pairCategory: string;
+    slCount: number; totalCount: number; slRate: number;
+  }>;
 }
 
 export async function getApiStatus(db: D1Database, tradingEnv?: { TRADING_ENABLED?: string; OANDA_LIVE?: string; RISK_MAX_DAILY_LOSS?: string; RISK_MAX_LIVE_POSITIONS?: string; RISK_MAX_LOT_SIZE?: string; RISK_ANOMALY_THRESHOLD?: string }): Promise<StatusResponse> {
-  const [rateRow, openPositions, perf, latest, recent, sysRow, sparkRaw, perfByPairRaw, recentClosesRaw, newsRaw, sysLogsRaw, logStatsRaw, instrScoresRaw] =
+  const [rateRow, openPositions, perf, latest, recent, sysRow, sparkRaw, perfByPairRaw, recentClosesRaw, newsRaw, sysLogsRaw, logStatsRaw, instrScoresRaw, slPatternsRow] =
     await Promise.all([
       db
         .prepare("SELECT value FROM market_cache WHERE key = 'prev_rate_USD/JPY'")
@@ -212,6 +218,10 @@ export async function getApiStatus(db: D1Database, tradingEnv?: { TRADING_ENABLE
       db
         .prepare(`SELECT pair, total_trades, win_rate, avg_rr, sharpe, score, updated_at FROM instrument_scores ORDER BY score DESC`)
         .all<{ pair: string; total_trades: number; win_rate: number; avg_rr: number; sharpe: number; score: number; updated_at: string | null }>(),
+
+      // SLパターン（日次バッチ結果）
+      db.prepare("SELECT value FROM market_cache WHERE key = 'sl_patterns'")
+        .first<{ value: string }>(),
     ]);
 
   const rate = rateRow ? parseFloat(rateRow.value) : null;
@@ -271,14 +281,17 @@ export async function getApiStatus(db: D1Database, tradingEnv?: { TRADING_ENABLE
   if (totalClosed >= 10) {
     try {
       const [allPnlRaw, aiOutcomesRaw] = await Promise.all([
-        db.prepare('SELECT pnl FROM positions WHERE status = \'CLOSED\' ORDER BY closed_at ASC')
-          .all<{ pnl: number }>(),
+        db.prepare('SELECT pnl, log_return FROM positions WHERE status = \'CLOSED\' ORDER BY closed_at ASC')
+          .all<{ pnl: number; log_return: number | null }>(),
         db.prepare('SELECT outcome FROM decisions WHERE decision IN (\'BUY\',\'SELL\') AND outcome IS NOT NULL ORDER BY id ASC')
           .all<{ outcome: string }>(),
       ]);
 
       const allPnlRows = allPnlRaw.results ?? [];
       const allPnls = allPnlRows.map(r => r.pnl);
+      const logReturns = allPnlRows
+        .map(r => r.log_return)
+        .filter((v): v is number => v != null);
       const outcomes = allPnls.map(p => p > 0);
 
       const ci = wilsonCI(wins, totalClosed);
@@ -320,6 +333,8 @@ export async function getApiStatus(db: D1Database, tradingEnv?: { TRADING_ENABLE
         profitFactor: profitFactor(allPnls),
         randomBaseline: allPnls.length >= 10 ? randomBaselineComparison(allPnls) : null,
         pairCorrelations: pairCorrelation(pnlByPair),
+        logReturnStats: logReturns.length >= 4 ? logReturnStats(logReturns) : null,
+        powerAnalysis: powerAnalysis(totalClosed, wins),
       };
     } catch {}
   }
@@ -374,6 +389,9 @@ export async function getApiStatus(db: D1Database, tradingEnv?: { TRADING_ENABLE
       lastRun: logStatsRaw?.lastRun ?? null,
     },
     statistics,
+    slPatterns: (() => {
+      try { return slPatternsRow ? JSON.parse(slPatternsRow.value) : []; } catch { return []; }
+    })(),
   };
 }
 
