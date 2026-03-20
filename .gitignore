@@ -8,4 +8,5 @@ dist/
 # 一時ファイル・デバッグ出力
 api_out.json
 audit/
-.claude/scheduled_tasks.lock
+.claude/
+.superpowers/
