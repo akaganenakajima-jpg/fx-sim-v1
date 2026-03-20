@@ -6,6 +6,7 @@ import type { Position } from './db';
 import type { InstrumentConfig } from './instruments';
 import { getBroker, withFallback, type BrokerEnv } from './broker';
 import { kellyFraction } from './stats';
+import { sendNotification, buildTpSlMessage, buildDrawdownMessage } from './notify';
 
 function calcPnl(
   direction: 'BUY' | 'SELL',
@@ -37,7 +38,8 @@ export async function checkAndCloseAllPositions(
   db: D1Database,
   prices: Map<string, number | null>,
   instruments: InstrumentConfig[],
-  brokerEnv?: BrokerEnv
+  brokerEnv?: BrokerEnv,
+  webhookUrl?: string,
 ): Promise<void> {
   const positions = await getOpenPositions(db);
   const instrMap = new Map(instruments.map((i) => [i.pair, i]));
@@ -107,6 +109,15 @@ export async function checkAndCloseAllPositions(
       }
 
       await closePosition(db, pos.id, currentRate, 'TP', pnl);
+      // TP 通知（currentRate はこの時点で number に絞り込まれている）
+      await sendNotification(webhookUrl, buildTpSlMessage({
+        pair: pos.pair,
+        direction: pos.direction as 'BUY' | 'SELL',
+        reason: 'TP',
+        pnl,
+        entryRate: pos.entry_rate,
+        closeRate: currentRate,
+      }));
       await updateDecisionOutcome(db, pos.pair, pos.direction, pos.entry_at, pnl > 0 ? 'WIN' : 'LOSE');
       await insertSystemLog(db, 'INFO', 'POSITION',
         `TP決済: ${pos.pair} ${pos.direction} PnL ${pnl >= 0 ? '+' : ''}${pnl.toFixed(2)}`,
@@ -127,6 +138,15 @@ export async function checkAndCloseAllPositions(
       }
 
       await closePosition(db, pos.id, currentRate, 'SL', pnl);
+      // SL 通知
+      await sendNotification(webhookUrl, buildTpSlMessage({
+        pair: pos.pair,
+        direction: pos.direction as 'BUY' | 'SELL',
+        reason: 'SL',
+        pnl,
+        entryRate: pos.entry_rate,
+        closeRate: currentRate,
+      }));
       await updateDecisionOutcome(db, pos.pair, pos.direction, pos.entry_at, pnl > 0 ? 'WIN' : 'LOSE');
       await insertSystemLog(db, 'WARN', 'POSITION',
         `SL決済: ${pos.pair} ${pos.direction} PnL ${pnl >= 0 ? '+' : ''}${pnl.toFixed(2)}`,
@@ -143,8 +163,7 @@ export async function checkAndCloseAllPositions(
             `SELECT COALESCE(SUM(pnl), 0) AS slLoss FROM positions WHERE status = 'CLOSED' AND close_reason = 'SL' ORDER BY closed_at DESC LIMIT 3`
           ).first<{ slLoss: number }>();
           await insertSystemLog(db, 'WARN', 'DRAWDOWN',
-            `⚠️ 3連続SL損切 — 累計損失 ¥${Math.round(totalSlPnl?.slLoss ?? 0)}`,
-            null);
+            `⚠️ 3連続SL損切 — 累計損失 ¥${Math.round(totalSlPnl?.slLoss ?? 0)}`);
           console.warn(`[position] ⚠️ DRAWDOWN: 3 consecutive SL hits`);
         }
       } catch {}
@@ -185,7 +204,8 @@ export async function openPosition(
   tpRate: number | null,
   slRate: number | null,
   source: 'paper' | 'oanda' = 'paper',
-  oandaTradeId: string | null = null
+  oandaTradeId: string | null = null,
+  webhookUrl?: string,
 ): Promise<void> {
   const existing = await getOpenPositionByPair(db, pair);
   if (existing) {
@@ -221,6 +241,10 @@ export async function openPosition(
       `7連敗縮退: ${pair} ${direction} 当日発注停止`,
       JSON.stringify({ consecutiveLosses, lot }));
     console.warn(`[position] 7連敗縮退: ${pair} 発注停止`);
+    // 7連敗通知（return の直前）
+    await sendNotification(webhookUrl, buildDrawdownMessage({
+      consecutiveLosses, lotMultiplier: 0, pair,
+    }));
     return;
   }
   if (ddMultiplier < 1.0) {
@@ -228,8 +252,11 @@ export async function openPosition(
     lot = Math.max(0.1, lot * ddMultiplier);
     console.log(`[position] 連敗縮退: ${consecutiveLosses}連敗 ×${ddMultiplier} lot ${prevLot.toFixed(1)} → ${lot.toFixed(1)}`);
     await insertSystemLog(db, 'INFO', 'DRAWDOWN',
-      `連敗縮退 ${consecutiveLosses}連敗 → lot×${ddMultiplier}: ${pair}`,
-      null);
+      `連敗縮退 ${consecutiveLosses}連敗 → lot×${ddMultiplier}: ${pair}`);
+    // 縮退通知
+    await sendNotification(webhookUrl, buildDrawdownMessage({
+      consecutiveLosses, lotMultiplier: ddMultiplier, pair,
+    }));
   }
 
   await db

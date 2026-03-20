@@ -25,6 +25,7 @@ import { getBroker, withFallback, type BrokerEnv } from './broker';
 import { checkRisk, type RiskEnv } from './risk-guard';
 import { checkTpSlSanity } from './sanity';
 import { runMigrations } from './migration';
+import { sendNotification, getWebhookUrl, buildDailySummaryMessage } from './notify';
 
 interface Env {
   DB: D1Database;
@@ -50,6 +51,8 @@ interface Env {
   RISK_ANOMALY_THRESHOLD?: string;
   // Twelve Data フォールバック
   TWELVE_DATA_API_KEY?: string;
+  SLACK_WEBHOOK_URL?: string;
+  DISCORD_WEBHOOK_URL?: string;
 }
 
 let _keyIndex = 0;
@@ -169,7 +172,7 @@ async function fetchMarketData(env: Env, now: Date): Promise<MarketData | null> 
   const usdJpyRate = indicators.usdjpy ?? frankfurterRate;
   if (usdJpyRate == null) {
     console.error('[fx-sim] USD/JPY rate unavailable from all sources');
-    await insertSystemLog(env.DB, 'ERROR', 'RATE', 'USD/JPYレート取得失敗（全ソース）', null);
+    await insertSystemLog(env.DB, 'ERROR', 'RATE', 'USD/JPYレート取得失敗（全ソース）');
     return null;
   }
 
@@ -242,7 +245,7 @@ async function run(env: Env): Promise<void> {
     };
 
     // 2. 全銘柄のTP/SLを一括チェック（OANDA実弾ポジションはブローカー経由でクローズ）
-    await checkAndCloseAllPositions(env.DB, prices, INSTRUMENTS, brokerEnv);
+    await checkAndCloseAllPositions(env.DB, prices, INSTRUMENTS, brokerEnv, getWebhookUrl(env));
 
     // 3. ニュースハッシュ更新
     const prevNewsHashRaw = await getCacheValue(env.DB, PREV_NEWS_HASH_KEY);
@@ -305,7 +308,7 @@ async function run(env: Env): Promise<void> {
           hasAttentionNews = Array.isArray(analysis) && analysis.some((a: { attention: boolean }) => a.attention);
           if (hasAttentionNews) {
             console.log('[fx-sim] 🔥 Attention news detected! Forcing Gemini calls for all instruments');
-            await insertSystemLog(env.DB, 'INFO', 'NEWS', '🔥注目ニュース検出 → 全銘柄即時判定', null);
+            await insertSystemLog(env.DB, 'INFO', 'NEWS', '🔥注目ニュース検出 → 全銘柄即時判定');
           }
         }
       } catch {}
@@ -520,7 +523,7 @@ async function run(env: Env): Promise<void> {
         else if (hedgeResult.provider === 'gpt') gptOkCount++;
         else claudeOkCount++;
         if (hedgeResult.provider !== 'gemini') {
-          await insertSystemLog(env.DB, 'INFO', hedgeResult.provider.toUpperCase(), `${hedgeResult.provider}ヘッジ成功 (${instrument.pair}) → ${geminiResult.decision}`, null);
+          await insertSystemLog(env.DB, 'INFO', hedgeResult.provider.toUpperCase(), `${hedgeResult.provider}ヘッジ成功 (${instrument.pair}) → ${geminiResult.decision}`);
         }
       } catch (e) {
         const errMsg = String(e);
@@ -584,7 +587,7 @@ async function run(env: Env): Promise<void> {
           console.warn(`[fx-sim] Sanity rejected: ${instrument.pair} ${sanity.reason}`);
           await insertSystemLog(env.DB, 'WARN', 'SANITY',
             `TP/SL異常値拒否: ${instrument.pair} ${geminiResult.decision}`,
-            sanity.reason ?? null);
+            sanity.reason ?? undefined);
           // ポジション開設をスキップ（decisionsには記録済み）
           continue;
         }
@@ -617,7 +620,7 @@ async function run(env: Env): Promise<void> {
             const brokerResult = await withFallback(broker, () => broker.openPosition({
               pair: instrument.pair,
               oandaSymbol: instrument.oandaSymbol,
-              direction: geminiResult.decision,
+              direction: geminiResult.decision as 'BUY' | 'SELL',
               entryRate: currentRate,
               tpRate: geminiResult.tp_rate,
               slRate: geminiResult.sl_rate,
@@ -640,7 +643,8 @@ async function run(env: Env): Promise<void> {
           geminiResult.tp_rate,
           geminiResult.sl_rate,
           source,
-          oandaTradeId
+          oandaTradeId,
+          getWebhookUrl(env),
         );
         await insertSystemLog(
           env.DB, 'INFO', 'POSITION',
@@ -649,7 +653,7 @@ async function run(env: Env): Promise<void> {
         );
       } else if (geminiResult.decision !== 'HOLD') {
         // BUY/SELLだがポジション既存のためスキップ
-        await insertSystemLog(env.DB, 'INFO', 'GEMINI', `${instrument.pair} ${geminiResult.decision} シグナル（既存ポジあり）`, null);
+        await insertSystemLog(env.DB, 'INFO', 'GEMINI', `${instrument.pair} ${geminiResult.decision} シグナル（既存ポジあり）`);
       }
 
       console.log(
@@ -664,7 +668,7 @@ async function run(env: Env): Promise<void> {
     console.log(`[fx-sim] cron done in ${elapsed}ms (limit=${MAX_GEMINI_PER_RUN})` + (aiTotal > 0 ? ` | AI: Gemini=${geminiOkCount} GPT=${gptOkCount} Claude=${claudeOkCount} Fail=${aiFailCount}` : ''));
     // 実行時間が30秒超はWARN
     if (elapsed > 30000) {
-      await insertSystemLog(env.DB, 'WARN', 'CRON', `実行時間超過: ${elapsed}ms`, null);
+      await insertSystemLog(env.DB, 'WARN', 'CRON', `実行時間超過: ${elapsed}ms`);
     }
 
     // 日次処理（JST 0:00 = UTC 15:00 に実行）
@@ -675,6 +679,11 @@ async function run(env: Env): Promise<void> {
 
   } catch (e) {
     console.error('[fx-sim] unhandled error:', e);
+    // cron エラー通知
+    await sendNotification(
+      getWebhookUrl(env),
+      `🔴 [fx-sim] cron エラー: ${String(e).slice(0, 200)}`,
+    );
     try {
       await insertSystemLog(env.DB, 'ERROR', 'CRON', '予期しないエラー', String(e).slice(0, 300));
     } catch {}
@@ -699,8 +708,7 @@ async function runDailyTasks(env: Env, _now: Date): Promise<void> {
     const balance = 10000 + (dailyPerf?.totalPnl ?? 0);
     const wr = dailyPerf && dailyPerf.total > 0 ? (dailyPerf.wins / dailyPerf.total * 100).toFixed(1) : '0';
     await insertSystemLog(env.DB, 'INFO', 'DAILY',
-      `日次サマリー: ¥${Math.round(balance).toLocaleString()} ROI ${((balance - 10000) / 100).toFixed(1)}% 勝率${wr}% ${dailyPerf?.total ?? 0}件 OP${openCount}`,
-      null);
+      `日次サマリー: ¥${Math.round(balance).toLocaleString()} ROI ${((balance - 10000) / 100).toFixed(1)}% 勝率${wr}% ${dailyPerf?.total ?? 0}件 OP${openCount}`);
   } catch {}
 
   // 銘柄スコア更新
@@ -708,6 +716,69 @@ async function runDailyTasks(env: Env, _now: Date): Promise<void> {
     await updateInstrumentScores(env.DB);
   } catch (e) {
     console.error('[fx-sim] instrument_scores update failed:', e);
+  }
+
+  // 日次サマリー Webhook 通知（前日の取引実績）
+  try {
+    // 前日の日付文字列を UTC で計算
+    const yesterdayStart = new Date(Date.UTC(
+      _now.getUTCFullYear(), _now.getUTCMonth(), _now.getUTCDate() - 1
+    ));
+    const todayStart = new Date(Date.UTC(
+      _now.getUTCFullYear(), _now.getUTCMonth(), _now.getUTCDate()
+    ));
+    const dateStr = yesterdayStart.toISOString().slice(0, 10);
+
+    const dailyStats = await env.DB.prepare(`
+      SELECT
+        COUNT(*) as total,
+        SUM(CASE WHEN pnl > 0 THEN 1 ELSE 0 END) as wins,
+        COALESCE(SUM(pnl), 0) as total_pnl
+      FROM positions
+      WHERE status = 'CLOSED'
+        AND closed_at >= ? AND closed_at < ?
+    `)
+    .bind(yesterdayStart.toISOString(), todayStart.toISOString())
+    .first<{ total: number; wins: number; total_pnl: number }>();
+
+    if (dailyStats && dailyStats.total > 0) {
+      // decisions.provider カラムは Batch C-3 で追加される予定
+      // カラムが存在しない場合は 0 をフォールバックとして使う
+      let geminiOk = 0, gptOk = 0, claudeOk = 0;
+      try {
+        const aiStats = await env.DB.prepare(`
+          SELECT
+            SUM(CASE WHEN provider = 'gemini' THEN 1 ELSE 0 END) as gemini_ok,
+            SUM(CASE WHEN provider = 'gpt'    THEN 1 ELSE 0 END) as gpt_ok,
+            SUM(CASE WHEN provider = 'claude' THEN 1 ELSE 0 END) as claude_ok
+          FROM decisions
+          WHERE decision IN ('BUY', 'SELL')
+            AND created_at >= ? AND created_at < ?
+        `)
+        .bind(yesterdayStart.toISOString(), todayStart.toISOString())
+        .first<{ gemini_ok: number; gpt_ok: number; claude_ok: number }>();
+        if (aiStats) {
+          geminiOk = aiStats.gemini_ok ?? 0;
+          gptOk    = aiStats.gpt_ok    ?? 0;
+          claudeOk = aiStats.claude_ok ?? 0;
+        }
+      } catch {
+        // provider カラムが存在しない場合はスキップ（Batch C-3 適用前）
+      }
+
+      const msg = buildDailySummaryMessage({
+        date: dateStr,
+        totalTrades: dailyStats.total,
+        wins: dailyStats.wins,
+        totalPnl: dailyStats.total_pnl,
+        geminiOk,
+        gptOk,
+        claudeOk,
+      });
+      await sendNotification(getWebhookUrl(env), msg);
+    }
+  } catch (e) {
+    console.warn('[fx-sim] daily summary notification failed:', e);
   }
 }
 
