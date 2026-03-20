@@ -23,6 +23,8 @@ import { JS } from './app.js';
 import { INSTRUMENTS } from './instruments';
 import { getBroker, withFallback, type BrokerEnv } from './broker';
 import { checkRisk, type RiskEnv } from './risk-guard';
+import { checkTpSlSanity } from './sanity';
+import { runMigrations } from './migration';
 
 interface Env {
   DB: D1Database;
@@ -116,37 +118,8 @@ async function run(env: Env): Promise<void> {
   console.log(`[fx-sim] cron start ${now.toISOString()}`);
 
   try {
-    // ワンタイムマイグレーション v2: positions に source, oanda_trade_id カラム追加
-    const v2Migrated = await getCacheValue(env.DB, 'schema_v2_migrated');
-    if (!v2Migrated) {
-      try {
-        await env.DB.prepare(`ALTER TABLE positions ADD COLUMN source TEXT DEFAULT 'paper'`).run();
-        await env.DB.prepare(`ALTER TABLE positions ADD COLUMN oanda_trade_id TEXT`).run();
-        console.log('[fx-sim] Schema v2 migration: added source + oanda_trade_id');
-      } catch (e) {
-        // カラムが既に存在する場合は無視
-        console.log(`[fx-sim] Schema v2 migration skipped: ${String(e).slice(0, 80)}`);
-      }
-      try {
-        await env.DB.prepare(`CREATE TABLE IF NOT EXISTS instrument_scores (
-          pair TEXT PRIMARY KEY, total_trades INTEGER DEFAULT 0,
-          win_rate REAL DEFAULT 0, avg_rr REAL DEFAULT 0,
-          sharpe REAL DEFAULT 0, correlation REAL DEFAULT 0,
-          score REAL DEFAULT 0, updated_at TEXT)`).run();
-      } catch {}
-      await setCacheValue(env.DB, 'schema_v2_migrated', '1');
-    }
-
-    // ワンタイムマイグレーション: 旧PnL(pt)→円に変換（S&P500: ×100, US10Y: ×50）
-    const migrated = await getCacheValue(env.DB, 'pnl_yen_migrated');
-    if (!migrated) {
-      await env.DB.prepare(`UPDATE positions SET pnl = pnl * 100 WHERE pair = 'S&P500' AND status = 'CLOSED' AND pnl IS NOT NULL`).run();
-      await env.DB.prepare(`UPDATE positions SET pnl = pnl * 50 WHERE pair = 'US10Y' AND status = 'CLOSED' AND pnl IS NOT NULL`).run();
-      await env.DB.prepare(`UPDATE positions SET pnl = pnl * 10 WHERE pair = 'Nikkei225' AND status = 'CLOSED' AND pnl IS NOT NULL`).run();
-      // USD/JPYは倍率変更なし（100→100）
-      await setCacheValue(env.DB, 'pnl_yen_migrated', '1');
-      console.log('[fx-sim] PnL migration to yen completed');
-    }
+    // スキーママイグレーション（バージョン管理方式）
+    await runMigrations(env.DB);
 
     // 1. 全価格・共通データを一括取得（Yahoo Finance + frankfurterフォールバック）
     const [newsResult, redditResult, indicatorsResult, frankfurterResult] = await Promise.allSettled([
@@ -611,6 +584,23 @@ async function run(env: Env): Promise<void> {
         (geminiResult.decision === 'BUY' || geminiResult.decision === 'SELL') &&
         !hasOpenPosition
       ) {
+        // TP/SLサニティチェック: AIが極端な値を返した場合の防御
+        const sanity = checkTpSlSanity({
+          direction: geminiResult.decision,
+          rate: currentRate,
+          tp: geminiResult.tp_rate,
+          sl: geminiResult.sl_rate,
+          instrument,
+        });
+        if (!sanity.valid) {
+          console.warn(`[fx-sim] Sanity rejected: ${instrument.pair} ${sanity.reason}`);
+          await insertSystemLog(env.DB, 'WARN', 'SANITY',
+            `TP/SL異常値拒否: ${instrument.pair} ${geminiResult.decision}`,
+            sanity.reason ?? null);
+          // ポジション開設をスキップ（decisionsには記録済み）
+          continue;
+        }
+
         // ブローカー判定 + リスクチェック
         const broker = getBroker(instrument, brokerEnv);
         const isLive = broker.name === 'oanda';

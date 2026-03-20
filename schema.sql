@@ -57,3 +57,9 @@ CREATE TABLE IF NOT EXISTS news_fetch_log (
   avg_freshness   INTEGER,                 -- 平均鮮度(分), null=算出不可
   created_at      TEXT    NOT NULL
 );
+
+-- パフォーマンス用インデックス（T002: IPA評価 🔴高優先）
+CREATE INDEX IF NOT EXISTS idx_positions_status ON positions(status);
+CREATE INDEX IF NOT EXISTS idx_positions_pair_status ON positions(pair, status);
+CREATE INDEX IF NOT EXISTS idx_decisions_pair_created ON decisions(pair, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_system_logs_id_desc ON system_logs(id DESC);

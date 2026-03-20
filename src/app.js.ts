@@ -48,7 +48,7 @@ export const JS = `
 
   function fmtPnl(pnl, unit) {
     if (pnl == null || isNaN(pnl)) return { text: '—', cls: 'neu' };
-    var sign = pnl >= 0 ? '+' : '';
+    var sign = pnl > 0 ? '+' : pnl < 0 ? '-' : '';
     var text = unit === '円'
       ? sign + '¥' + Math.abs(Math.round(pnl)).toLocaleString('ja-JP')
       : sign + Number(pnl).toFixed(1) + (unit ? ' ' + unit : '');
@@ -1413,6 +1413,8 @@ export const JS = `
   }
 
   // ── 統計タブ描画 ──
+  // UX心理学: Serial Position（重要データ先頭）、Progressive Disclosure（段階的開示）、
+  // Loss Aversion（リスク可視化）、Aesthetic-Usability（統一された美しいレイアウト）
   function renderStats(data) {
     renderEquityChart(data);
     renderPerfSummary(data);
@@ -1420,6 +1422,108 @@ export const JS = `
     if (!container) return;
     var byPair = data.performanceByPair || {};
 
+    // ── セクションヘッダー生成（Apple HIG: テキスト階層のみ、装飾最小限） ──
+    function secHeader(icon, bgColor, title) {
+      return '<div class="stats-sec-header">' +
+        '<span class="stats-sec-title">' + title + '</span>' +
+      '</div>';
+    }
+
+    // ── 1. 期間別パフォーマンス（Serial Position: 最重要を最初に） ──
+    var advStatsHtml = '';
+    var st = data.statistics;
+    if (st) {
+      var roll = st.rolling || {};
+      var r7 = roll[7] || { roi: 0, count: 0, winRate: 0 };
+      var r14 = roll[14] || { roi: 0, count: 0, winRate: 0 };
+      var r30 = roll[30] || { roi: 0, count: 0, winRate: 0 };
+      var fmtRoi = function(v) { return (v >= 0 ? '+' : '') + v.toFixed(2) + '%'; };
+      var roiColor = function(v) { return v > 0 ? 'var(--green)' : v < 0 ? 'var(--red)' : 'var(--label)'; };
+      // トレンド矢印（Variable Reward: 変化を視覚的に）
+      var trendArrow = function(v) { return v > 0 ? '↑' : v < 0 ? '↓' : '→'; };
+
+      advStatsHtml += secHeader('📈', 'var(--blue)', '期間別パフォーマンス') +
+        '<div class="metric-grid-3">' +
+          '<div class="metric-card" style="text-align:center">' +
+            '<div class="metric-label">直近7件</div>' +
+            '<div class="metric-value" style="color:' + roiColor(r7.roi) + '">' + trendArrow(r7.roi) + ' ' + fmtRoi(r7.roi) + '</div>' +
+            '<div class="metric-sub">勝率 ' + r7.winRate.toFixed(0) + '%</div>' +
+          '</div>' +
+          '<div class="metric-card" style="text-align:center">' +
+            '<div class="metric-label">直近14件</div>' +
+            '<div class="metric-value" style="color:' + roiColor(r14.roi) + '">' + trendArrow(r14.roi) + ' ' + fmtRoi(r14.roi) + '</div>' +
+            '<div class="metric-sub">勝率 ' + r14.winRate.toFixed(0) + '%</div>' +
+          '</div>' +
+          '<div class="metric-card" style="text-align:center">' +
+            '<div class="metric-label">直近30件</div>' +
+            '<div class="metric-value" style="color:' + roiColor(r30.roi) + '">' + trendArrow(r30.roi) + ' ' + fmtRoi(r30.roi) + '</div>' +
+            '<div class="metric-sub">勝率 ' + r30.winRate.toFixed(0) + '%</div>' +
+          '</div>' +
+        '</div>';
+
+      // ── 2. リスク指標（Loss Aversion: 危険度を色で直感的に） ──
+      var dd = st.drawdown || { maxDDPct: 0, currentDDPct: 0, recoveryRatio: 1 };
+      var ddAccent = dd.currentDDPct > 5 ? 'danger' : dd.currentDDPct > 2 ? 'warn' : 'ok';
+      var ddColor = dd.currentDDPct > 5 ? 'var(--red)' : dd.currentDDPct > 2 ? 'var(--orange,#ff9500)' : 'var(--label)';
+      var vol = st.volatility || { volRatio: 1, isHighVol: false };
+      var volLabel = vol.volRatio > 1.5 ? '高' : vol.volRatio > 0.8 ? '中' : '低';
+      var volColor = vol.isHighVol ? 'var(--red)' : 'var(--label)';
+      var volAccent = vol.isHighVol ? 'danger' : vol.volRatio > 0.8 ? 'warn' : 'ok';
+      var var95 = Math.round(st.var95).toLocaleString();
+      var cvar95 = Math.round(st.cvar95).toLocaleString();
+
+      advStatsHtml += secHeader('🛡️', 'var(--orange, #ff9500)', 'リスク指標') +
+        '<div class="metric-grid-2">' +
+          '<div class="metric-card metric-card--danger">' +
+            '<div class="metric-label">最大DD</div>' +
+            '<div class="metric-value" style="color:var(--red)">' + dd.maxDDPct.toFixed(1) + '%</div>' +
+          '</div>' +
+          '<div class="metric-card metric-card--' + ddAccent + '">' +
+            '<div class="metric-label">現在DD</div>' +
+            '<div class="metric-value" style="color:' + ddColor + '">' + dd.currentDDPct.toFixed(1) + '%</div>' +
+          '</div>' +
+          '<div class="metric-card metric-card--danger">' +
+            '<div class="metric-label">VaR / CVaR (95%)</div>' +
+            '<div class="metric-value" style="color:var(--red)">\u00a5' + var95 + ' / \u00a5' + cvar95 + '</div>' +
+          '</div>' +
+          '<div class="metric-card metric-card--' + volAccent + '">' +
+            '<div class="metric-label">\u30dc\u30e9\u30c6\u30a3\u30ea\u30c6\u30a3</div>' +
+            '<div class="metric-value" style="color:' + volColor + '">' + volLabel + ' <span style="font-size:11px;font-weight:400;color:var(--label-secondary)">\u00d7' + vol.volRatio.toFixed(2) + '</span></div>' +
+          '</div>' +
+        '</div>';
+
+      // ── 3. 統計的信頼性 ──
+      var wrLo = (st.winRateCI.lower * 100).toFixed(1);
+      var wrHi = (st.winRateCI.upper * 100).toFixed(1);
+      var sharpeFmt = st.sharpe.toFixed(3);
+      var sharpeSig = st.sharpeSignificant;
+      var kellyPct = (st.kellyFraction * 100).toFixed(1);
+      var streakPct = (st.markov.streakProb3 * 100).toFixed(1);
+
+      advStatsHtml += secHeader('📊', 'var(--purple, #af52de)', '統計的信頼性') +
+        '<div class="metric-grid-2">' +
+          '<div class="metric-card">' +
+            '<div class="metric-label">勝率 95% CI</div>' +
+            '<div class="metric-value">' + wrLo + '% \u2014 ' + wrHi + '%</div>' +
+          '</div>' +
+          '<div class="metric-card">' +
+            '<div class="metric-label">Sharpe\u6bd4' +
+              (sharpeSig ? ' <span style="color:var(--green);font-weight:700">\u6709\u610f</span>' : ' <span style="color:var(--label-tertiary)">n.s.</span>') +
+            '</div>' +
+            '<div class="metric-value">' + sharpeFmt + ' <span style="font-size:11px;font-weight:400;color:var(--label-secondary)">\u00b1' + st.sharpeSE.toFixed(3) + '</span></div>' +
+          '</div>' +
+          '<div class="metric-card">' +
+            '<div class="metric-label">Kelly\u57fa\u6e96</div>' +
+            '<div class="metric-value">' + kellyPct + '%</div>' +
+          '</div>' +
+          '<div class="metric-card">' +
+            '<div class="metric-label">PF / 3\u9023\u6557</div>' +
+            '<div class="metric-value">' + (st.profitFactor != null ? st.profitFactor.toFixed(2) : '\u2014') + ' / <span style="color:' + (parseFloat(streakPct) > 20 ? 'var(--red)' : 'var(--label)') + '">' + streakPct + '%</span></div>' +
+          '</div>' +
+        '</div>';
+    }
+
+    // ── 4. 銘柄別成績（Progressive Disclosure: 取引ありのみ展開） ──
     function buildStatsCard(instr) {
       var p = byPair[instr.pair];
       if (!p) p = { total: 0, wins: 0, totalPnl: 0 };
@@ -1427,7 +1531,7 @@ export const JS = `
       var pnlFmt  = fmtPnl(p.totalPnl, instr.unit);
       var pnlCls  = pnlFmt.cls === 'pos' ? 'var(--green)' : pnlFmt.cls === 'neg' ? 'var(--red)' : 'var(--label-secondary)';
 
-      return '<div class="stats-pair-card" data-stats-pair="' + escHtml(instr.pair) + '" style="cursor:pointer;-webkit-tap-highlight-color:transparent">' +
+      return '<div class="stats-pair-card" data-stats-pair="' + escHtml(instr.pair) + '">' +
         '<div class="stats-pair-header">' +
           '<span class="stats-pair-name">' + escHtml(instr.label) + '</span>' +
           '<span class="stats-pnl" style="color:' + pnlCls + '">' + pnlFmt.text + '</span>' +
@@ -1439,55 +1543,24 @@ export const JS = `
         '</div>' +
       '</div>';
     }
-    // 取引ありと取引なしにセクション分離（Cognitive Load軽減）
     var traded = INSTRUMENTS.filter(function(i) { var p = byPair[i.pair]; return p && p.total > 0; });
     var untraded = INSTRUMENTS.filter(function(i) { var p = byPair[i.pair]; return !p || p.total === 0; });
-    var html = traded.map(buildStatsCard).join('');
+    var pairHtml = secHeader('💹', 'var(--green)', '銘柄別成績') +
+      traded.map(buildStatsCard).join('');
+    // 未取引は折りたたみ（Cognitive Load軽減）
     if (untraded.length > 0) {
-      html += '<div style="font-size:11px;font-weight:600;color:var(--label-tertiary);letter-spacing:0.8px;text-transform:uppercase;padding:12px 4px 4px">未取引</div>';
-      html += untraded.map(buildStatsCard).join('');
+      pairHtml += '<button class="stats-fold-btn" id="untraded-toggle">未取引 ' + untraded.length + '銘柄を表示 ▾</button>' +
+        '<div id="untraded-list" style="display:none">' +
+          untraded.map(buildStatsCard).join('') +
+        '</div>';
     }
 
-    // 全銘柄の取引数合計が0なら empty state を追加
-    var totalTrades = INSTRUMENTS.reduce(function(sum, instr) {
-      var p = byPair[instr.pair];
-      return sum + (p ? p.total : 0);
-    }, 0);
-    // 取引履歴（全銘柄横断、新しい順）
-    var closes = (data.recentCloses || []).slice();
-    var histHtml = '';
-    if (closes.length > 0) {
-      histHtml = '<div style="margin-top:16px">' +
-        '<div class="list-header" style="padding:0 0 8px">取引履歴</div>' +
-        closes.map(function(c, idx) {
-          var instrH = INSTRUMENTS.filter(function(i) { return i.pair === c.pair; })[0];
-          var label = instrH ? instrH.label : c.pair;
-          var unit = instrH ? instrH.unit : '';
-          var pnl = c.pnl != null ? c.pnl : 0;
-          var pnlColor = pnl > 0 ? 'var(--green)' : pnl < 0 ? 'var(--red)' : 'var(--label-secondary)';
-          var icon = c.close_reason === 'TP' ? '🎯' : c.close_reason === 'SL' ? '🔴' : '—';
-          var dir = c.direction === 'BUY' ? '買い' : '空売り';
-          return '<div style="display:flex;justify-content:space-between;align-items:center;padding:10px 0;border-bottom:1px solid var(--separator)">' +
-            '<div>' +
-              '<div style="font-size:14px;font-weight:600">' + escHtml(label) + '</div>' +
-              '<div style="font-size:11px;color:var(--label-secondary);margin-top:2px">' +
-                icon + ' ' + (c.close_reason || '') + ' · ' + dir + ' · ' + fmtTime(c.closed_at) +
-              '</div>' +
-            '</div>' +
-            '<span style="font-size:15px;font-weight:700;color:' + pnlColor + '">' +
-              fmtPnl(pnl, unit).text +
-            '</span>' +
-          '</div>';
-        }).join('') +
-      '</div>';
-    }
-
-    // 銘柄スコアランキング（instrument_scores）
+    // ── 5. 銘柄スコア（折りたたみ） ──
     var scoresHtml = '';
     var scores = data.instrumentScores || [];
     if (scores.length > 0) {
-      scoresHtml = '<div style="margin-top:16px">' +
-        '<div class="list-header" style="padding:0 0 8px">銘柄スコア</div>' +
+      scoresHtml = secHeader('🏆', 'var(--yellow, #ffcc00)', '銘柄スコア') +
+        '<div id="scores-list">' +
         scores.map(function(s, idx) {
           var instrS = INSTRUMENTS.filter(function(i) { return i.pair === s.pair; })[0];
           var label = instrS ? instrS.label : s.pair;
@@ -1495,17 +1568,17 @@ export const JS = `
           var qualified = s.win_rate >= 0.55 && s.avg_rr >= 1.0 && s.total_trades >= 5;
           var barColor = qualified ? 'var(--green)' : 'var(--label-secondary)';
           var barWidth = Math.max(s.score * 100, 3);
-          return '<div style="display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid var(--separator)">' +
-            '<span style="font-size:11px;font-weight:700;color:var(--label-tertiary);width:18px;text-align:right">' + (idx + 1) + '</span>' +
-            '<div style="flex:1;min-width:0">' +
-              '<div style="display:flex;justify-content:space-between;margin-bottom:4px">' +
-                '<span style="font-size:13px;font-weight:600">' + escHtml(label) +
-                  (qualified ? ' <span style="font-size:10px;color:var(--green)">QUALIFIED</span>' : '') +
+          return '<div class="score-row">' +
+            '<span class="score-rank">' + (idx + 1) + '</span>' +
+            '<div class="score-body">' +
+              '<div class="score-head">' +
+                '<span class="score-name">' + escHtml(label) +
+                  (qualified ? ' <span style="font-size:11px;color:var(--green)">QUALIFIED</span>' : '') +
                 '</span>' +
-                '<span style="font-size:13px;font-weight:600;font-variant-numeric:tabular-nums">' + (s.score * 100).toFixed(0) + '点</span>' +
+                '<span class="score-val">' + (s.score * 100).toFixed(0) + '点</span>' +
               '</div>' +
-              '<div style="height:4px;background:var(--bg-tertiary);border-radius:2px;overflow:hidden"><div style="height:100%;width:' + barWidth + '%;background:' + barColor + ';border-radius:2px"></div></div>' +
-              '<div style="display:flex;gap:8px;margin-top:3px;font-size:10px;color:var(--label-secondary)">' +
+              '<div class="score-bar"><div class="score-bar-fill" style="width:' + barWidth + '%;background:' + barColor + '"></div></div>' +
+              '<div class="score-details">' +
                 '<span>勝率' + wr + '%</span>' +
                 '<span>RR ' + s.avg_rr.toFixed(2) + '</span>' +
                 '<span>Sharpe ' + s.sharpe.toFixed(2) + '</span>' +
@@ -1514,13 +1587,75 @@ export const JS = `
             '</div>' +
           '</div>';
         }).join('') +
-      '</div>';
+        '</div>';
     }
 
-    container.innerHTML = html + scoresHtml + histHtml +
+    // ── 6. 取引履歴（Progressive Disclosure: 初期5件 + もっと見る） ──
+    var HIST_INITIAL = 5;
+    var closes = (data.recentCloses || []).slice();
+    var histHtml = '';
+    if (closes.length > 0) {
+      histHtml = secHeader('📋', 'var(--teal, #30b0c7)', '取引履歴') +
+        '<div id="trade-history">' +
+        closes.map(function(c, idx) {
+          var instrH = INSTRUMENTS.filter(function(i) { return i.pair === c.pair; })[0];
+          var label = instrH ? instrH.label : c.pair;
+          var unit = instrH ? instrH.unit : '';
+          var pnl = c.pnl != null ? c.pnl : 0;
+          var pnlColor = pnl > 0 ? 'var(--green)' : pnl < 0 ? 'var(--red)' : 'var(--label-secondary)';
+          var icon = c.close_reason === 'TP' ? '🎯' : c.close_reason === 'SL' ? '🔴' : '—';
+          var dir = c.direction === 'BUY' ? '買い' : '空売り';
+          var hidden = idx >= HIST_INITIAL ? ' style="display:none" data-hist-extra' : '';
+          return '<div class="trade-row"' + hidden + '>' +
+            '<div>' +
+              '<div class="trade-label">' + escHtml(label) + '</div>' +
+              '<div class="trade-meta">' + icon + ' ' + (c.close_reason || '') + ' · ' + dir + ' · ' + fmtTime(c.closed_at) + '</div>' +
+            '</div>' +
+            '<span class="trade-pnl" style="color:' + pnlColor + '">' + fmtPnl(pnl, unit).text + '</span>' +
+          '</div>';
+        }).join('') +
+        '</div>';
+      if (closes.length > HIST_INITIAL) {
+        histHtml += '<button class="stats-fold-btn" id="hist-toggle">残り' + (closes.length - HIST_INITIAL) + '件を表示 ▾</button>';
+      }
+    }
+
+    // 全銘柄の取引数合計
+    var totalTrades = INSTRUMENTS.reduce(function(sum, instr) {
+      var p = byPair[instr.pair];
+      return sum + (p ? p.total : 0);
+    }, 0);
+
+    // レイアウト順序: 統計データ → 銘柄別 → スコア → 履歴
+    container.innerHTML = advStatsHtml + pairHtml + scoresHtml + histHtml +
       (totalTrades === 0
         ? '<div class="secondary-text" style="padding:8px 0 4px;text-align:center;font-size:13px">まだ決済された取引はありません<br>Cronが蓄積されると成績が表示されます</div>'
         : '');
+
+    // ── 折りたたみイベント ──
+    var untradedBtn = document.getElementById('untraded-toggle');
+    if (untradedBtn) {
+      untradedBtn.addEventListener('click', function() {
+        var list = document.getElementById('untraded-list');
+        if (!list) return;
+        var isHidden = list.style.display === 'none';
+        list.style.display = isHidden ? '' : 'none';
+        untradedBtn.textContent = isHidden
+          ? '未取引 ' + untraded.length + '銘柄を隠す ▴'
+          : '未取引 ' + untraded.length + '銘柄を表示 ▾';
+      });
+    }
+    var histBtn = document.getElementById('hist-toggle');
+    if (histBtn) {
+      histBtn.addEventListener('click', function() {
+        var extras = document.querySelectorAll('[data-hist-extra]');
+        var isHidden = extras.length > 0 && extras[0].style.display === 'none';
+        extras.forEach(function(el) { el.style.display = isHidden ? '' : 'none'; });
+        histBtn.textContent = isHidden
+          ? '折りたたむ ▴'
+          : '残り' + (closes.length - HIST_INITIAL) + '件を表示 ▾';
+      });
+    }
 
     // 銘柄カードタップ → 銘柄別取引履歴シート
     container.querySelectorAll('[data-stats-pair]').forEach(function(card) {

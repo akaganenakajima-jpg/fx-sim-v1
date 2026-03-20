@@ -197,9 +197,6 @@ export function getDashboardHtml(): string {
         <div id="perf-summary"></div>
       </div>
 
-      <div class="list-header-row" style="padding-top:8px">
-        <span class="list-header">銘柄別成績</span>
-      </div>
       <div id="stats-pairs" class="stats-section"></div>
 
       <!-- システムフッター -->

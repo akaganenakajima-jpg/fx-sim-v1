@@ -1116,27 +1116,104 @@ body.sheet-open .tab-bar {
 
 /* ─── Stats タブ ─── */
 .stats-section { padding: 0 0 16px; }
+
+/* Section header (Apple HIG: clean text hierarchy, no decoration) */
+.stats-sec-header {
+  padding: 24px 0 8px;
+}
+.stats-sec-title {
+  font-size: 13px;  /* HIG: Footnote — uppercase label style */
+  font-weight: 600;
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+  color: var(--label-secondary);
+}
+
+/* Metric grid card (HIG: 8pt grid, 12px radius, solid bg) */
+.metric-card {
+  padding: 12px;
+  background: var(--bg-tertiary);
+  border-radius: 12px;
+  transition: transform 0.1s cubic-bezier(0, 0, 0.58, 1);
+}
+.metric-card:active {
+  transform: scale(0.98);
+}
+.metric-label {
+  font-size: 11px;
+  color: var(--label-secondary);
+  letter-spacing: 0.2px;
+}
+.metric-value {
+  font-size: 15px;
+  font-weight: 700;
+  margin-top: 4px;
+  font-variant-numeric: tabular-nums;
+}
+.metric-sub {
+  font-size: 11px;
+  color: var(--label-tertiary);
+  margin-top: 2px;
+}
+.metric-grid-3 {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr;
+  gap: 8px;
+  margin-bottom: 16px;
+}
+.metric-grid-2 {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  margin-bottom: 16px;
+}
+
+/* Risk card accent (Loss Aversion: subtle left accent) */
+.metric-card--danger {
+  border-left: 2px solid var(--red);
+}
+.metric-card--warn {
+  border-left: 2px solid var(--orange, #ff9500);
+}
+.metric-card--ok {
+  border-left: 2px solid var(--green);
+}
+
+/* Pair performance cards */
 .stats-pair-card {
   background: var(--bg-elevated);
-  border-radius: var(--radius);
-  padding: 16px;
-  margin-bottom: 8px;
+  border-radius: 12px;
+  padding: 14px 16px;
+  margin-bottom: 6px;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+  transition: transform 0.1s cubic-bezier(0, 0, 0.58, 1), background 0.2s cubic-bezier(0, 0, 0.58, 1);
+}
+.stats-pair-card:active {
+  transform: scale(0.97);
+  background: var(--bg-secondary);
 }
 .stats-pair-header {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  margin-bottom: 12px;
+  margin-bottom: 8px;  /* H4: 8ptグリッド */
 }
 .stats-pair-name {
   font-size: 15px;
   font-weight: 600;
   letter-spacing: -0.2px;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .stats-pnl {
   font-size: 15px;
   font-weight: 600;
   font-variant-numeric: tabular-nums;
+  flex-shrink: 0;
+  text-align: right;
 }
 .stats-bar-track {
   height: 8px;
@@ -1150,13 +1227,125 @@ body.sheet-open .tab-bar {
   background: var(--green);
   border-radius: 3px;
   min-width: 3px;
-  transition: width 0.6s cubic-bezier(0.34, 1.56, 0.64, 1);
+  transition: width 0.5s cubic-bezier(0.25, 0.1, 0.25, 1);  /* HIG: --ease-default */
 }
 .stats-bar-meta {
   display: flex;
   justify-content: space-between;
   font-size: 11px;
   color: var(--label-secondary);
+}
+
+/* Fold toggle (Apple HIG: text link style, 44pt touch target) */
+.stats-fold-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  min-height: 44px;
+  padding: 12px 16px;
+  font-size: 15px;  /* HIG: Subheadline */
+  font-weight: 400;
+  color: var(--blue);
+  background: transparent;
+  border: none;
+  border-radius: 0;
+  cursor: pointer;
+  margin: 0;
+  -webkit-tap-highlight-color: transparent;
+}
+.stats-fold-btn:active {
+  opacity: 0.5;
+}
+
+/* Trade history row (HIG: 44pt row height, 8pt grid) */
+.trade-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 12px 0;  /* H4: 8ptグリッド (12=8+4) */
+  min-height: 44px;  /* H1: 44ptタッチターゲット */
+  border-bottom: 1px solid var(--separator);
+}
+.trade-row:last-child { border-bottom: none; }
+.trade-label {
+  font-size: 15px;  /* H2: Subheadline (14pxはHIGスケール外) */
+  font-weight: 600;
+}
+.trade-meta {
+  font-size: 11px;
+  color: var(--label-secondary);
+  margin-top: 2px;
+}
+.trade-pnl {
+  font-size: 15px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Score row */
+.score-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;  /* H4: 8ptグリッド */
+  padding: 12px 0;  /* H4: 8ptグリッド */
+  min-height: 44px;  /* H1: 44ptタッチターゲット */
+  border-bottom: 1px solid var(--separator);
+}
+.score-row:last-child { border-bottom: none; }
+.score-rank {
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--label-tertiary);
+  width: 18px;
+  text-align: right;
+  flex-shrink: 0;
+}
+.score-body {
+  flex: 1;
+  min-width: 0;
+}
+.score-head {
+  display: flex;
+  justify-content: space-between;
+  margin-bottom: 4px;
+}
+.score-name {
+  font-size: 13px;
+  font-weight: 600;
+}
+.score-val {
+  font-size: 13px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+.score-bar {
+  height: 4px;
+  background: var(--bg-tertiary);
+  border-radius: 2px;
+  overflow: hidden;
+}
+.score-bar-fill {
+  height: 100%;
+  border-radius: 2px;
+  transition: width 0.5s ease;
+}
+.score-details {
+  display: flex;
+  gap: 8px;
+  margin-top: 4px;
+  font-size: 11px;
+  color: var(--label-secondary);
+}
+
+/* Untraded label */
+.untraded-label {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--label-tertiary);
+  letter-spacing: 0.8px;
+  text-transform: uppercase;
+  padding: 12px 4px 4px;
 }
 
 /* ─── Watch row tap ─── */

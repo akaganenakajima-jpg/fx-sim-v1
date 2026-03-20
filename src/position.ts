@@ -5,6 +5,7 @@ import { getOpenPositions, getOpenPositionByPair, closePosition, insertSystemLog
 import type { Position } from './db';
 import type { InstrumentConfig } from './instruments';
 import { getBroker, withFallback, type BrokerEnv } from './broker';
+import { kellyFraction } from './stats';
 
 function calcPnl(
   direction: 'BUY' | 'SELL',
@@ -165,18 +166,24 @@ export async function openPosition(
     return;
   }
 
-  // ポジションサイジング: 銘柄別勝率に応じてlot調整
+  // ポジションサイジング: ケリー基準（勝率 × RR比）
   const perfRow = await db
-    .prepare(`SELECT COUNT(*) as total, COALESCE(SUM(CASE WHEN pnl > 0 THEN 1 ELSE 0 END), 0) as wins FROM positions WHERE pair = ? AND status = 'CLOSED'`)
+    .prepare(`SELECT
+      COUNT(*) as total,
+      COALESCE(SUM(CASE WHEN pnl > 0 THEN 1 ELSE 0 END), 0) as wins,
+      COALESCE(AVG(CASE WHEN pnl > 0 THEN pnl ELSE NULL END), 0) as avgWin,
+      COALESCE(AVG(CASE WHEN pnl <= 0 THEN ABS(pnl) ELSE NULL END), 1) as avgLoss
+      FROM positions WHERE pair = ? AND status = 'CLOSED'`)
     .bind(pair)
-    .first<{ total: number; wins: number }>();
+    .first<{ total: number; wins: number; avgWin: number; avgLoss: number }>();
   let lot = 1.0;
-  if (perfRow && perfRow.total >= 3) {
+  if (perfRow && perfRow.total >= 5) {
     const winRate = perfRow.wins / perfRow.total;
-    if (winRate >= 0.7) lot = 2.0;       // 勝率70%以上: 2倍
-    else if (winRate >= 0.5) lot = 1.5;   // 勝率50%以上: 1.5倍
-    else if (winRate < 0.3) lot = 0.5;    // 勝率30%未満: 半分
-    console.log(`[position] Sizing: ${pair} winRate=${(winRate*100).toFixed(0)}% → lot=${lot}`);
+    const avgRR = perfRow.avgLoss > 0 ? perfRow.avgWin / perfRow.avgLoss : 0;
+    const kelly = kellyFraction(winRate, avgRR);
+    // kelly 0〜0.25 → lot 0.5〜2.0
+    lot = Math.max(0.5, Math.min(0.5 + kelly * 6, 2.0));
+    console.log(`[position] Kelly: ${pair} wr=${(winRate*100).toFixed(0)}% rr=${avgRR.toFixed(2)} f=${kelly.toFixed(3)} → lot=${lot.toFixed(1)}`);
   }
 
   await db

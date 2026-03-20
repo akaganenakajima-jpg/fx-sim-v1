@@ -3,6 +3,7 @@
 import type { Position } from './db';
 import { fetchNews } from './news';
 import { getRiskStatus, type RiskEnv } from './risk-guard';
+import { wilsonCI, sharpeWithSE, varCvar, kellyFraction, markovTransition, maxDrawdown, rollingReturns, pnlVolatility, profitFactor } from './stats';
 
 export interface LatestDecision {
   id: number;
@@ -99,6 +100,20 @@ export interface StatusResponse {
     score: number;
     updated_at: string | null;
   }>;
+  statistics: {
+    winRateCI: { lower: number; upper: number };
+    sharpe: number;
+    sharpeSE: number;
+    sharpeSignificant: boolean;
+    var95: number;
+    cvar95: number;
+    kellyFraction: number;
+    markov: { ww: number; wl: number; lw: number; ll: number; streakProb3: number };
+    drawdown: { maxDD: number; maxDDPct: number; currentDD: number; currentDDPct: number; recoveryRatio: number };
+    rolling: Record<number, { roi: number; sharpe: number; winRate: number; count: number }>;
+    volatility: { overallStd: number; recentStd: number; volRatio: number; isHighVol: boolean };
+    profitFactor: number;
+  } | null;
 }
 
 export async function getApiStatus(db: D1Database, tradingEnv?: { TRADING_ENABLED?: string; OANDA_LIVE?: string; RISK_MAX_DAILY_LOSS?: string; RISK_MAX_LIVE_POSITIONS?: string; RISK_MAX_LOT_SIZE?: string; RISK_ANOMALY_THRESHOLD?: string }): Promise<StatusResponse> {
@@ -249,6 +264,43 @@ export async function getApiStatus(db: D1Database, tradingEnv?: { TRADING_ENABLE
     } catch {}
   }
 
+  // 統計計算（T003: 統計学的信頼性）
+  let statistics: StatusResponse['statistics'] = null;
+  if (totalClosed >= 10) {
+    try {
+      const allPnlRaw = await db
+        .prepare('SELECT pnl FROM positions WHERE status = \'CLOSED\' ORDER BY closed_at ASC')
+        .all<{ pnl: number }>();
+      const allPnls = (allPnlRaw.results ?? []).map(r => r.pnl);
+      const outcomes = allPnls.map(p => p > 0);
+
+      const ci = wilsonCI(wins, totalClosed);
+      const sharpeResult = sharpeWithSE(allPnls);
+      const risk = varCvar(allPnls);
+
+      const winPnls = allPnls.filter(p => p > 0);
+      const losePnls = allPnls.filter(p => p <= 0);
+      const avgWin = winPnls.length > 0 ? winPnls.reduce((s, v) => s + v, 0) / winPnls.length : 0;
+      const avgLoss = losePnls.length > 0 ? Math.abs(losePnls.reduce((s, v) => s + v, 0) / losePnls.length) : 1;
+      const avgRR = avgLoss > 0 ? avgWin / avgLoss : 0;
+
+      statistics = {
+        winRateCI: ci,
+        sharpe: sharpeResult.sharpe,
+        sharpeSE: sharpeResult.se,
+        sharpeSignificant: sharpeResult.significant,
+        var95: risk.var95,
+        cvar95: risk.cvar95,
+        kellyFraction: kellyFraction(wins / totalClosed, avgRR),
+        markov: markovTransition(outcomes),
+        drawdown: maxDrawdown(allPnls),
+        rolling: rollingReturns(allPnls, [7, 14, 30]),
+        volatility: pnlVolatility(allPnls),
+        profitFactor: profitFactor(allPnls),
+      };
+    } catch {}
+  }
+
   return {
     rate,
     tradingMode,
@@ -282,6 +334,7 @@ export async function getApiStatus(db: D1Database, tradingEnv?: { TRADING_ENABLE
       warnCount: sysLogs.filter(l => l.level === 'WARN').length,
       lastRun: logStatsRaw?.lastRun ?? null,
     },
+    statistics,
   };
 }
 
