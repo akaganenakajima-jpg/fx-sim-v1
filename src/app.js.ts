@@ -5,8 +5,6 @@ export const JS = `
 (function () {
   'use strict';
 
-  var SHOW_INITIAL = 5;
-  var historyExpanded = false;
   var lastData = null;
   var lastRecentCloseIds = [];
   var sheetPos = null;
@@ -2126,19 +2124,8 @@ export const JS = `
       statusEl.textContent = runs.toLocaleString('ja-JP') + '回監視中 · 次のシグナル待ち' + streakText;
     }
 
-    // AI判断タブ: 従来通りlatestDecisionを表示
-    if (ld) {
-      var bc2 = ld.decision === 'BUY' ? 'badge-buy' : ld.decision === 'SELL' ? 'badge-sell' : 'badge-hold';
-      var b2 = el('ai-badge2');
-      if (b2) { b2.textContent = ld.decision; b2.className = 'badge ' + bc2 + ' ai-badge'; }
-      var r2 = el('ai-reasoning2');
-      if (r2) r2.textContent = fmtReasoning(ld.reasoning);
-      var t2 = el('ai-time2');
-      if (t2) t2.textContent = (ld.pair ? '[' + ld.pair + '] ' : '') + fmtTime(ld.created_at);
-    }
 
-    // 判定履歴
-    renderHistory(data.recentDecisions);
+    renderAiTab(data);
 
     // 市場状態バー・AI ランキング・プログレスバー（資産タブ）
     renderMarketStateBar(data);
@@ -2280,57 +2267,197 @@ export const JS = `
     '</div>';
   }
 
-  // ── 判定履歴 ──
-  function renderHistory(decisions) {
-    var list      = el('decisions-list');
-    var toggleBtn = el('toggle-history');
-    if (!decisions || decisions.length === 0) {
-      list.innerHTML = '<div class="decision-row"><span class="secondary-text">データなし</span></div>';
-      if (toggleBtn) toggleBtn.style.display = 'none';
+  // ── AI判断タブ: データ描画 ──
+  function renderAiTab(data) {
+    var decisions   = data.recentDecisions  || [];
+    var openPos     = data.openPositions    || [];
+    var stats       = data.statistics       || {};
+    var perf        = data.performance      || {};
+    var timeline    = el('ai-timeline-list');
+    if (!timeline) return;
+
+    // ─ KPI: 今日の判断 ─
+    var todayD    = decisions.filter(function(d) { return isToday(d.created_at); });
+    var buyCount  = todayD.filter(function(d) { return d.decision === 'BUY';  }).length;
+    var sellCount = todayD.filter(function(d) { return d.decision === 'SELL'; }).length;
+    var todayTotal = buyCount + sellCount;
+
+    var kpiTodayVal = el('ai-kpi-today-val');
+    var kpiTodaySub = el('ai-kpi-today-sub');
+    if (kpiTodayVal) kpiTodayVal.textContent = todayTotal > 0 ? String(todayTotal) : '—';
+    if (kpiTodaySub) kpiTodaySub.textContent = 'BUY ' + buyCount + ' · SELL ' + sellCount;
+
+    // ─ KPI: AI的中率 ─
+    var acc = stats.aiAccuracy;
+    var kpiAccVal = el('ai-kpi-acc-val');
+    var kpiAccSub = el('ai-kpi-acc-sub');
+    if (kpiAccVal) kpiAccVal.textContent = acc && acc.accuracy != null
+      ? (acc.accuracy * 100).toFixed(1) + '%' : '—';
+    if (kpiAccSub) kpiAccSub.textContent = acc
+      ? 'n=' + (acc.n || 0) + ' · Brier ' + (acc.brierScore != null ? acc.brierScore.toFixed(2) : '—')
+      : 'n=— · Brier —';
+
+    // ─ KPI: 今日の損益 ─
+    var todayPnl  = perf.todayPnl;
+    var todayWins = perf.todayWins;
+    var todayLosses = perf.todayLosses;
+    var kpiPnlVal = el('ai-kpi-pnl-val');
+    var kpiPnlSub = el('ai-kpi-pnl-sub');
+    if (kpiPnlVal) {
+      var pnlText = todayPnl != null
+        ? (todayPnl >= 0 ? '+¥' : '-¥') + Math.abs(Math.round(todayPnl)).toLocaleString('ja-JP')
+        : '—';
+      kpiPnlVal.textContent = pnlText;
+      kpiPnlVal.className = 'kpi-val' + (todayPnl > 0 ? ' green' : todayPnl < 0 ? ' red' : '');
+    }
+    if (kpiPnlSub) {
+      var winsText   = todayWins   != null ? String(todayWins)   : '—';
+      var lossesText = todayLosses != null ? String(todayLosses) : '—';
+      kpiPnlSub.textContent = winsText + ' 勝 ' + lossesText + ' 敗';
+    }
+
+    // ─ KPI: 最新判断 ─
+    var latest      = decisions[0];
+    var kpiBadge    = el('ai-kpi-latest-badge');
+    var kpiPair     = el('ai-kpi-latest-pair');
+    var kpiTime     = el('ai-kpi-latest-time');
+    if (latest) {
+      if (kpiBadge) {
+        kpiBadge.textContent = latest.decision;
+        kpiBadge.className = 'dir-badge ' + (latest.decision === 'BUY' ? 'buy' : 'sell');
+      }
+      if (kpiPair) kpiPair.textContent = latest.pair || 'USD/JPY';
+      if (kpiTime) kpiTime.textContent = fmtElapsed(latest.created_at);
+    }
+
+    // ─ トリガーカウント ─
+    var newsCount = todayD.filter(function(d) { return inferTrigger(d) === 'news'; }).length;
+    var rateCount = todayD.filter(function(d) { return inferTrigger(d) === 'rate'; }).length;
+    var cronCount = todayD.filter(function(d) { return inferTrigger(d) === 'cron'; }).length;
+    var tn = el('ai-trigger-news'); if (tn) tn.textContent = String(newsCount);
+    var tr = el('ai-trigger-rate'); if (tr) tr.textContent = String(rateCount);
+    var tc = el('ai-trigger-cron'); if (tc) tc.textContent = String(cronCount);
+
+    // ─ タイムラインカード描画 ─
+    if (decisions.length === 0) {
+      timeline.innerHTML = '<div style="padding:24px;text-align:center;color:var(--label-secondary);font-size:13px">データなし</div>';
       return;
     }
 
-    var shown = historyExpanded ? decisions : decisions.slice(0, SHOW_INITIAL);
+    timeline.innerHTML = decisions.map(function(d, i) {
+      var trigger  = inferTrigger(d);
+      var dirCls   = d.decision === 'BUY' ? 'buy' : 'sell';
+      var reasoning = fmtReasoning(d.reasoning);
 
-    if (toggleBtn) {
-      toggleBtn.style.display = decisions.length > SHOW_INITIAL ? '' : 'none';
-      toggleBtn.textContent   = historyExpanded ? '折りたたむ' : 'すべて見る（' + decisions.length + '件）';
-      toggleBtn.setAttribute('aria-expanded', historyExpanded ? 'true' : 'false');
-    }
+      // 判断結果の判定（openPositionsとの照合）
+      var matched = openPos.find(function(p) {
+        return p.direction === d.decision && p.entry_rate === d.rate;
+      });
+      var resultKey  = matched ? 'open' : 'closed';
+      var resultText = matched ? '保有中' : 'クローズ済';
 
-    list.innerHTML = shown.map(function(d, i) {
-      var bc = d.decision === 'BUY' ? 'badge-buy' : d.decision === 'SELL' ? 'badge-sell' : 'badge-hold';
-      var meta = [];
-      if (d.vix   != null) meta.push('VIX ' + fmt(d.vix, 1));
-      if (d.us10y != null) meta.push(fmt(d.us10y, 2) + '%');
+      // 指標チップ
+      var chips = [];
+      if (d.vix   != null) chips.push('VIX ' + fmt(d.vix, 1));
+      if (d.us10y != null) chips.push(fmt(d.us10y, 2) + '%');
 
-      var holdCls = d.decision === 'HOLD' ? ' decision-row-hold' : '';
-      var hasDetail = !!(d.news_summary || d.reddit_signal || d.reasoning);
-      var tapCls = hasDetail ? ' decision-row-tappable' : '';
-      var reasoningText = fmtReasoning(d.reasoning);
-      return '<div class="decision-row' + holdCls + tapCls + '" role="listitem" data-idx="' + i + '">' +
-        '<div class="decision-top">' +
-          '<div style="display:flex;align-items:center;gap:6px">' +
-            (d.pair ? '<span class="decision-pair">' + escHtml(d.pair) + '</span>' : '') +
-            '<span class="decision-rate">' + fmt(d.rate, d.pair === 'Nikkei225' || d.pair === "S&P500" ? 0 : 2) + '</span>' +
+      // TP/SL表示（tp_rateがAPIに追加されていれば使用、なければ省略）
+      var tpslText = '';
+      if (d.tp_rate || d.sl_rate) {
+        tpslText = ' · TP ' + (d.tp_rate ? fmt(d.tp_rate, 3) : '—') +
+                   ' / SL ' + (d.sl_rate ? fmt(d.sl_rate, 3) : '—');
+      }
+
+      return '<div class="tl-card" role="listitem" data-ai-idx="' + i + '">' +
+        '<div class="tl-inner">' +
+          '<div class="tl-accent ' + resultKey + '"></div>' +
+          '<div class="tl-row1">' +
+            '<div class="tl-left">' +
+              '<span class="tl-pair">' + escHtml(d.pair || 'USD/JPY') + '</span>' +
+              '<span class="tl-rate">' + fmt(d.rate, 3) + '</span>' +
+              '<span class="dir-badge ' + dirCls + '">' + d.decision + '</span>' +
+            '</div>' +
+            '<div class="tl-meta">' +
+              '<span class="tl-time">' + fmtElapsed(d.created_at) + '</span>' +
+              '<span class="tl-chevron">▸</span>' +
+            '</div>' +
           '</div>' +
-          '<span class="badge ' + bc + '">' + d.decision + '</span>' +
+          '<div class="tl-row2">' +
+            '<span class="tl-chip ' + trigger + '">' + escHtml(triggerLabel(trigger)) + '</span>' +
+            (reasoning && reasoning !== '—'
+              ? '<span class="tl-reasoning-chip">' + escHtml(reasoning.slice(0, 40)) + (reasoning.length > 40 ? '…' : '') + '</span>'
+              : '') +
+          '</div>' +
+          '<div class="tl-row3">' +
+            '<div style="display:flex;gap:4px">' +
+              chips.map(function(c) { return '<span class="tl-chip cron">' + escHtml(c) + '</span>'; }).join('') +
+            '</div>' +
+            '<div class="tl-result">' +
+              '<div class="result-dot ' + resultKey + '"></div>' +
+              '<span class="tl-result-text ' + resultKey + '">' + resultText + '</span>' +
+            '</div>' +
+          '</div>' +
         '</div>' +
-        '<div class="decision-top">' +
-          '<span class="decision-time">' + fmtTime(d.created_at) + '</span>' +
-          '<span class="decision-meta">' + (meta.join(' · ') || '') + '</span>' +
+        '<div class="detail-panel" id="ai-detail-' + i + '">' +
+          '<div class="detail-trigger-row">' +
+            '<span class="tl-chip ' + trigger + '">' + escHtml(triggerLabel(trigger)) + '</span>' +
+            '<span class="detail-trigger-desc">' + escHtml(
+              trigger === 'news' ? 'ニュースシグナル検知' :
+              trigger === 'rate' ? 'レート変動 ±0.05円超' : '定期チェック (30分)'
+            ) + '</span>' +
+          '</div>' +
+          '<div class="detail-4pt">' +
+            '<div>' +
+              '<div class="detail-label">判断基準</div>' +
+              '<div class="detail-value">' + escHtml(d.pair || 'USD/JPY') + '</div>' +
+            '</div>' +
+            '<div>' +
+              '<div class="detail-label">判断内容</div>' +
+              '<div class="detail-value ' + dirCls + '">' + d.decision + escHtml(tpslText) + '</div>' +
+            '</div>' +
+            '<div>' +
+              '<div class="detail-label">判断結果</div>' +
+              '<div class="tl-result" style="margin-top:2px">' +
+                '<div class="result-dot ' + resultKey + '"></div>' +
+                '<span class="tl-result-text ' + resultKey + '">' + resultText + '</span>' +
+              '</div>' +
+            '</div>' +
+            '<div>' +
+              '<div class="detail-label">判断時刻</div>' +
+              '<div class="detail-value">' + fmtTimeHMS(d.created_at) + '</div>' +
+            '</div>' +
+          '</div>' +
+          (reasoning && reasoning !== '—'
+            ? '<div class="detail-reasoning">' +
+                '<div class="detail-reasoning-text">' + escHtml(reasoning) + '</div>' +
+              '</div>'
+            : '') +
+          (chips.length > 0
+            ? '<div class="detail-chips">' +
+                chips.map(function(c) { return '<span class="detail-chip">' + escHtml(c) + '</span>'; }).join('') +
+              '</div>'
+            : '') +
         '</div>' +
-        (reasoningText !== '—' ? '<div class="decision-reasoning">' + escHtml(reasoningText) + '</div>' : '') +
       '</div>';
     }).join('');
 
-    // イベント委譲でニュース詳細シートを開く
-    list.onclick = function(e) {
-      var row = e.target.closest('[data-idx]');
-      if (!row) return;
-      var d = shown[parseInt(row.dataset.idx, 10)];
-      if (!d) return;
-      openNewsSheet(d);
+    // タップでパネル展開（イベント委譲）
+    timeline.onclick = function(e) {
+      var card = e.target.closest('[data-ai-idx]');
+      if (!card) return;
+      var idx   = card.dataset.aiIdx;
+      var panel = el('ai-detail-' + idx);
+      if (!panel) return;
+      var isOpen = card.classList.contains('expanded');
+      timeline.querySelectorAll('.tl-card.expanded').forEach(function(c) {
+        c.classList.remove('expanded');
+        var p = c.querySelector('.detail-panel');
+        if (p) p.classList.remove('open');
+      });
+      if (!isOpen) {
+        card.classList.add('expanded');
+        panel.classList.add('open');
+      }
     };
   }
 
@@ -2445,14 +2572,6 @@ export const JS = `
       setTimeout(function() { btn.classList.remove('spinning'); }, 700);
       // ページ自体をハードリロード（キャッシュ無効化）
       location.reload();
-    });
-  }
-
-  var toggleBtn = el('toggle-history');
-  if (toggleBtn) {
-    toggleBtn.addEventListener('click', function() {
-      historyExpanded = !historyExpanded;
-      if (lastData) renderHistory(lastData.recentDecisions);
     });
   }
 
