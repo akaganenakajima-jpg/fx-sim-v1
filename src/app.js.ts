@@ -60,6 +60,16 @@ export const JS = `
     return '¥' + Math.round(amount).toLocaleString('ja-JP');
   }
 
+  // コンパクト表示（ヒーローカード用 — スペースが狭い場所向け）
+  function fmtYenCompact(amount) {
+    if (amount == null || isNaN(amount)) return '—';
+    var abs = Math.abs(Math.round(amount));
+    var sign = amount >= 0 ? '+' : '-';
+    if (abs >= 100000000) return sign + '¥' + (abs / 100000000).toFixed(1) + '億';
+    if (abs >= 10000)     return sign + '¥' + (abs / 10000).toFixed(1) + '万';
+    return sign + '¥' + abs.toLocaleString('ja-JP');
+  }
+
   function fmtTime(iso) {
     if (!iso) return '—';
     var d = new Date(iso);
@@ -1311,13 +1321,14 @@ export const JS = `
     animatePnl(heroEl, capital);
 
     var dpEl = el('today-pnl');
-    dpEl.textContent = (totalPnl >= 0 ? '+' : '') + fmtYen(totalPnl);
+    dpEl.textContent = fmtYenCompact(totalPnl);
     dpEl.className   = 'hero-sub-value ' + (totalPnl > 0 ? 'positive' : totalPnl < 0 ? 'negative' : 'neutral');
 
     var roiEl = el('roi-value');
     var roiPct = (totalPnl / INITIAL_CAPITAL) * 100;
     if (roiEl) {
-      roiEl.textContent = (roiPct >= 0 ? '+' : '') + roiPct.toFixed(2) + '%';
+      var roiText = Math.abs(roiPct) >= 1000 ? roiPct.toFixed(0) : roiPct.toFixed(2);
+      roiEl.textContent = (roiPct >= 0 ? '+' : '') + roiText + '%';
       roiEl.className = 'hero-sub-value ' + (roiPct > 0 ? 'positive' : roiPct < 0 ? 'negative' : 'neutral');
     }
     el('win-rate').textContent     = perf.winRate.toFixed(1) + '%';
