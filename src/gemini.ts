@@ -118,6 +118,7 @@ interface GeminiResponse {
   }>;
 }
 
+
 export async function getDecision(params: {
   instrument: InstrumentConfig;
   rate: number;

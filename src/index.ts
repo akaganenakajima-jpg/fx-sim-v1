@@ -20,7 +20,7 @@ import { getDashboardHtml } from './dashboard';
 import { getApiStatus } from './api';
 import { CSS } from './style.css';
 import { JS } from './app.js';
-import { INSTRUMENTS } from './instruments';
+import { INSTRUMENTS, type InstrumentConfig } from './instruments';
 import { getBroker, withFallback, type BrokerEnv } from './broker';
 import { checkRisk, type RiskEnv } from './risk-guard';
 import { checkTpSlSanity } from './sanity';
