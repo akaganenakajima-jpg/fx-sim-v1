@@ -474,36 +474,66 @@ async function run(env: Env): Promise<void> {
     }
 
     let geminiOkCount = 0, gptOkCount = 0, claudeOkCount = 0, aiFailCount = 0;
+
+    // 4c-pre. AIループ用データを一括取得（銘柄ごとの直列クエリ → 3回のバッチクエリに削減）
+    const aiCandidates = passed.slice(0, MAX_GEMINI_PER_RUN);
+    const allOpenRaw = await env.DB
+      .prepare(`SELECT pair, direction FROM positions WHERE status = 'OPEN'`)
+      .all<{ pair: string; direction: string }>();
+    const allPositionDirections = (allOpenRaw.results ?? []).map(p => `${p.pair}:${p.direction}`);
+    const openPositionSet = new Set((allOpenRaw.results ?? []).map(p => p.pair));
+
+    // 候補銘柄の過去履歴を一括取得（N+1 → 1クエリ）
+    const candidatePairs = aiCandidates.map(c => c.instrument.pair);
+    const recentTradesMap = new Map<string, Array<{ pair: string; direction: string; pnl: number; close_reason: string }>>();
+    if (candidatePairs.length > 0) {
+      const placeholders = candidatePairs.map(() => '?').join(',');
+      const allRecentRaw = await env.DB
+        .prepare(`SELECT pair, direction, pnl, close_reason FROM positions WHERE pair IN (${placeholders}) AND status = 'CLOSED' ORDER BY closed_at DESC`)
+        .bind(...candidatePairs)
+        .all<{ pair: string; direction: string; pnl: number; close_reason: string }>();
+      for (const row of allRecentRaw.results ?? []) {
+        const arr = recentTradesMap.get(row.pair) ?? [];
+        if (arr.length < 5) arr.push(row);
+        recentTradesMap.set(row.pair, arr);
+      }
+    }
+
+    // スパークラインデータも一括取得
+    const sparkMap = new Map<string, number[]>();
+    if (candidatePairs.length > 0) {
+      const placeholders = candidatePairs.map(() => '?').join(',');
+      const allSparkRaw = await env.DB
+        .prepare(`SELECT pair, rate FROM decisions WHERE pair IN (${placeholders}) ORDER BY id DESC`)
+        .bind(...candidatePairs)
+        .all<{ pair: string; rate: number }>();
+      const countMap = new Map<string, number>();
+      for (const row of allSparkRaw.results ?? []) {
+        const cnt = countMap.get(row.pair) ?? 0;
+        if (cnt < 20) {
+          const arr = sparkMap.get(row.pair) ?? [];
+          arr.push(row.rate);
+          sparkMap.set(row.pair, arr);
+          countMap.set(row.pair, cnt + 1);
+        }
+      }
+      // reverse each to chronological order
+      for (const [pair, rates] of sparkMap) {
+        sparkMap.set(pair, rates.reverse());
+      }
+    }
+
     // 4c. スコア上位からAI判定（予算チェック: 50s超で打ち切り）
-    for (const candidate of passed.slice(0, MAX_GEMINI_PER_RUN)) {
+    for (const candidate of aiCandidates) {
       if (Date.now() - cronStart > 50_000) {
         console.warn(`[fx-sim] Cron budget exhausted (${Date.now() - cronStart}ms), skipping remaining AI calls`);
         break;
       }
       const { instrument, currentRate } = candidate;
 
-      // オープンポジション確認（銘柄別）
-      const openPos = await getOpenPositionByPair(env.DB, instrument.pair);
-      const hasOpenPosition = openPos !== null;
-
-      // 過去履歴（この銘柄の直近5件のクローズ）+ 全ポジション方向
-      const recentTradesRaw = await env.DB
-        .prepare(`SELECT pair, direction, pnl, close_reason FROM positions WHERE pair = ? AND status = 'CLOSED' ORDER BY closed_at DESC LIMIT 5`)
-        .bind(instrument.pair)
-        .all<{ pair: string; direction: string; pnl: number; close_reason: string }>();
-      const recentTrades = recentTradesRaw.results ?? [];
-
-      const allOpenRaw = await env.DB
-        .prepare(`SELECT pair, direction FROM positions WHERE status = 'OPEN'`)
-        .all<{ pair: string; direction: string }>();
-      const allPositionDirections = (allOpenRaw.results ?? []).map(p => `${p.pair}:${p.direction}`);
-
-      // スパークラインデータ取得（トレンド分析用）
-      const sparkRaw = await env.DB
-        .prepare(`SELECT rate FROM decisions WHERE pair = ? ORDER BY id DESC LIMIT 20`)
-        .bind(instrument.pair)
-        .all<{ rate: number }>();
-      const sparkRates = (sparkRaw.results ?? []).map(r => r.rate).reverse();
+      const hasOpenPosition = openPositionSet.has(instrument.pair);
+      const recentTrades = recentTradesMap.get(instrument.pair) ?? [];
+      const sparkRates = sparkMap.get(instrument.pair) ?? [];
 
       // Gemini 判定
       let geminiResult;
@@ -703,14 +733,18 @@ async function run(env: Env): Promise<void> {
       await insertSystemLog(env.DB, 'WARN', 'CRON', `実行時間超過: ${elapsed}ms`, null);
     }
 
-    // ログパージ: 古いレコードを削除（DB肥大化防止）
-    try {
-      await env.DB.prepare(`DELETE FROM system_logs WHERE id NOT IN (SELECT id FROM system_logs ORDER BY id DESC LIMIT 500)`).run();
-      await env.DB.prepare(`DELETE FROM news_fetch_log WHERE id NOT IN (SELECT id FROM news_fetch_log ORDER BY id DESC LIMIT 5000)`).run();
-    } catch {}
+    // 日次処理判定
+    const jstHour = (now.getUTCHours() + 9) % 24;
+
+    // ログパージ: 日次のみ実行（毎分→日次に変更で1-2秒短縮）
+    if (jstHour === 0 && now.getUTCMinutes() === 0) {
+      try {
+        await env.DB.prepare(`DELETE FROM system_logs WHERE id NOT IN (SELECT id FROM system_logs ORDER BY id DESC LIMIT 500)`).run();
+        await env.DB.prepare(`DELETE FROM news_fetch_log WHERE id NOT IN (SELECT id FROM news_fetch_log ORDER BY id DESC LIMIT 5000)`).run();
+      } catch {}
+    }
 
     // 日次サマリー（JST 0:00〜0:01 = UTC 15:00〜15:01 に1日1回記録）
-    const jstHour = (now.getUTCHours() + 9) % 24;
     if (jstHour === 0 && now.getUTCMinutes() === 0) {
       try {
         const dailyPerf = await env.DB.prepare(

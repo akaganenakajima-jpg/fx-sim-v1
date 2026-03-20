@@ -36,7 +36,7 @@ async function fetchYahoo(symbol: string): Promise<number | null> {
   try {
     const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(symbol)}`;
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 5_000); // 5秒タイムアウト（18並列なので十分）
+    const timeout = setTimeout(() => controller.abort(), 3_000); // 3秒タイムアウト（18並列）
     const res = await fetch(url, {
       headers: { 'User-Agent': 'fx-sim-v1/1.0' },
       signal: controller.signal,
