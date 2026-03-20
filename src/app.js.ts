@@ -1000,12 +1000,39 @@ export const JS = `
     var sharpeColor = sharpe >= 1 ? 'var(--green)' : sharpe >= 0.5 ? 'var(--label)' : 'var(--red)';
     var pfColor = profitFactor >= 2 ? 'var(--green)' : profitFactor >= 1 ? 'var(--label)' : 'var(--red)';
 
+    // 2σ統計的有意性判定（Qiita Sunset_Yuhi氏の数式）
+    // 勝率閾値: p ≥ 1/2 + σ_th/(2√N)
+    // PF閾値: PF ≥ a × (√N + σ_th)/(√N - σ_th)
+    var n = totalClosed;
+    var p = n > 0 ? wins / n : 0;
+    var sqrtN = Math.sqrt(n);
+    var pThreshold = n >= 10 ? 0.5 + 1 / sqrtN : null; // 2σ (σ_th=2 → 2/(2√N) = 1/√N)
+    var pfThreshold = (n >= 10 && rrRatio > 0 && sqrtN > 2) ? rrRatio * (sqrtN + 2) / (sqrtN - 2) : null;
+    var pPass = pThreshold !== null && p > pThreshold;
+    var pfPass = pfThreshold !== null && profitFactor > pfThreshold;
+    var sigPass = pPass && pfPass;
+    var sigColor = sigPass ? 'var(--green)' : 'var(--orange, #FF9500)';
+    var sigLabel = n < 10 ? 'N不足' : sigPass ? '有意' : '偶然の範囲';
+
     target.innerHTML =
       '<div style="display:grid;grid-template-columns:repeat(4,1fr);gap:8px;padding:0 4px">' +
         stat('最大DD', '¥' + Math.round(maxDD).toLocaleString(), ddColor) +
         stat('Sharpe', sharpe.toFixed(2), sharpeColor) +
         stat('RR比', rrRatio.toFixed(2), 'var(--label)') +
         stat('PF', profitFactor.toFixed(2), pfColor) +
+      '</div>' +
+      '<div style="margin-top:10px;padding:8px 12px;border-radius:8px;background:var(--bg-secondary, rgba(120,120,128,0.08))">' +
+        '<div style="display:flex;justify-content:space-between;align-items:center">' +
+          '<span style="font-size:11px;color:var(--label-secondary)">2σ有意性（N=' + n + '）</span>' +
+          '<span style="font-size:12px;font-weight:700;color:' + sigColor + '">' + sigLabel + '</span>' +
+        '</div>' +
+        (pThreshold !== null ? '<div style="font-size:10px;color:var(--label-tertiary, rgba(120,120,128,0.6));margin-top:4px;line-height:1.5">' +
+          '勝率 ' + (p * 100).toFixed(1) + '% ' + (pPass ? '>' : '≤') + ' ' + (pThreshold * 100).toFixed(1) + '%' +
+          '<span style="margin:0 6px">|</span>' +
+          'PF ' + profitFactor.toFixed(2) + ' ' + (pfPass ? '>' : '≤') + ' ' + (pfThreshold !== null ? pfThreshold.toFixed(2) : '—') +
+          '<span style="margin:0 6px">|</span>' +
+          '3σ到達: ' + (n >= 10 ? (p > 0.5 + 1.5 / sqrtN ? '✓' : ((0.5 + 1.5 / sqrtN) * 100).toFixed(1) + '%必要') : '—') +
+        '</div>' : '') +
       '</div>';
   }
 

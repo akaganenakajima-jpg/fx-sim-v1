@@ -16,6 +16,7 @@ const GEMINI_ENDPOINT =
   'https://generativelanguage.googleapis.com/v1beta/models/gemini-3.1-pro-preview:generateContent';
 
 const AI_TIMEOUT_MS = 15_000; // AI API呼び出し15秒タイムアウト
+const NEWS_ANALYSIS_TIMEOUT_MS = 8_000; // ニュース分析は非クリティカル → 8秒
 
 function fetchWithTimeout(url: string, init: RequestInit, timeoutMs = AI_TIMEOUT_MS): Promise<Response> {
   const controller = new AbortController();
@@ -310,7 +311,7 @@ export async function analyzeNews(params: {
       contents: [{ role: 'user', parts: [{ text: newsList }] }],
       generationConfig: { responseMimeType: 'application/json' },
     }),
-  });
+  }, NEWS_ANALYSIS_TIMEOUT_MS);
 
   if (!res.ok) {
     throw new Error(`Gemini news analysis error ${res.status}`);
@@ -357,7 +358,7 @@ export async function analyzeNewsGPT(params: {
       response_format: { type: 'json_object' },
       temperature: 0.3,
     }),
-  });
+  }, NEWS_ANALYSIS_TIMEOUT_MS);
 
   if (!res.ok) {
     const body = await res.text();
@@ -394,7 +395,7 @@ export async function analyzeNewsClaude(params: {
       ],
       temperature: 0.3,
     }),
-  });
+  }, NEWS_ANALYSIS_TIMEOUT_MS);
 
   if (!res.ok) {
     const body = await res.text();

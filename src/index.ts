@@ -267,26 +267,33 @@ async function run(env: Env): Promise<void> {
     let newsAnalysisRan = false;
     if ((hasNewNews || forceAnalysis) && news.length > 0) {
       let analysis = null;
-      // Gemini → GPT → Claude フォールバック
+      // Gemini → GPT → Claude フォールバック（予算チェック付き）
       try {
         analysis = await analyzeNews({ news, apiKey: getApiKey(env) });
       } catch (e) {
         const is429 = String(e).includes('429');
         console.warn(`[fx-sim] News analysis Gemini ${is429 ? '429' : 'error'}: ${String(e).split('\n')[0].slice(0, 80)}`);
-        if (is429 && env.OPENAI_API_KEY) {
-          try {
-            analysis = await analyzeNewsGPT({ news, apiKey: env.OPENAI_API_KEY });
-            console.log('[fx-sim] News analysis: GPT fallback success');
-          } catch (gptErr) {
-            console.warn(`[fx-sim] News analysis GPT failed: ${String(gptErr).split('\n')[0].slice(0, 80)}`);
+        // 残り予算チェック: 銘柄判定に20s確保
+        const elapsedSoFar = Date.now() - cronStart;
+        const budgetLeft = 45_000 - elapsedSoFar; // 45s予算（60s制限 - 15sマージン）
+        if (budgetLeft < 10_000) {
+          console.warn(`[fx-sim] News analysis skipped: budget exhausted (${elapsedSoFar}ms elapsed)`);
+        } else {
+          if (is429 && env.OPENAI_API_KEY) {
+            try {
+              analysis = await analyzeNewsGPT({ news, apiKey: env.OPENAI_API_KEY });
+              console.log('[fx-sim] News analysis: GPT fallback success');
+            } catch (gptErr) {
+              console.warn(`[fx-sim] News analysis GPT failed: ${String(gptErr).split('\n')[0].slice(0, 80)}`);
+            }
           }
-        }
-        if (!analysis && env.ANTHROPIC_API_KEY) {
-          try {
-            analysis = await analyzeNewsClaude({ news, apiKey: env.ANTHROPIC_API_KEY });
-            console.log('[fx-sim] News analysis: Claude fallback success');
-          } catch (claudeErr) {
-            console.warn(`[fx-sim] News analysis Claude failed: ${String(claudeErr).split('\n')[0].slice(0, 80)}`);
+          if (!analysis && env.ANTHROPIC_API_KEY && (Date.now() - cronStart) < 35_000) {
+            try {
+              analysis = await analyzeNewsClaude({ news, apiKey: env.ANTHROPIC_API_KEY });
+              console.log('[fx-sim] News analysis: Claude fallback success');
+            } catch (claudeErr) {
+              console.warn(`[fx-sim] News analysis Claude failed: ${String(claudeErr).split('\n')[0].slice(0, 80)}`);
+            }
           }
         }
         if (!analysis) {
@@ -447,8 +454,12 @@ async function run(env: Env): Promise<void> {
     }
 
     let geminiOkCount = 0, gptOkCount = 0, claudeOkCount = 0, aiFailCount = 0;
-    // 4c. スコア上位からAI判定
+    // 4c. スコア上位からAI判定（予算チェック: 50s超で打ち切り）
     for (const candidate of passed.slice(0, MAX_GEMINI_PER_RUN)) {
+      if (Date.now() - cronStart > 50_000) {
+        console.warn(`[fx-sim] Cron budget exhausted (${Date.now() - cronStart}ms), skipping remaining AI calls`);
+        break;
+      }
       const { instrument, currentRate } = candidate;
 
       // オープンポジション確認（銘柄別）
