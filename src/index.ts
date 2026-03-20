@@ -297,6 +297,18 @@ async function run(env: Env): Promise<void> {
       ny:     ['S&P500', 'NASDAQ', 'US10Y', 'CrudeOil', 'NatGas', 'BTC/USD', 'ETH/USD', 'SOL/USD'],
     };
 
+    // 全銘柄のprevRate・lastCallTimeを一括取得（D1クエリ削減）
+    const cacheKeys = INSTRUMENTS.flatMap(i => [`prev_rate_${i.pair}`, `last_ai_call_${i.pair}`]);
+    const cacheRows = await env.DB
+      .prepare(`SELECT key, value FROM market_cache WHERE key IN (${cacheKeys.map(() => '?').join(',')})`)
+      .bind(...cacheKeys)
+      .all<{ key: string; value: string }>();
+    const cacheMap = new Map<string, string>();
+    for (const row of (cacheRows.results ?? [])) cacheMap.set(row.key, row.value);
+
+    // prevRate一括更新用
+    const rateUpdates: Array<{ key: string; value: string }> = [];
+
     for (const instrument of INSTRUMENTS) {
       const currentRate = prices.get(instrument.pair);
       if (currentRate == null) {
@@ -306,12 +318,12 @@ async function run(env: Env): Promise<void> {
       }
 
       const cacheKey = `prev_rate_${instrument.pair}`;
-      const prevRateRaw = await getCacheValue(env.DB, cacheKey);
+      const prevRateRaw = cacheMap.get(cacheKey) ?? null;
       const prevRate = prevRateRaw ? parseFloat(prevRateRaw) : currentRate;
-      await setCacheValue(env.DB, cacheKey, String(currentRate));
+      rateUpdates.push({ key: cacheKey, value: String(currentRate) });
 
       const lastCallKey = `last_ai_call_${instrument.pair}`;
-      const lastCallTime = await getCacheValue(env.DB, lastCallKey);
+      const lastCallTime = cacheMap.get(lastCallKey) ?? null;
 
       const filterResult = shouldCallGemini({
         currentRate, prevRate,
@@ -336,39 +348,37 @@ async function run(env: Env): Promise<void> {
       });
     }
 
+    // prevRate一括更新（バッチ）
+    if (rateUpdates.length > 0) {
+      const stmt = env.DB.prepare(
+        `INSERT INTO market_cache (key, value, updated_at) VALUES (?, ?, ?)
+         ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`
+      );
+      await env.DB.batch(rateUpdates.map(u => stmt.bind(u.key, u.value, now.toISOString())));
+    }
+
     // 4b. フィルタ通過銘柄をスコア降順でソート
     const passed = candidateList.filter(c => c.filterResult.shouldCall || hasAttentionNews);
     const skipped = candidateList.filter(c => !c.filterResult.shouldCall && !hasAttentionNews);
     passed.sort((a, b) => b.totalScore - a.totalScore);
 
-    // スキップ銘柄を先に記録
-    for (const c of skipped) {
-      await insertDecision(env.DB, {
-        pair: c.instrument.pair, rate: c.currentRate, decision: 'HOLD',
-        tp_rate: null, sl_rate: null,
-        reasoning: `スキップ: ${c.filterResult.reason}`,
-        news_summary: null, reddit_signal: null,
-        vix: indicators.vix, us10y: indicators.us10y,
-        nikkei: indicators.nikkei, sp500: indicators.sp500,
-        created_at: now.toISOString(),
-      });
+    // スキップ銘柄 + 上限超過分をバッチINSERT（D1クエリ削減）
+    const holdBatch = [
+      ...skipped.map(c => ({ pair: c.instrument.pair, rate: c.currentRate, reasoning: `スキップ: ${c.filterResult.reason}` })),
+      ...passed.slice(MAX_GEMINI_PER_RUN).map(c => ({ pair: c.instrument.pair, rate: c.currentRate, reasoning: `低優先度(スコア${c.totalScore.toFixed(1)}): 次のcronで判定予定` })),
+    ];
+    if (holdBatch.length > 0) {
+      const stmt = env.DB.prepare(
+        `INSERT INTO decisions (pair, rate, decision, tp_rate, sl_rate, reasoning, news_summary, reddit_signal, vix, us10y, nikkei, sp500, created_at)
+         VALUES (?, ?, 'HOLD', NULL, NULL, ?, NULL, NULL, ?, ?, ?, ?, ?)`
+      );
+      await env.DB.batch(holdBatch.map(h =>
+        stmt.bind(h.pair, h.rate, h.reasoning, indicators.vix, indicators.us10y, indicators.nikkei, indicators.sp500, now.toISOString())
+      ));
     }
 
     if (passed.length > 0) {
       console.log(`[fx-sim] フィルタ通過 ${passed.length}件 (上限${MAX_GEMINI_PER_RUN}) → ${passed.slice(0, MAX_GEMINI_PER_RUN).map(c => `${c.instrument.pair}(${c.totalScore.toFixed(1)})`).join(', ')}`);
-    }
-
-    // 上限超過分をHOLD記録
-    for (const c of passed.slice(MAX_GEMINI_PER_RUN)) {
-      await insertDecision(env.DB, {
-        pair: c.instrument.pair, rate: c.currentRate, decision: 'HOLD',
-        tp_rate: null, sl_rate: null,
-        reasoning: `低優先度(スコア${c.totalScore.toFixed(1)}): 次のcronで判定予定`,
-        news_summary: null, reddit_signal: null,
-        vix: indicators.vix, us10y: indicators.us10y,
-        nikkei: indicators.nikkei, sp500: indicators.sp500,
-        created_at: now.toISOString(),
-      });
     }
 
     let geminiOkCount = 0, gptOkCount = 0, claudeOkCount = 0, aiFailCount = 0;

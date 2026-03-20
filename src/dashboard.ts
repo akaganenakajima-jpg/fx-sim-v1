@@ -135,6 +135,11 @@ export function getDashboardHtml(): string {
         <div id="equity-chart" style="height:180px;position:relative"></div>
       </div>
 
+      <!-- パフォーマンスサマリー -->
+      <div class="card" style="padding:12px 16px">
+        <div id="perf-summary"></div>
+      </div>
+
       <div class="list-header-row" style="padding-top:8px">
         <span class="list-header">銘柄別成績</span>
       </div>

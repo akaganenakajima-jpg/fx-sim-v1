@@ -15,6 +15,14 @@ export interface GeminiDecision {
 const GEMINI_ENDPOINT =
   'https://generativelanguage.googleapis.com/v1beta/models/gemini-3.1-pro-preview:generateContent';
 
+const AI_TIMEOUT_MS = 15_000; // AI API呼び出し15秒タイムアウト
+
+function fetchWithTimeout(url: string, init: RequestInit, timeoutMs = AI_TIMEOUT_MS): Promise<Response> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+  return fetch(url, { ...init, signal: controller.signal }).finally(() => clearTimeout(timeout));
+}
+
 function buildSystemInstruction(instrument: InstrumentConfig): string {
   return (
     `あなたはトレーダーのAIアシスタントです。` +
@@ -122,7 +130,7 @@ export async function getDecision(params: {
   const { apiKey, instrument, ...rest } = params;
   const userMessage = buildUserMessage({ instrument, ...rest });
 
-  const res = await fetch(`${GEMINI_ENDPOINT}?key=${apiKey}`, {
+  const res = await fetchWithTimeout(`${GEMINI_ENDPOINT}?key=${apiKey}`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
@@ -176,7 +184,7 @@ export async function getDecisionGPT(params: {
   const userMessage = buildUserMessage({ instrument, ...rest });
   const systemPrompt = buildSystemInstruction(instrument);
 
-  const res = await fetch('https://api.openai.com/v1/chat/completions', {
+  const res = await fetchWithTimeout('https://api.openai.com/v1/chat/completions', {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
@@ -227,7 +235,7 @@ export async function getDecisionClaude(params: {
   const userMessage = buildUserMessage({ instrument, ...rest });
   const systemPrompt = buildSystemInstruction(instrument);
 
-  const res = await fetch('https://api.anthropic.com/v1/messages', {
+  const res = await fetchWithTimeout('https://api.anthropic.com/v1/messages', {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
@@ -293,7 +301,7 @@ export async function analyzeNews(params: {
     'impactは注目ニュースのみ日本語50文字以内で市場への影響を説明。注目でなければnull。\n' +
     'title_jaは英語タイトルの場合のみ日本語訳を返す。日本語タイトルはnull。';
 
-  const res = await fetch(`${GEMINI_ENDPOINT}?key=${apiKey}`, {
+  const res = await fetchWithTimeout(`${GEMINI_ENDPOINT}?key=${apiKey}`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
@@ -333,7 +341,7 @@ export async function analyzeNewsGPT(params: {
   const { news, apiKey } = params;
   if (news.length === 0) return [];
 
-  const res = await fetch('https://api.openai.com/v1/chat/completions', {
+  const res = await fetchWithTimeout('https://api.openai.com/v1/chat/completions', {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
@@ -369,7 +377,7 @@ export async function analyzeNewsClaude(params: {
   const { news, apiKey } = params;
   if (news.length === 0) return [];
 
-  const res = await fetch('https://api.anthropic.com/v1/messages', {
+  const res = await fetchWithTimeout('https://api.anthropic.com/v1/messages', {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',

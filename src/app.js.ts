@@ -817,6 +817,70 @@ export const JS = `
     });
   }
 
+  // ── パフォーマンスサマリー ──
+  function renderPerfSummary(data) {
+    var target = el('perf-summary');
+    if (!target) return;
+    var closes = (data.recentCloses || []).slice().reverse();
+    var perf = data.performance || {};
+    var totalPnl = perf.totalPnl || 0;
+    var totalClosed = perf.totalClosed || 0;
+    var wins = perf.wins || 0;
+
+    // 最大ドローダウン計算（資産推移のピークからの最大落差）
+    var closePnlSum = 0;
+    closes.forEach(function(c) { closePnlSum += (c.pnl || 0); });
+    var missingPnl = totalPnl - closePnlSum;
+    var peak = INITIAL_CAPITAL + missingPnl;
+    var maxDD = 0;
+    var cumPnl = 0;
+    closes.forEach(function(c) {
+      cumPnl += (c.pnl || 0);
+      var equity = INITIAL_CAPITAL + missingPnl + cumPnl;
+      if (equity > peak) peak = equity;
+      var dd = peak - equity;
+      if (dd > maxDD) maxDD = dd;
+    });
+
+    // シャープレシオ計算（簡易: 平均リターン / 標準偏差）
+    var pnls = closes.map(function(c) { return c.pnl || 0; });
+    var avgPnl = pnls.length > 0 ? pnls.reduce(function(a, b) { return a + b; }, 0) / pnls.length : 0;
+    var variance = pnls.length > 1 ? pnls.reduce(function(a, b) { return a + (b - avgPnl) * (b - avgPnl); }, 0) / (pnls.length - 1) : 0;
+    var stdDev = Math.sqrt(variance);
+    var sharpe = stdDev > 0 ? (avgPnl / stdDev) : 0;
+
+    // RR比（平均利益 / 平均損失）
+    var winsArr = pnls.filter(function(p) { return p > 0; });
+    var lossArr = pnls.filter(function(p) { return p < 0; });
+    var avgWin = winsArr.length > 0 ? winsArr.reduce(function(a, b) { return a + b; }, 0) / winsArr.length : 0;
+    var avgLoss = lossArr.length > 0 ? Math.abs(lossArr.reduce(function(a, b) { return a + b; }, 0) / lossArr.length) : 0;
+    var rrRatio = avgLoss > 0 ? (avgWin / avgLoss) : 0;
+
+    // プロフィットファクター（総利益 / 総損失）
+    var totalWin = winsArr.reduce(function(a, b) { return a + b; }, 0);
+    var totalLoss = Math.abs(lossArr.reduce(function(a, b) { return a + b; }, 0));
+    var profitFactor = totalLoss > 0 ? (totalWin / totalLoss) : 0;
+
+    function stat(label, value, color) {
+      return '<div style="text-align:center;min-width:0">' +
+        '<div style="font-size:11px;color:var(--label-secondary);margin-bottom:2px">' + label + '</div>' +
+        '<div style="font-size:15px;font-weight:700;color:' + (color || 'var(--label)') + '">' + value + '</div>' +
+      '</div>';
+    }
+
+    var ddColor = maxDD > 1000 ? 'var(--red)' : maxDD > 500 ? 'var(--orange, #FF9500)' : 'var(--label)';
+    var sharpeColor = sharpe >= 1 ? 'var(--green)' : sharpe >= 0.5 ? 'var(--label)' : 'var(--red)';
+    var pfColor = profitFactor >= 2 ? 'var(--green)' : profitFactor >= 1 ? 'var(--label)' : 'var(--red)';
+
+    target.innerHTML =
+      '<div style="display:grid;grid-template-columns:repeat(4,1fr);gap:8px;padding:0 4px">' +
+        stat('最大DD', '¥' + Math.round(maxDD).toLocaleString(), ddColor) +
+        stat('Sharpe', sharpe.toFixed(2), sharpeColor) +
+        stat('RR比', rrRatio.toFixed(2), 'var(--label)') +
+        stat('PF', profitFactor.toFixed(2), pfColor) +
+      '</div>';
+  }
+
   // ── 資産推移グラフ描画 ──
   // Apple HIG: 11pt最小フォント、8ptグリッド、十分な余白
   // UX心理学: Peak-End（最終値強調）、Goal Gradient（目標ライン）、認知負荷軽減（ラベル統一）
@@ -983,6 +1047,7 @@ export const JS = `
   // ── 統計タブ描画 ──
   function renderStats(data) {
     renderEquityChart(data);
+    renderPerfSummary(data);
     var container = el('stats-pairs');
     if (!container) return;
     var byPair = data.performanceByPair || {};

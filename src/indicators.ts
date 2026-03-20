@@ -35,15 +35,24 @@ interface YahooChartResult {
 async function fetchYahoo(symbol: string): Promise<number | null> {
   try {
     const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(symbol)}`;
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 10_000); // 10秒タイムアウト
     const res = await fetch(url, {
       headers: { 'User-Agent': 'fx-sim-v1/1.0' },
+      signal: controller.signal,
     });
+    clearTimeout(timeout);
     if (!res.ok) return null;
     const data = await res.json<YahooChartResult>();
     const price = data.chart.result?.[0]?.meta?.regularMarketPrice;
     return typeof price === 'number' ? price : null;
   } catch (e) {
-    console.error(`[indicators] Yahoo fetch error (${symbol}):`, e);
+    const msg = String(e);
+    if (msg.includes('abort')) {
+      console.warn(`[indicators] Yahoo timeout (${symbol}): 10s`);
+    } else {
+      console.error(`[indicators] Yahoo fetch error (${symbol}):`, msg.slice(0, 100));
+    }
     return null;
   }
 }
