@@ -11,7 +11,7 @@ export function getDashboardHtml(): string {
   <meta name="theme-color" content="#000000" media="(prefers-color-scheme: dark)">
   <meta name="theme-color" content="#F2F2F7" media="(prefers-color-scheme: light)">
   <title>FX Sim</title>
-  <link rel="stylesheet" href="/style.css?v=9">
+  <link rel="stylesheet" href="/style.css?v=10">
 </head>
 <body>
   <div id="app">
@@ -135,7 +135,28 @@ export function getDashboardHtml(): string {
             <span id="total-trades" class="hero-sub-value">—</span>
           </span>
         </div>
+        <div class="power-progress-wrap" id="power-progress-wrap">
+          <div class="power-progress-header">
+            <span class="power-progress-label">統計的有意性まで</span>
+            <span class="power-progress-pct" id="power-progress-pct">—</span>
+          </div>
+          <div class="power-progress-track">
+            <div class="power-progress-fill" id="power-progress-fill" style="width:0%">
+              <div class="power-progress-dot"></div>
+            </div>
+          </div>
+          <div class="power-progress-sub" id="power-progress-sub"></div>
+        </div>
       </section>
+
+      <!-- 市場状態サマリーバー -->
+      <div id="market-state-bar" class="market-state-bar" style="display:none"></div>
+
+      <!-- AI期待銘柄ランキング -->
+      <div id="ai-ranking-section" style="display:none">
+        <div class="ai-ranking-header">AI 期待銘柄ランキング</div>
+        <div class="ai-ranking-list" id="ai-ranking-list"></div>
+      </div>
 
       <!-- AI最新判断（リッチカード） -->
       <div class="ai-rich-card" id="ai-card">
@@ -198,9 +219,8 @@ export function getDashboardHtml(): string {
       </div>
 
       <!-- パフォーマンスサマリー -->
-      <div class="card" style="padding:12px 16px">
-        <div id="perf-summary"></div>
-      </div>
+      <!-- 統計ナラティブ（JSが書き込む） -->
+      <div id="stats-narrative"></div>
 
       <div id="stats-pairs" class="stats-section"></div>
 
@@ -301,7 +321,7 @@ export function getDashboardHtml(): string {
     </div>
 
   </div>
-  <script src="/app.js?v=9"></script>
+  <script src="/app.js?v=10"></script>
 </body>
 </html>`;
 }
