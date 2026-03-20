@@ -16,6 +16,52 @@ export function getDashboardHtml(): string {
 <body>
   <div id="app">
 
+    <!-- PC: 左サイドバー -->
+    <nav class="pc-sidebar" aria-label="メインナビゲーション">
+      <div class="sidebar-logo">FX</div>
+      <button class="sidebar-tab active" data-tab="tab-portfolio" aria-label="資産">
+        <svg viewBox="0 0 24 24"><path d="M3 9l9-6 9 6v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V9z"/><path d="M9 22V12h6v10"/></svg>
+        <span>資産</span>
+      </button>
+      <button class="sidebar-tab" data-tab="tab-ai" aria-label="AI判断">
+        <svg viewBox="0 0 24 24"><circle cx="12" cy="8" r="4"/><path d="M8 14h8a4 4 0 0 1 4 4v2H4v-2a4 4 0 0 1 4-4z"/></svg>
+        <span>AI</span>
+      </button>
+      <button class="sidebar-tab" data-tab="tab-stats" aria-label="統計">
+        <svg viewBox="0 0 24 24"><path d="M18 20V10M12 20V4M6 20v-6"/></svg>
+        <span>統計</span>
+      </button>
+      <button class="sidebar-tab" data-tab="tab-log" aria-label="ログ">
+        <svg viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/><path d="M8 13h8M8 17h5"/></svg>
+        <span>ログ</span>
+      </button>
+      <div class="sidebar-spacer"></div>
+      <button class="sidebar-tab sidebar-bottom" id="sidebar-settings" aria-label="設定">
+        <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+        <span>設定</span>
+      </button>
+    </nav>
+
+    <!-- PC: タブレット用水平タブバー -->
+    <nav class="pc-tabbar" aria-label="タブナビゲーション">
+      <button class="pc-tabbar-item active" data-tab="tab-portfolio">
+        <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M3 9l9-6 9 6v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V9z"/><path d="M9 22V12h6v10"/></svg>
+        資産
+      </button>
+      <button class="pc-tabbar-item" data-tab="tab-ai">
+        <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="8" r="4"/><path d="M8 14h8a4 4 0 0 1 4 4v2H4v-2a4 4 0 0 1 4-4z"/></svg>
+        AI判断
+      </button>
+      <button class="pc-tabbar-item" data-tab="tab-stats">
+        <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 20V10M12 20V4M6 20v-6"/></svg>
+        統計
+      </button>
+      <button class="pc-tabbar-item" data-tab="tab-log">
+        <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/><path d="M8 13h8M8 17h5"/></svg>
+        ログ
+      </button>
+    </nav>
+
     <!-- ヘッダー -->
     <header class="header" role="banner">
       <h1 class="header-title">FX Sim <span id="mode-badge" class="mode-badge" style="display:none"></span></h1>
@@ -217,6 +263,32 @@ export function getDashboardHtml(): string {
       </div>
       <div id="news-drawer-body" class="news-drawer-body"></div>
     </div>
+
+    <!-- PC: 右サイドパネル -->
+    <aside class="pc-panel" id="pc-panel" aria-label="サイドパネル">
+      <div class="panel-content active" data-panel="tab-portfolio">
+        <div class="panel-section">
+          <div class="label">マーケット概況</div>
+          <div id="panel-market" style="display:flex;gap:16px;margin-top:6px"></div>
+        </div>
+        <div class="panel-header">📰 ニュース</div>
+        <div id="panel-news"></div>
+      </div>
+      <div class="panel-content" data-panel="tab-ai">
+        <div class="panel-header">📋 判定履歴</div>
+        <div id="panel-decisions"></div>
+      </div>
+      <div class="panel-content" data-panel="tab-stats">
+        <div class="panel-header">📊 銘柄詳細</div>
+        <div id="panel-stats-detail">
+          <p style="padding:16px;color:var(--label-secondary);font-size:13px">銘柄をクリックして詳細を表示</p>
+        </div>
+      </div>
+      <div class="panel-content" data-panel="tab-log">
+        <div class="panel-header">🛡️ RiskGuard</div>
+        <div id="panel-riskguard"></div>
+      </div>
+    </aside>
 
     <!-- ─── ボトムシート（ポジション詳細） ─── -->
     <div id="sheet-backdrop" class="sheet-backdrop" role="presentation"></div>

@@ -125,6 +125,19 @@ export const JS = `
         drawer.style.display = 'none';
       }
     }
+    // PC: サイドバータブの状態更新
+    document.querySelectorAll('.sidebar-tab[data-tab]').forEach(function(btn) {
+      btn.classList.toggle('active', btn.dataset.tab === targetId);
+    });
+    // PC: タブレットタブバーの状態更新
+    document.querySelectorAll('.pc-tabbar-item').forEach(function(btn) {
+      btn.classList.toggle('active', btn.dataset.tab === targetId);
+    });
+    // PC: 右パネルのコンテキスト切替
+    document.querySelectorAll('.panel-content').forEach(function(panel) {
+      panel.classList.toggle('active', panel.dataset.panel === targetId);
+    });
+
     // 統計タブ表示時: チャートを正しい幅で再描画
     if (targetId === 'tab-stats' && lastData) {
       requestAnimationFrame(function() { renderEquityChart(lastData); });
@@ -135,6 +148,42 @@ export const JS = `
     btn.addEventListener('click', function() {
       switchTab(btn.getAttribute('data-tab'));
     });
+  });
+
+  // PC: サイドバータブのクリック
+  document.querySelectorAll('.sidebar-tab[data-tab]').forEach(function(btn) {
+    btn.addEventListener('click', function() { switchTab(btn.dataset.tab); });
+  });
+  // PC: タブレットタブバーのクリック
+  document.querySelectorAll('.pc-tabbar-item').forEach(function(btn) {
+    btn.addEventListener('click', function() { switchTab(btn.dataset.tab); });
+  });
+  // PC: サイドバー設定ボタン（テーマ切替）
+  var sidebarSettings = document.getElementById('sidebar-settings');
+  if (sidebarSettings) {
+    sidebarSettings.addEventListener('click', function() {
+      var tb = document.getElementById('theme-btn');
+      if (tb) tb.click();
+    });
+  }
+
+  // PC: キーボードショートカット
+  document.addEventListener('keydown', function(e) {
+    var tag = document.activeElement ? document.activeElement.tagName : '';
+    if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
+    if (e.ctrlKey || e.metaKey || e.altKey) return;
+    switch (e.key) {
+      case '1': switchTab('tab-portfolio'); break;
+      case '2': switchTab('tab-ai'); break;
+      case '3': switchTab('tab-stats'); break;
+      case '4': switchTab('tab-log'); break;
+      case 'r': case 'R':
+        document.getElementById('refresh-btn')?.click();
+        break;
+      case 't': case 'T':
+        document.getElementById('theme-btn')?.click();
+        break;
+    }
   });
 
   // ── スパークライン描画 ──
@@ -839,6 +888,82 @@ export const JS = `
     banner.addEventListener('click', function() { banner.classList.remove('show'); }, { once: true });
   }
 
+  // ── 時刻フォーマット（パネル用） ──
+  function fmtTimeShort(isoStr) {
+    if (!isoStr) return '';
+    var d = new Date(isoStr);
+    var now = new Date();
+    var diffMs = now - d;
+    var diffMin = Math.floor(diffMs / 60000);
+    if (diffMin < 1) return 'たった今';
+    if (diffMin < 60) return diffMin + '分前';
+    var diffH = Math.floor(diffMin / 60);
+    if (diffH < 24) return diffH + '時間前';
+    return d.toLocaleDateString('ja-JP', { month: 'short', day: 'numeric' });
+  }
+
+  // ── PC右パネル描画 ──
+  function renderPanel(data) {
+    if (window.innerWidth < 1920) return;
+
+    // マーケット概況
+    var marketEl = document.getElementById('panel-market');
+    if (marketEl && data.latestDecision) {
+      var ind = data.latestDecision;
+      var items = [
+        { label: 'VIX', value: ind.vix != null ? Number(ind.vix).toFixed(1) : 'N/A', color: ind.vix > 20 ? 'var(--orange)' : 'var(--label)' },
+        { label: 'US10Y', value: ind.us10y != null ? Number(ind.us10y).toFixed(2) + '%' : 'N/A', color: 'var(--label)' },
+        { label: 'USD/JPY', value: data.rate != null ? Number(data.rate).toFixed(2) : 'N/A', color: 'var(--label)' }
+      ];
+      marketEl.innerHTML = items.map(function(i) {
+        return '<div><div style="font-size:10px;color:var(--label-secondary)">' + i.label + '</div><div style="font-size:14px;font-weight:600;color:' + i.color + '">' + i.value + '</div></div>';
+      }).join('');
+    }
+
+    // ニュースフィード
+    var newsEl = document.getElementById('panel-news');
+    if (newsEl && data.latestNews) {
+      newsEl.innerHTML = (data.latestNews || []).slice(0, 6).map(function(n) {
+        return '<div class="panel-news-item">'
+          + '<div class="panel-news-title">' + escHtml(n.title) + '</div>'
+          + '<div class="panel-news-meta">Reuters • ' + fmtTimeShort(n.pubDate) + '</div></div>';
+      }).join('');
+    }
+
+    // 判定履歴（AI判断パネル）
+    var decisionsEl = document.getElementById('panel-decisions');
+    if (decisionsEl && data.recentDecisions) {
+      decisionsEl.innerHTML = data.recentDecisions.slice(0, 10).map(function(d) {
+        var color = d.decision === 'BUY' ? 'var(--green)' : d.decision === 'SELL' ? 'var(--red)' : 'var(--label-secondary)';
+        return '<div style="display:flex;align-items:center;gap:8px;padding:8px 16px;border-bottom:1px solid var(--separator)">'
+          + '<span style="font-size:10px;font-weight:700;padding:2px 6px;border-radius:4px;color:' + color + '">' + d.decision + '</span>'
+          + '<span style="font-size:12px;color:var(--label)">' + (d.pair || 'USD/JPY') + '</span>'
+          + '<span style="font-size:11px;color:var(--label-secondary);margin-left:auto">' + fmtTimeShort(d.created_at) + '</span>'
+          + '</div>';
+      }).join('');
+    }
+
+    // RiskGuard（ログパネル）
+    var riskEl = document.getElementById('panel-riskguard');
+    if (riskEl) {
+      var logStats = data.logStats || {};
+      var logs = data.systemLogs || [];
+      var errCount = logs.filter(function(l) { return l.level === 'ERROR'; }).length;
+      var warnCount = logs.filter(function(l) { return l.level === 'WARN'; }).length;
+      var statItems = [
+        { label: '総実行', value: data.systemStatus ? data.systemStatus.totalRuns : 0 },
+        { label: 'AI呼出', value: logStats.geminiCalls || 0 },
+        { label: 'エラー', value: errCount, color: errCount > 0 ? 'var(--red)' : 'var(--green)' },
+        { label: '警告', value: warnCount, color: warnCount > 5 ? 'var(--orange)' : 'var(--label)' }
+      ];
+      riskEl.innerHTML = '<div style="padding:16px">' + statItems.map(function(s) {
+        return '<div style="display:flex;justify-content:space-between;padding:6px 0;border-bottom:1px solid var(--separator)">'
+          + '<span style="font-size:12px;color:var(--label-secondary)">' + s.label + '</span>'
+          + '<span style="font-size:13px;font-weight:600;color:' + (s.color || 'var(--label)') + '">' + s.value + '</span></div>';
+      }).join('') + '</div>';
+    }
+  }
+
   // ── ウォッチリスト描画 ──
   function renderWatchlist(data) {
     var container = el('watchlist');
@@ -850,6 +975,85 @@ export const JS = `
     var rateMap = {};
     rateMap['USD/JPY'] = data.rate;
     var ld = data.latestDecision;
+
+    // PC: テーブル表示（769px以上）
+    if (window.innerWidth >= 769) {
+      if (ld) {
+        rateMap['Nikkei225'] = ld.nikkei;
+        rateMap['S&P500']    = ld.sp500;
+        rateMap['US10Y']     = ld.us10y;
+      }
+      var sparks = data.sparklines || {};
+      INSTRUMENTS.forEach(function(instr) {
+        if (!rateMap[instr.pair]) {
+          var pts = sparks[instr.pair];
+          if (pts && pts.length > 0) rateMap[instr.pair] = pts[pts.length - 1].rate;
+        }
+      });
+
+      var positions = INSTRUMENTS.filter(function(i) { return posMap[i.pair]; });
+      var holdItems = INSTRUMENTS.filter(function(i) { return !posMap[i.pair]; });
+      var html = '<div class="watchlist-columns">';
+
+      // 保有ポジション テーブル
+      html += '<div><div class="section-title" style="margin-bottom:8px">保有ポジション</div>';
+      html += '<table class="watch-table"><thead><tr>'
+        + '<th>銘柄</th><th>方向</th><th>エントリー</th><th>現在値</th><th>推移</th><th style="text-align:right">損益</th>'
+        + '</tr></thead><tbody>';
+      if (positions.length === 0) {
+        html += '<tr><td colspan="6" style="text-align:center;color:var(--label-secondary);padding:16px">ポジションなし</td></tr>';
+      }
+      positions.forEach(function(instr) {
+        var pos = posMap[instr.pair];
+        var currentPrice = rateMap[instr.pair] || pos.entry_rate;
+        var pnl = pos.direction === 'BUY'
+          ? (currentPrice - pos.entry_rate) * (pos.lot || 1) * (instr.multiplier || 100)
+          : (pos.entry_rate - currentPrice) * (pos.lot || 1) * (instr.multiplier || 100);
+        var sparkPoints = sparks[instr.pair];
+        var sparkColor = pnl >= 0 ? 'var(--green)' : 'var(--red)';
+        var sparkSvg = drawSparkline(sparkPoints, sparkColor, 60, 20);
+        html += '<tr class="watch-table-row" data-pair="' + escHtml(instr.pair) + '">'
+          + '<td class="pair-name">' + escHtml(instr.label || instr.pair) + '</td>'
+          + '<td><span class="dir-badge dir-' + pos.direction.toLowerCase() + '">' + pos.direction + '</span></td>'
+          + '<td style="color:var(--label-secondary)">' + fmtPrice(instr.pair, pos.entry_rate) + '</td>'
+          + '<td>' + fmtPrice(instr.pair, currentPrice) + '</td>'
+          + '<td class="sparkline-cell">' + sparkSvg + '</td>'
+          + '<td style="text-align:right" class="' + (pnl >= 0 ? 'pnl-pos' : 'pnl-neg') + '">' + fmtYen(Math.round(pnl)) + '</td>'
+          + '</tr>';
+      });
+      html += '</tbody></table></div>';
+
+      // 待機銘柄テーブル
+      if (holdItems.length > 0) {
+        html += '<div><div class="section-title" style="margin-bottom:8px">待機銘柄</div>';
+        html += '<table class="watch-table"><thead><tr>'
+          + '<th>銘柄</th><th>カテゴリ</th><th>現在値</th>'
+          + '</tr></thead><tbody>';
+        holdItems.forEach(function(instr) {
+          var rate = rateMap[instr.pair];
+          html += '<tr>'
+            + '<td class="pair-name">' + escHtml(instr.label || instr.pair) + '</td>'
+            + '<td style="color:var(--label-secondary);font-size:12px">' + (instr.category || '') + '</td>'
+            + '<td>' + (rate ? fmtPrice(instr.pair, rate) : '-') + '</td>'
+            + '</tr>';
+        });
+        html += '</tbody></table></div>';
+      }
+
+      html += '</div>';
+      container.innerHTML = html;
+
+      // テーブル行クリック → ボトムシート
+      container.querySelectorAll('.watch-table-row').forEach(function(rowEl) {
+        rowEl.addEventListener('click', function() {
+          var pair = rowEl.getAttribute('data-pair');
+          var pos = posMap[pair];
+          var instr = INSTRUMENTS.filter(function(i) { return i.pair === pair; })[0];
+          openSheet(pos || null, instr);
+        });
+      });
+      return; // テーブル表示で終了
+    }
     if (ld) {
       rateMap['Nikkei225'] = ld.nikkei;
       rateMap['S&P500']    = ld.sp500;
@@ -1541,6 +1745,9 @@ export const JS = `
     // システムステータス
     el('last-run').textContent   = fmtTime(data.systemStatus.lastRun);
     el('total-runs').textContent = Number(data.systemStatus.totalRuns).toLocaleString('ja-JP');
+
+    // PC: 右パネル描画
+    renderPanel(data);
   }
 
   // ── タブバッジ更新（Zeigarnik効果） ──
@@ -1832,6 +2039,31 @@ export const JS = `
   if ('Notification' in window && Notification.permission === 'default') {
     Notification.requestPermission();
   }
+
+  // PC: viewport動的変更（タブレット以上ではズーム許可）
+  function updateViewport() {
+    var meta = document.querySelector('meta[name="viewport"]');
+    if (!meta) return;
+    if (window.innerWidth >= 769) {
+      meta.setAttribute('content', 'width=device-width, initial-scale=1.0');
+    } else {
+      meta.setAttribute('content', 'width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no');
+    }
+  }
+  updateViewport();
+
+  // PC: リサイズ時のレイアウト再描画
+  var resizeTimer;
+  window.addEventListener('resize', function() {
+    clearTimeout(resizeTimer);
+    resizeTimer = setTimeout(function() {
+      updateViewport();
+      if (lastData) {
+        renderWatchlist(lastData);
+        renderPanel(lastData);
+      }
+    }, 250);
+  });
 
   refresh();
   setInterval(refresh, 30000);
