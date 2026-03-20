@@ -25,6 +25,7 @@ import { getBroker, withFallback, type BrokerEnv } from './broker';
 import { checkRisk, type RiskEnv } from './risk-guard';
 import { checkTpSlSanity } from './sanity';
 import { runMigrations } from './migration';
+import { sendNotification, getWebhookUrl, buildDailySummaryMessage } from './notify';
 
 interface Env {
   DB: D1Database;
@@ -50,6 +51,8 @@ interface Env {
   RISK_ANOMALY_THRESHOLD?: string;
   // Twelve Data フォールバック
   TWELVE_DATA_API_KEY?: string;
+  SLACK_WEBHOOK_URL?: string;
+  DISCORD_WEBHOOK_URL?: string;
 }
 
 let _keyIndex = 0;
