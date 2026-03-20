@@ -807,7 +807,7 @@ body, #app {
   bottom: 0;
   left: 0;
   right: 0;
-  height: calc(56px + env(safe-area-inset-bottom));
+  height: calc(64px + env(safe-area-inset-bottom));
   padding-bottom: env(safe-area-inset-bottom);
   background: rgba(18, 18, 20, 0.80);
   -webkit-backdrop-filter: blur(20px) saturate(1.8);
@@ -832,8 +832,8 @@ body, #app {
   align-items: center;
   justify-content: center;
   gap: 4px;
-  min-height: 48px;
-  padding: 6px 0 2px;
+  min-height: 56px;
+  padding: 8px 0 4px;
   cursor: pointer;
   -webkit-tap-highlight-color: transparent;
   touch-action: manipulation;
@@ -849,7 +849,6 @@ body, #app {
   appearance: none;
   background: none;
   border: none;
-  padding: 0;
   margin: 0;
   outline: none;
 }
@@ -888,7 +887,7 @@ body.sheet-open .tab-bar {
 /* ─── Tab Panels ─── */
 .tab-panel { display: none; }
 .tab-panel.active { display: flex; flex-direction: column; }
-.content { padding-bottom: calc(56px + env(safe-area-inset-bottom) + 24px); }
+.content { padding-bottom: calc(64px + env(safe-area-inset-bottom) + 24px); }
 
 /* ポートフォリオタブはスクロールなし・固定高さレイアウト */
 #tab-portfolio {
