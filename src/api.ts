@@ -3,7 +3,7 @@
 import type { Position } from './db';
 import { fetchNews } from './news';
 import { getRiskStatus, type RiskEnv } from './risk-guard';
-import { wilsonCI, sharpeWithSE, varCvar, kellyFraction, markovTransition, maxDrawdown, rollingReturns, pnlVolatility, profitFactor } from './stats';
+import { wilsonCI, sharpeWithSE, varCvar, kellyFraction, markovTransition, maxDrawdown, rollingReturns, pnlVolatility, profitFactor, bootstrapROI } from './stats';
 
 export interface LatestDecision {
   id: number;
@@ -102,6 +102,7 @@ export interface StatusResponse {
   }>;
   statistics: {
     winRateCI: { lower: number; upper: number };
+    roiCI: { roi: number; ciLower: number; ciUpper: number; n: number };
     sharpe: number;
     sharpeSE: number;
     sharpeSignificant: boolean;
@@ -284,6 +285,7 @@ export async function getApiStatus(db: D1Database, tradingEnv?: { TRADING_ENABLE
 
       statistics = {
         winRateCI: ci,
+        roiCI: bootstrapROI(allPnls),
         sharpe: sharpeResult.sharpe,
         sharpeSE: sharpeResult.se,
         sharpeSignificant: sharpeResult.significant,

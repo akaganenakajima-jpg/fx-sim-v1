@@ -128,6 +128,34 @@ export function profitFactor(pnls: number[]): number {
   return losses > 0 ? gains / losses : gains > 0 ? Infinity : 0;
 }
 
+/** ROIブートストラップ95%信頼区間
+ *  分布非依存の方法でROIの不確実性を定量化。
+ *  B回リサンプリング → パーセンタイル法で [2.5%, 97.5%] を取得。
+ *  n < 10 の場合は区間を返さない（データ不足）。
+ */
+export function bootstrapROI(
+  pnls: number[],
+  initialBalance = 10000,
+  B = 1000,
+): { roi: number; ciLower: number; ciUpper: number; n: number } {
+  const n = pnls.length;
+  const roi = n > 0 ? (pnls.reduce((s, v) => s + v, 0) / initialBalance) * 100 : 0;
+  if (n < 10) return { roi, ciLower: roi, ciUpper: roi, n };
+
+  const bootstrapROIs: number[] = [];
+  for (let b = 0; b < B; b++) {
+    let sum = 0;
+    for (let i = 0; i < n; i++) {
+      sum += pnls[Math.floor(Math.random() * n)];
+    }
+    bootstrapROIs.push((sum / initialBalance) * 100);
+  }
+  bootstrapROIs.sort((a, c) => a - c);
+  const lo = Math.floor(B * 0.025);
+  const hi = Math.floor(B * 0.975);
+  return { roi, ciLower: bootstrapROIs[lo], ciUpper: bootstrapROIs[hi], n };
+}
+
 /** マルコフ遷移行列（WIN/LOSE） */
 export function markovTransition(outcomes: boolean[]): {
   ww: number; wl: number; lw: number; ll: number;

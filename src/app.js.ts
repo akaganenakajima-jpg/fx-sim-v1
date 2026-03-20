@@ -1499,6 +1499,8 @@ export const JS = `
       var sharpeSig = st.sharpeSignificant;
       var kellyPct = (st.kellyFraction * 100).toFixed(1);
       var streakPct = (st.markov.streakProb3 * 100).toFixed(1);
+      var roiCI = st.roiCI;
+      var roiColor = roiCI && roiCI.roi >= 0 ? 'var(--green)' : 'var(--red)';
 
       advStatsHtml += secHeader('📊', 'var(--purple, #af52de)', '統計的信頼性') +
         '<div class="metric-grid-2">' +
@@ -1506,6 +1508,16 @@ export const JS = `
             '<div class="metric-label">勝率 95% CI</div>' +
             '<div class="metric-value">' + wrLo + '% \u2014 ' + wrHi + '%</div>' +
           '</div>' +
+          (roiCI ? '<div class="metric-card">' +
+            '<div class="metric-label">ROI 95% CI <span style="font-size:10px;color:var(--label-tertiary)">n=' + roiCI.n + '</span></div>' +
+            '<div class="metric-value" style="color:' + roiColor + '">' +
+              (roiCI.roi >= 0 ? '+' : '') + roiCI.roi.toFixed(1) + '% ' +
+              '<span style="font-size:11px;font-weight:400;color:var(--label-secondary)">[' +
+                (roiCI.ciLower >= 0 ? '+' : '') + roiCI.ciLower.toFixed(1) + '%, ' +
+                (roiCI.ciUpper >= 0 ? '+' : '') + roiCI.ciUpper.toFixed(1) + '%]' +
+              '</span>' +
+            '</div>' +
+          '</div>' : '') +
           '<div class="metric-card">' +
             '<div class="metric-label">Sharpe\u6bd4' +
               (sharpeSig ? ' <span style="color:var(--green);font-weight:700">\u6709\u610f</span>' : ' <span style="color:var(--label-tertiary)">n.s.</span>') +
