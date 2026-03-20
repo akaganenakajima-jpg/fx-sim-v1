@@ -28,6 +28,7 @@ import { checkTpSlSanity } from './sanity';
 import { runMigrations } from './migration';
 import { sendNotification, getWebhookUrl, buildDailySummaryMessage } from './notify';
 import { sampleBeta } from './thompson';
+import { kalmanFilter, type KalmanState } from './kalman';
 
 interface Env {
   DB: D1Database;
@@ -432,6 +433,15 @@ async function runAIDecisions(
     }
   }
 
+  // カルマンフィルタで各銘柄のレジームを計算（スパークラインデータを利用）
+  const regimeMap = new Map<string, KalmanState['regime']>();
+  for (const [pair, rates] of sparkMap) {
+    if (rates.length >= 5) {
+      const state = kalmanFilter(rates);
+      regimeMap.set(pair, state.regime);
+    }
+  }
+
   // 4c. スコア上位からAI判定（並列バッチ処理: 最大parallelLimit件同時実行）
   type AIResult = { provider: 'gemini' | 'gpt' | 'claude' | 'fail'; pair: string };
 
@@ -468,6 +478,7 @@ async function runAIDecisions(
             recentTrades,
             allPositionDirections,
             sparkRates,
+            regime: regimeMap.get(instrument.pair),
             geminiApiKey: getApiKey(env),
             openaiApiKey: env.OPENAI_API_KEY,
             openaiApiKey2: env.OPENAI_API_KEY_2,

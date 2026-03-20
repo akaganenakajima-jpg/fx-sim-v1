@@ -50,8 +50,9 @@ function buildUserMessage(params: {
   recentTrades?: Array<{ pair: string; direction: string; pnl: number; close_reason: string }>;
   allPositionDirections?: string[];
   sparkRates?: number[];
+  regime?: string;
 }): string {
-  const { instrument, rate, indicators, news, redditSignal, hasOpenPosition, recentTrades, allPositionDirections, sparkRates } = params;
+  const { instrument, rate, indicators, news, redditSignal, hasOpenPosition, recentTrades, allPositionDirections, sparkRates, regime } = params;
 
   const newsText = news
     .map((n, i) => `  ${i + 1}. ${n.title}`)
@@ -67,6 +68,7 @@ function buildUserMessage(params: {
     `現在値: ${rate.toFixed(instrument.pair === 'USD/JPY' || instrument.pair === 'EUR/USD' ? 3 : 2)}`,
     ``,
     `【市場コンテキスト】`,
+    `市場レジーム: ${regime ?? '不明'} (trending=トレンド, ranging=レンジ, volatile=高ボラ)`,
     `米10年債利回り: ${indicators.us10y != null ? indicators.us10y.toFixed(2) + '%' : 'N/A'}`,
     `VIX: ${indicators.vix != null ? indicators.vix.toFixed(2) : 'N/A'}`,
     `日経平均: ${indicators.nikkei != null ? indicators.nikkei.toFixed(0) : 'N/A'}`,
@@ -132,6 +134,7 @@ export async function getDecision(params: {
   recentTrades?: Array<{ pair: string; direction: string; pnl: number; close_reason: string }>;
   allPositionDirections?: string[];
   sparkRates?: number[];
+  regime?: string;
   apiKey: string;
 }): Promise<GeminiDecision> {
   const { apiKey, instrument, ...rest } = params;
@@ -185,6 +188,7 @@ export async function getDecisionGPT(params: {
   recentTrades?: Array<{ pair: string; direction: string; pnl: number; close_reason: string }>;
   allPositionDirections?: string[];
   sparkRates?: number[];
+  regime?: string;
   apiKey: string;
 }): Promise<GeminiDecision> {
   const { apiKey, instrument, ...rest } = params;
@@ -236,6 +240,7 @@ export async function getDecisionClaude(params: {
   recentTrades?: Array<{ pair: string; direction: string; pnl: number; close_reason: string }>;
   allPositionDirections?: string[];
   sparkRates?: number[];
+  regime?: string;
   apiKey: string;
 }): Promise<GeminiDecision> {
   const { apiKey, instrument, ...rest } = params;
@@ -297,6 +302,7 @@ export async function getDecisionWithHedge(params: {
   recentTrades?: Array<{ pair: string; direction: string; pnl: number; close_reason: string }>;
   allPositionDirections?: string[];
   sparkRates?: number[];
+  regime?: string;
   geminiApiKey: string;
   openaiApiKey?: string;
   openaiApiKey2?: string;

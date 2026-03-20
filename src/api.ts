@@ -335,11 +335,11 @@ export async function getApiStatus(db: D1Database, tradingEnv?: { TRADING_ENABLE
       }
 
       // EWMA ボラティリティ（positions.log_return から計算）
-      const logReturnsRaw = await db.prepare(
+      const ewmaLogReturnsRaw = await db.prepare(
         'SELECT log_return FROM positions WHERE status = \'CLOSED\' AND log_return IS NOT NULL ORDER BY closed_at ASC'
       ).all<{ log_return: number }>();
-      const logReturns = (logReturnsRaw.results ?? []).map(r => r.log_return);
-      const ewmaVol = logReturns.length >= 5 ? ewmaVolatility(logReturns) : null;
+      const ewmaLogReturns = (ewmaLogReturnsRaw.results ?? []).map(r => r.log_return);
+      const ewmaVol = ewmaLogReturns.length >= 5 ? ewmaVolatility(ewmaLogReturns) : null;
 
       // 共和分検証（銘柄価格系列）
       const priceSeriesRaw = await db.prepare(
