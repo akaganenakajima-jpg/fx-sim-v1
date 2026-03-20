@@ -11,7 +11,7 @@ export function getDashboardHtml(): string {
   <meta name="theme-color" content="#000000" media="(prefers-color-scheme: dark)">
   <meta name="theme-color" content="#F2F2F7" media="(prefers-color-scheme: light)">
   <title>FX Sim</title>
-  <link rel="stylesheet" href="/style.css?v=12">
+  <link rel="stylesheet" href="/style.css?v=13">
 </head>
 <body>
   <div id="app">
@@ -323,7 +323,7 @@ export function getDashboardHtml(): string {
     </div>
 
   </div>
-  <script src="/app.js?v=12"></script>
+  <script src="/app.js?v=13"></script>
 </body>
 </html>`;
 }

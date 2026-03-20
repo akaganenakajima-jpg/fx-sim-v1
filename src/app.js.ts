@@ -487,7 +487,7 @@ export const JS = `
             var mult = instrForHistory ? instrForHistory.pnlMultiplier : 100;
             var pnl = p.pnl != null ? p.pnl : 0;
             var pnlColor2 = pnl > 0 ? 'var(--green)' : pnl < 0 ? 'var(--red)' : 'var(--label-secondary)';
-            var reasonIcon = p.close_reason === 'TP' ? '🎯' : p.close_reason === 'SL' ? '🔴' : '—';
+            var reasonIcon = p.close_reason === 'TP' ? '<span style="color:var(--green);font-size:10px;font-weight:700;letter-spacing:0.3px">TP</span>' : p.close_reason === 'SL' ? '<span style="color:var(--red);font-size:10px;font-weight:700;letter-spacing:0.3px">SL</span>' : '—';
             return '<div style="display:flex;justify-content:space-between;align-items:center;padding:7px 0;border-bottom:1px solid var(--separator)">' +
               '<div>' +
                 '<span style="font-size:11px;color:var(--label-secondary)">' + fmtTime(p.closed_at) + '</span>' +
@@ -759,7 +759,7 @@ export const JS = `
         }
         var title = typeof item === 'string' ? item : item.title;
         var a = analysisByTitle[title] || null;
-        var flag = (a && a.attention) ? '<span class="news-flag">🔥</span>' : '';
+        var flag = (a && a.attention) ? '<span class="news-flag">注目</span>' : '';
         return '<div class="news-item' + (a && a.attention ? ' news-attention' : '') + '" data-news-idx="' + i + '">' +
           '<div class="news-item-title">' + flag + escHtml(a && a.title_ja ? a.title_ja : (typeof item === 'string' ? item : item.title)) + '</div>' +
           (dateStr ? '<div class="news-item-date">' + dateStr + '</div>' : '') +
@@ -1351,12 +1351,12 @@ export const JS = `
           '<div class="stats-grid-2">' +
             '<div>' +
               '<div class="stats-metric-label">勝率 95% CI</div>' +
-              '<div class="stats-metric-value" style="color:var(--green)">' + (wrCI.lower * 100).toFixed(1) + '%</div>' +
+              '<div class="stats-metric-value" style="color:' + (wrCI.lower * 100 >= 50 ? 'var(--green)' : wrCI.lower * 100 >= 45 ? 'var(--label)' : 'var(--red)') + '">' + (wrCI.lower * 100).toFixed(1) + '%</div>' +
               '<div class="stats-metric-sub">[' + wrLo + '% – ' + wrHi + '%]</div>' +
             '</div>' +
             '<div>' +
               '<div class="stats-metric-label">ROI 95% CI</div>' +
-              '<div class="stats-metric-value" style="color:var(--green)">' + wrPct + '</div>' +
+              '<div class="stats-metric-value" style="color:' + (roiCI && roiCI.roi >= 0 ? 'var(--green)' : 'var(--red)') + '">' + wrPct + '</div>' +
               '<div class="stats-metric-sub">[' + roiLo + ' – ' + roiHi + ']</div>' +
             '</div>' +
             '<div>' +
@@ -1366,7 +1366,7 @@ export const JS = `
             '</div>' +
             '<div>' +
               '<div class="stats-metric-label">vs ランダム</div>' +
-              '<div class="stats-metric-value" style="color:var(--green)">' + beatRate + '</div>' +
+              '<div class="stats-metric-value" style="color:' + (baseline && baseline.beatRate != null && baseline.beatRate * 100 >= 50 ? 'var(--green)' : 'var(--red)') + '">' + beatRate + '</div>' +
               '<div class="stats-metric-sub">' + pValue + '</div>' +
             '</div>' +
           '</div>' +
@@ -1410,7 +1410,7 @@ export const JS = `
             '</div>' +
             '<div>' +
               '<div class="stats-metric-label">VaR 95%</div>' +
-              '<div class="stats-metric-value">-' + var95.toLocaleString('ja-JP') + '</div>' +
+              '<div class="stats-metric-value">-' + Math.abs(var95).toLocaleString('ja-JP') + '</div>' +
               '<div class="stats-metric-sub">pip/トレード</div>' +
             '</div>' +
             '<div>' +
@@ -1826,7 +1826,7 @@ export const JS = `
           var unit = instrH ? instrH.unit : '';
           var pnl = c.pnl != null ? c.pnl : 0;
           var pnlColor = pnl > 0 ? 'var(--green)' : pnl < 0 ? 'var(--red)' : 'var(--label-secondary)';
-          var icon = c.close_reason === 'TP' ? '🎯' : c.close_reason === 'SL' ? '🔴' : '—';
+          var icon = c.close_reason === 'TP' ? '<span style="color:var(--green);font-size:10px;font-weight:700;letter-spacing:0.3px">TP</span>' : c.close_reason === 'SL' ? '<span style="color:var(--red);font-size:10px;font-weight:700;letter-spacing:0.3px">SL</span>' : '—';
           var dir = c.direction === 'BUY' ? '買い' : '空売り';
           var hidden = idx >= HIST_INITIAL ? ' style="display:none" data-hist-extra' : '';
           return '<div class="trade-row"' + hidden + '>' +

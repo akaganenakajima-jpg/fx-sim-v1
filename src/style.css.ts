@@ -792,7 +792,18 @@ body, #app {
 .news-item:last-child { border-bottom: none; }
 .news-item:active { background: rgba(255,255,255,0.06); }
 .news-attention { background: rgba(255,149,0,0.08); }
-.news-flag { margin-right: 4px; font-size: 12px; }
+.news-flag {
+  display: inline-block;
+  margin-right: 5px;
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.4px;
+  color: var(--orange);
+  background: rgba(255,149,0,0.15);
+  padding: 1px 5px;
+  border-radius: 4px;
+  vertical-align: middle;
+}
 .news-item-title {
   font-size: 13px;
   color: var(--label);
