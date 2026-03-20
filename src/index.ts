@@ -267,23 +267,29 @@ async function run(env: Env): Promise<void> {
     const existingAnalysis = await getCacheValue(env.DB, 'news_analysis');
     const forceAnalysis = !existingAnalysis && news.length > 0;
 
+    // 失敗クールダウン: 直近5分以内に失敗していたらスキップ
+    const newsFailedAtRaw = await getCacheValue(env.DB, 'news_analysis_failed_at');
+    const newsFailedAt = newsFailedAtRaw ? parseInt(newsFailedAtRaw) : 0;
+    const NEWS_COOLDOWN_MS = 5 * 60 * 1000; // 5分
+    const inNewsCooldown = (Date.now() - newsFailedAt) < NEWS_COOLDOWN_MS;
+
     // 新ニュース検出時: Geminiでマーケットインパクト分析
     let newsAnalysisRan = false;
-    if ((hasNewNews || forceAnalysis) && news.length > 0) {
+    if ((hasNewNews || forceAnalysis) && news.length > 0 && !inNewsCooldown) {
       let analysis = null;
       // Gemini → GPT → Claude フォールバック（予算チェック付き）
       try {
         analysis = await analyzeNews({ news, apiKey: getApiKey(env) });
       } catch (e) {
-        const is429 = String(e).includes('429');
-        console.warn(`[fx-sim] News analysis Gemini ${is429 ? '429' : 'error'}: ${String(e).split('\n')[0].slice(0, 80)}`);
+        console.warn(`[fx-sim] News analysis Gemini error: ${String(e).split('\n')[0].slice(0, 80)}`);
         // 残り予算チェック: 銘柄判定に20s確保
         const elapsedSoFar = Date.now() - cronStart;
         const budgetLeft = 45_000 - elapsedSoFar; // 45s予算（60s制限 - 15sマージン）
         if (budgetLeft < 10_000) {
           console.warn(`[fx-sim] News analysis skipped: budget exhausted (${elapsedSoFar}ms elapsed)`);
         } else {
-          if (is429 && env.OPENAI_API_KEY) {
+          // GPT フォールバック（全エラーで試行）
+          if (!analysis && env.OPENAI_API_KEY) {
             try {
               analysis = await analyzeNewsGPT({ news, apiKey: env.OPENAI_API_KEY });
               console.log('[fx-sim] News analysis: GPT fallback success');
@@ -291,6 +297,7 @@ async function run(env: Env): Promise<void> {
               console.warn(`[fx-sim] News analysis GPT failed: ${String(gptErr).split('\n')[0].slice(0, 80)}`);
             }
           }
+          // Claude フォールバック
           if (!analysis && env.ANTHROPIC_API_KEY && (Date.now() - cronStart) < 35_000) {
             try {
               analysis = await analyzeNewsClaude({ news, apiKey: env.ANTHROPIC_API_KEY });
@@ -301,11 +308,15 @@ async function run(env: Env): Promise<void> {
           }
         }
         if (!analysis) {
-          await insertSystemLog(env.DB, 'WARN', 'NEWS', 'ニュース分析失敗（全プロバイダー）', is429 ? 'Gemini 429→GPT/Claude失敗' : String(e).split('\n')[0].slice(0, 120));
+          // 全プロバイダー失敗 → 5分クールダウン開始
+          await setCacheValue(env.DB, 'news_analysis_failed_at', String(Date.now()));
+          await insertSystemLog(env.DB, 'WARN', 'NEWS', 'ニュース分析失敗（全プロバイダー）→5分クールダウン', String(e).split('\n')[0].slice(0, 120));
         }
       }
       if (analysis) {
         await setCacheValue(env.DB, 'news_analysis', JSON.stringify(analysis));
+        // 成功時はクールダウンをクリア
+        await setCacheValue(env.DB, 'news_analysis_failed_at', '0');
         newsAnalysisRan = true;
         console.log(`[fx-sim] News analysis: ${analysis.filter(a => a.attention).length}/${analysis.length} flagged`);
       }
