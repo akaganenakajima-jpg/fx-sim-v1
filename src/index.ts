@@ -232,8 +232,10 @@ async function run(env: Env): Promise<void> {
     await runMigrations(env.DB);
 
     // 1. 全価格・共通データを一括取得
+    const t0 = Date.now();
     const marketData = await fetchMarketData(env, now);
     if (marketData == null) return;
+    const fetchMs = Date.now() - t0;
 
     const { news, newsFetchStats: _newsFetchStats, activeNewsSources, redditSignal, indicators, prices } = marketData;
 
@@ -246,9 +248,12 @@ async function run(env: Env): Promise<void> {
     };
 
     // 2. 全銘柄のTP/SLを一括チェック（OANDA実弾ポジションはブローカー経由でクローズ）
+    const t1 = Date.now();
     await checkAndCloseAllPositions(env.DB, prices, INSTRUMENTS, brokerEnv, getWebhookUrl(env));
+    const tpSlMs = Date.now() - t1;
 
-    // 3. ニュースハッシュ更新
+    // 3. ニュースハッシュ更新（計測開始）
+    const t2 = Date.now();
     const prevNewsHashRaw = await getCacheValue(env.DB, PREV_NEWS_HASH_KEY);
     const currentNewsHash = newsHash(news.map((n) => n.title));
     const hasNewNews = currentNewsHash !== (prevNewsHashRaw ?? '');
@@ -314,6 +319,8 @@ async function run(env: Env): Promise<void> {
         }
       } catch {}
     }
+
+    const newsMs = Date.now() - t2;
 
     // 4. 銘柄ごとにフィルタ → Gemini 判定 → 記録
     // 429クールダウンチェック
@@ -440,6 +447,7 @@ async function run(env: Env): Promise<void> {
 
     let geminiOkCount = 0, gptOkCount = 0, claudeOkCount = 0, aiFailCount = 0;
 
+    const t3 = Date.now();
     // 4c-pre. AIループ用データを一括取得（銘柄ごとの直列クエリ → 3回のバッチクエリに削減）
     const aiCandidates = passed.slice(0, MAX_GEMINI_PER_RUN);
     const allOpenRaw = await env.DB
@@ -673,7 +681,13 @@ async function run(env: Env): Promise<void> {
           ` | ${geminiResult.reasoning}`
       );
     }
-    const elapsed = Date.now() - cronStart;
+    const aiLoopMs = Date.now() - t3;
+    const totalMs = Date.now() - cronStart;
+    const timings = { fetchMs, tpSlMs, newsMs, aiLoopMs, totalMs };
+    await setCacheValue(env.DB, 'cron_phase_timings', JSON.stringify(timings));
+    console.log(`[fx-sim] timings: fetch=${fetchMs}ms tpsl=${tpSlMs}ms news=${newsMs}ms ai=${aiLoopMs}ms total=${totalMs}ms`);
+
+    const elapsed = totalMs;
     await setCacheValue(env.DB, 'prev_cron_elapsed', String(elapsed));
     const aiTotal = geminiOkCount + gptOkCount + claudeOkCount + aiFailCount;
     console.log(`[fx-sim] cron done in ${elapsed}ms (limit=${MAX_GEMINI_PER_RUN})` + (aiTotal > 0 ? ` | AI: Gemini=${geminiOkCount} GPT=${gptOkCount} Claude=${claudeOkCount} Fail=${aiFailCount}` : ''));
