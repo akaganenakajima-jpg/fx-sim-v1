@@ -325,29 +325,46 @@ body, #app {
 .badge-sell { background: rgba(255,69,58,0.18);   color: var(--red);   }
 .badge-hold { background: var(--bg-secondary);    color: var(--label-secondary); }
 
-/* ─── AI Card ─── */
-.ai-inline {
+/* ─── AI Rich Card ─── */
+.ai-rich-card {
+  margin: 0 16px;
+  padding: 12px 14px;
+  background: var(--bg-secondary);
+  border-radius: 12px;
+  border: 1px solid var(--separator);
+}
+.ai-rich-top {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 8px 16px;
-  flex-wrap: wrap;
+  margin-bottom: 8px;
 }
-.ai-inline .ai-badge { font-size: 11px; padding: 4px 8px; flex-shrink: 0; }
-.ai-inline-text {
-  font-size: 12px;
+.ai-rich-card .ai-badge { font-size: 11px; padding: 3px 8px; flex-shrink: 0; }
+.ai-rich-pair { font-size: 14px; font-weight: 600; color: var(--label); }
+.ai-rich-rate { font-size: 13px; color: var(--label-secondary); font-variant-numeric: tabular-nums; }
+.ai-rich-time { font-size: 11px; color: var(--label-tertiary); margin-left: auto; flex-shrink: 0; }
+.ai-rich-reasoning {
+  font-size: 13px;
+  line-height: 1.5;
   color: var(--label-secondary);
-  flex: 1;
-  min-width: 0;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
   overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
 }
-.ai-inline-time { font-size: 11px; color: var(--label-tertiary); flex-shrink: 0; }
-.ai-inline-status {
+.ai-rich-reasoning.expanded {
+  display: block;
+  -webkit-line-clamp: unset;
+  overflow: visible;
+}
+.ai-rich-status {
   font-size: 11px;
   color: var(--label-tertiary);
-  width: 100%;
+  margin-top: 6px;
+  padding-top: 6px;
+  border-top: 1px solid var(--separator);
 }
 /* AI判断タブ用（従来スタイル維持） */
 .card-ai {
@@ -700,7 +717,8 @@ body, #app {
 .news-drawer.visible { display: flex; }
 .news-drawer.expanded {
   transform: translateY(0);
-  height: calc(100dvh - 49px - env(safe-area-inset-bottom) - env(safe-area-inset-top) - 120px);
+  bottom: 0;
+  height: calc(100dvh - env(safe-area-inset-top) - 120px);
 }
 .news-drawer.expanded .news-drawer-body {
   overflow-y: auto;
@@ -849,6 +867,15 @@ body, #app {
 .tab-item.active svg { filter: drop-shadow(0 0 4px rgba(10,132,255,0.45)); }
 .tab-item:active { opacity: 0.6; }
 .tab-item svg { flex-shrink: 0; }
+/* ドロワー/シート展開時はタブバーを隠す */
+body.drawer-open .tab-bar,
+body.sheet-open .tab-bar {
+  transform: translateY(100%);
+  transition: transform 0.3s cubic-bezier(0.22, 1, 0.36, 1);
+}
+.tab-bar {
+  transition: transform 0.3s cubic-bezier(0.22, 1, 0.36, 1);
+}
 
 /* ─── Tab Panels ─── */
 .tab-panel { display: none; }
@@ -873,12 +900,13 @@ body, #app {
 
 /* ─── ティッカーバー（ニュース展開時の横スクロール） ─── */
 .compact-summary {
-  height: 0;
-  opacity: 0;
+  display: none;
   overflow: hidden;
   pointer-events: none;
-  transition: height 0.46s cubic-bezier(0.22, 1, 0.36, 1), opacity 0.38s cubic-bezier(0.22, 1, 0.36, 1);
   flex-shrink: 0;
+}
+#tab-portfolio.drawer-expanded .compact-summary.marquee-active {
+  display: block;
 }
 .ticker-scroll {
   display: inline-flex;
@@ -887,7 +915,7 @@ body, #app {
   white-space: nowrap;
 }
 .compact-summary.marquee-active .ticker-scroll {
-  animation: ticker-marquee 22s linear infinite;
+  animation: ticker-marquee 44s linear infinite;
 }
 @keyframes ticker-marquee {
   0%   { transform: translateX(0); }
@@ -931,8 +959,6 @@ body, #app {
 
 /* ドロワー展開時の状態 */
 #tab-portfolio.drawer-expanded .compact-summary {
-  height: 72px;
-  opacity: 1;
   pointer-events: auto;
 }
 #tab-portfolio.drawer-expanded .card {

@@ -21,7 +21,15 @@ export function getDashboardHtml(): string {
       <h1 class="header-title">FX Sim</h1>
       <div class="header-right">
         <span id="last-updated" class="header-time" aria-live="polite">—</span>
-        <button id="theme-btn" class="refresh-btn" aria-label="テーマ切替" title="テーマ切替" style="font-size:16px">☀️</button>
+        <button id="theme-btn" class="refresh-btn" aria-label="テーマ切替" title="テーマ切替">
+          <svg id="theme-icon-sun" width="18" height="18" viewBox="0 0 18 18" fill="none" aria-hidden="true">
+            <circle cx="9" cy="9" r="3.5" stroke="currentColor" stroke-width="1.6"/>
+            <path d="M9 1.5v2M9 14.5v2M1.5 9h2M14.5 9h2M3.7 3.7l1.4 1.4M12.9 12.9l1.4 1.4M14.3 3.7l-1.4 1.4M5.1 12.9l-1.4 1.4" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/>
+          </svg>
+          <svg id="theme-icon-moon" width="18" height="18" viewBox="0 0 18 18" fill="none" aria-hidden="true" style="display:none">
+            <path d="M15.1 10.4A6.5 6.5 0 0 1 7.6 2.9 6.5 6.5 0 1 0 15.1 10.4Z" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/>
+          </svg>
+        </button>
         <button id="refresh-btn" class="refresh-btn" aria-label="今すぐ更新" title="更新">
           <svg width="18" height="18" viewBox="0 0 18 18" fill="none" aria-hidden="true">
             <path d="M9 2.5A6.5 6.5 0 1 1 3.5 8" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
@@ -78,13 +86,16 @@ export function getDashboardHtml(): string {
         </div>
       </section>
 
-      <!-- 銘柄ウォッチリスト -->
-      <!-- AI最新判断（インライン） -->
-      <div class="ai-inline" id="ai-card">
-        <span id="ai-badge" class="badge badge-hold ai-badge">—</span>
-        <span id="ai-reasoning" class="ai-inline-text">読み込み中…</span>
-        <span id="ai-time" class="ai-inline-time">—</span>
-        <div id="ai-status" class="ai-inline-status">—</div>
+      <!-- AI最新判断（リッチカード） -->
+      <div class="ai-rich-card" id="ai-card">
+        <div class="ai-rich-top">
+          <span id="ai-badge" class="badge badge-hold ai-badge">—</span>
+          <span id="ai-pair" class="ai-rich-pair">—</span>
+          <span id="ai-rate" class="ai-rich-rate">—</span>
+          <span id="ai-time" class="ai-rich-time">—</span>
+        </div>
+        <div id="ai-reasoning" class="ai-rich-reasoning">読み込み中…</div>
+        <div id="ai-status" class="ai-rich-status">—</div>
       </div>
 
       <!-- 銘柄ウォッチリスト -->
@@ -167,34 +178,31 @@ export function getDashboardHtml(): string {
     <!-- ─── タブバー ─── -->
     <nav class="tab-bar" role="tablist" aria-label="メインナビゲーション">
       <button class="tab-item active" role="tab" aria-selected="true"  data-tab="tab-portfolio" aria-controls="tab-portfolio">
-        <svg width="20" height="20" viewBox="0 0 22 22" fill="none" aria-hidden="true">
-          <rect x="3" y="11" width="4" height="8" rx="1.5" fill="currentColor"/>
-          <rect x="9" y="7"  width="4" height="12" rx="1.5" fill="currentColor"/>
-          <rect x="15" y="3" width="4" height="16" rx="1.5" fill="currentColor"/>
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+          <path d="M3 9l9-6 9 6v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V9z" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+          <path d="M9 22V12h6v10" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
         </svg>
         資産
       </button>
       <button class="tab-item" role="tab" aria-selected="false" data-tab="tab-ai" aria-controls="tab-ai">
-        <svg width="20" height="20" viewBox="0 0 22 22" fill="none" aria-hidden="true">
-          <path d="M11 3v2M11 17v2M3 11h2M17 11h2" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
-          <path d="M5.5 5.5l1.5 1.5M15 15l1.5 1.5M15 5.5l-1.5 1.5M5.5 16.5l1.5-1.5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
-          <circle cx="11" cy="11" r="2.5" fill="currentColor"/>
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+          <path d="M12 2a4 4 0 0 1 4 4c0 1.5-.8 2.8-2 3.5V11h3a3 3 0 0 1 3 3v1.5a2.5 2.5 0 0 1-2.5 2.5H17v2a2 2 0 0 1-2 2H9a2 2 0 0 1-2-2v-2h-.5A2.5 2.5 0 0 1 4 15.5V14a3 3 0 0 1 3-3h3V9.5A4 4 0 0 1 12 2z" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/>
+          <circle cx="9.5" cy="15" r="1" fill="currentColor"/>
+          <circle cx="14.5" cy="15" r="1" fill="currentColor"/>
         </svg>
         AI判断
       </button>
       <button class="tab-item" role="tab" aria-selected="false" data-tab="tab-stats" aria-controls="tab-stats">
-        <svg width="20" height="20" viewBox="0 0 22 22" fill="none" aria-hidden="true">
-          <path d="M3 19 L7 13 L11 15 L15 9 L19 5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
-          <circle cx="7"  cy="13" r="2" fill="currentColor"/>
-          <circle cx="11" cy="15" r="2" fill="currentColor"/>
-          <circle cx="15" cy="9"  r="2" fill="currentColor"/>
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+          <path d="M18 20V10M12 20V4M6 20v-6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
         </svg>
         統計
       </button>
       <button class="tab-item" role="tab" aria-selected="false" data-tab="tab-log" aria-controls="tab-log">
-        <svg width="20" height="20" viewBox="0 0 22 22" fill="none" aria-hidden="true">
-          <rect x="3" y="3" width="16" height="16" rx="3" stroke="currentColor" stroke-width="1.8"/>
-          <path d="M7 8h8M7 11h8M7 14h5" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+          <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/>
+          <path d="M14 2v6h6" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
+          <path d="M8 13h8M8 17h5" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>
         </svg>
         ログ
       </button>

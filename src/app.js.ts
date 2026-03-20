@@ -175,12 +175,91 @@ export const JS = `
     requestAnimationFrame(step);
   }
 
+  var savedScrollY = 0;
   function lockScroll() {
     document.body.classList.add('sheet-open');
-    if (document.body.classList.contains('drawer-open')) return;
+    if (document.body.style.position === 'fixed') return; // 既にロック済み
+    savedScrollY = window.scrollY;
     document.body.style.overflow = 'hidden';
     document.body.style.position = 'fixed';
+    document.body.style.top = '-' + savedScrollY + 'px';
     document.body.style.width = '100%';
+  }
+
+  // ── 値動きチャート（シート用） ──
+  function drawPriceChart(points, pair, entryRate) {
+    if (!points || points.length < 2) return '<div style="text-align:center;padding:20px 0;font-size:12px;color:var(--label-tertiary)">データ不足</div>';
+    var rates = points.map(function(p) { return p.rate; });
+    var min = Math.min.apply(null, rates);
+    var max = Math.max.apply(null, rates);
+    var range = max - min || 1;
+    var pad = 4;
+    var w = 320;
+    var h = 140;
+    var chartW = w - 50;
+    var chartH = h - 20;
+    var step = (chartW - pad * 2) / (rates.length - 1);
+
+    // メインライン
+    var pts = rates.map(function(r, i) {
+      var x = 50 + pad + i * step;
+      var y = 10 + chartH - pad - ((r - min) / range) * (chartH - pad * 2);
+      return { x: x, y: y };
+    });
+
+    var pathD = pts.map(function(p, i) {
+      return (i === 0 ? 'M' : 'L') + p.x.toFixed(1) + ',' + p.y.toFixed(1);
+    }).join(' ');
+
+    // グラデーション塗り
+    var lastPt = pts[pts.length - 1];
+    var firstPt = pts[0];
+    var isUp = rates[rates.length - 1] >= rates[0];
+    var lineColor = isUp ? 'var(--green)' : 'var(--red)';
+    var gradId = 'cg' + Math.random().toString(36).substr(2, 4);
+
+    var fillD = pathD + ' L' + lastPt.x.toFixed(1) + ',' + (10 + chartH) + ' L' + firstPt.x.toFixed(1) + ',' + (10 + chartH) + ' Z';
+
+    // Y軸ラベル（3段）
+    var yLabels = '';
+    for (var yi = 0; yi <= 2; yi++) {
+      var val = min + range * (yi / 2);
+      var yPos = 10 + chartH - pad - (yi / 2) * (chartH - pad * 2);
+      yLabels += '<text x="46" y="' + (yPos + 3).toFixed(1) + '" text-anchor="end" font-size="9" fill="var(--label-tertiary)">' + fmtPrice(pair, val) + '</text>';
+      yLabels += '<line x1="50" y1="' + yPos.toFixed(1) + '" x2="' + (w - 2) + '" y2="' + yPos.toFixed(1) + '" stroke="var(--separator)" stroke-width="0.5" stroke-dasharray="2,2"/>';
+    }
+
+    // エントリーライン
+    var entryLine = '';
+    if (entryRate != null && entryRate >= min && entryRate <= max) {
+      var ey = 10 + chartH - pad - ((entryRate - min) / range) * (chartH - pad * 2);
+      entryLine = '<line x1="50" y1="' + ey.toFixed(1) + '" x2="' + (w - 2) + '" y2="' + ey.toFixed(1) + '" stroke="var(--blue)" stroke-width="0.8" stroke-dasharray="4,3" opacity="0.7"/>' +
+        '<text x="' + (w - 2) + '" y="' + (ey - 4).toFixed(1) + '" text-anchor="end" font-size="8" fill="var(--blue)">Entry</text>';
+    }
+
+    // X軸ラベル（最初と最後の時刻）
+    var firstTime = points[0].created_at ? new Date(points[0].created_at).toLocaleTimeString('ja-JP', { hour: '2-digit', minute: '2-digit' }) : '';
+    var lastTime = points[points.length - 1].created_at ? new Date(points[points.length - 1].created_at).toLocaleTimeString('ja-JP', { hour: '2-digit', minute: '2-digit' }) : '';
+    var xLabels = '<text x="52" y="' + (h - 2) + '" font-size="9" fill="var(--label-tertiary)">' + firstTime + '</text>' +
+      '<text x="' + (w - 2) + '" y="' + (h - 2) + '" text-anchor="end" font-size="9" fill="var(--label-tertiary)">' + lastTime + '</text>';
+
+    // 最新値ドット
+    var dot = '<circle cx="' + lastPt.x.toFixed(1) + '" cy="' + lastPt.y.toFixed(1) + '" r="3" fill="' + lineColor + '"/>';
+
+    return '<div style="margin:0 -4px">' +
+      '<svg width="100%" viewBox="0 0 ' + w + ' ' + h + '" preserveAspectRatio="xMidYMid meet">' +
+        '<defs><linearGradient id="' + gradId + '" x1="0" y1="0" x2="0" y2="1">' +
+          '<stop offset="0%" stop-color="' + lineColor + '" stop-opacity="0.25"/>' +
+          '<stop offset="100%" stop-color="' + lineColor + '" stop-opacity="0.02"/>' +
+        '</linearGradient></defs>' +
+        yLabels +
+        '<path d="' + fillD + '" fill="url(#' + gradId + ')"/>' +
+        '<path d="' + pathD + '" fill="none" stroke="' + lineColor + '" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>' +
+        entryLine +
+        dot +
+        xLabels +
+      '</svg>' +
+    '</div>';
   }
 
   // ── ボトムシート ──
@@ -201,10 +280,15 @@ export const JS = `
       currentRate = pts.length > 0 ? pts[pts.length - 1].rate : null;
     }
 
+    // チャートデータ取得
+    var chartPoints = lastData && lastData.sparklines && lastData.sparklines[pair] ? lastData.sparklines[pair] : [];
+
     // HOLDポジション（pos=null）の場合
     if (!pos) {
       title.textContent = (instr ? instr.label : '銘柄') + ' — 待機中';
+      var chartHtml = drawPriceChart(chartPoints, pair, null);
       body.innerHTML =
+        chartHtml +
         row('ステータス', '<span style="color:var(--label-secondary);font-weight:600">HOLD（ポジションなし）</span>') +
         (currentRate != null ? row('現在値', fmtPrice(pair, currentRate)) : '');
 
@@ -380,7 +464,10 @@ export const JS = `
     }
     var leverage = notional > 0 ? (notional / INITIAL_CAPITAL) : 0;
 
+    var posChartHtml = drawPriceChart(chartPoints, pair, pos.entry_rate);
+
     body.innerHTML =
+      posChartHtml +
       row('方向', '<span style="color:' + (pos.direction === 'BUY' ? 'var(--green)' : 'var(--red)') + ';font-weight:700">' + (pos.direction === 'BUY' ? '買い' : '空売り') + '</span>') +
       progressHtml +
       (currentRate != null ? row('現在値', fmtPrice(pos.pair, currentRate)) : '') +
@@ -408,10 +495,13 @@ export const JS = `
     sheet.classList.remove('open');
     el('sheet-backdrop').classList.remove('visible');
     document.body.classList.remove('sheet-open');
+    // ドロワーが開いている場合はスクロールロックを維持
     if (!document.body.classList.contains('drawer-open')) {
       document.body.style.overflow = '';
       document.body.style.position = '';
+      document.body.style.top = '';
       document.body.style.width = '';
+      window.scrollTo(0, savedScrollY);
     }
   }
 
@@ -457,18 +547,30 @@ export const JS = `
 
     var compactEl = el('compact-summary');
 
+    var savedContentScrollTop = 0;
     function expand() {
       isExpanded = true;
       drawer.style.transition = '';
       drawer.style.transform = '';
       drawer.classList.add('expanded');
       document.body.classList.add('drawer-open');
-      // スクロール位置を先頭に戻してティッカーバーを見せる
-      if (content) content.scrollTop = 0;
       if (content) {
-        content.style.transition = EASE_OUT;
+        // まずoverflow:hiddenで慣性スクロールを停止してからscrollTopを保存・リセット
         content.classList.add('drawer-expanded');
+        savedContentScrollTop = content.scrollTop;
+        content.scrollTop = 0;
+        content.style.transition = EASE_OUT;
         applyContentProgress(1);
+      }
+      // 背景スクロールロック
+      if (document.body.style.position !== 'fixed') {
+        savedScrollY = window.scrollY;
+        document.body.style.overflow = 'hidden';
+        document.body.style.position = 'fixed';
+        document.body.style.top = '0px';
+        document.body.style.width = '100%';
+      } else {
+        document.body.style.top = '0px';
       }
       if (compactEl) compactEl.classList.add('marquee-active');
     }
@@ -478,6 +580,16 @@ export const JS = `
       drawer.style.transform = '';
       drawer.classList.remove('expanded');
       document.body.classList.remove('drawer-open');
+      // シートが開いていなければスクロールロック解除
+      if (!document.body.classList.contains('sheet-open')) {
+        document.body.style.overflow = '';
+        document.body.style.position = '';
+        document.body.style.top = '';
+        document.body.style.width = '';
+        window.scrollTo(0, savedScrollY);
+      }
+      // コンテンツのスクロール位置を復元
+      if (content) content.scrollTop = savedContentScrollTop;
       if (content) {
         content.style.transition = EASE_OUT;
         content.classList.remove('drawer-expanded');
@@ -602,8 +714,14 @@ export const JS = `
           '<div style="font-size:13px;line-height:1.5;color:var(--label)">' + escHtml(ana.impact) + '</div>' +
         '</div>';
       }
+      var sourceHtml = item.source
+        ? '<span style="font-size:11px;font-weight:600;color:var(--blue);background:rgba(10,132,255,0.1);padding:2px 8px;border-radius:4px;margin-left:8px">' + escHtml(item.source) + '</span>'
+        : '';
       el('sheet-body').innerHTML =
-        (dateStr ? '<div style="font-size:12px;color:var(--label-secondary);margin-bottom:8px">' + dateStr + '</div>' : '') +
+        '<div style="display:flex;align-items:center;margin-bottom:8px">' +
+          (dateStr ? '<span style="font-size:12px;color:var(--label-secondary)">' + dateStr + '</span>' : '') +
+          sourceHtml +
+        '</div>' +
         '<div style="font-size:15px;font-weight:600;line-height:1.5;margin-bottom:12px">' + escHtml(item.title) + '</div>' +
         impactHtml +
         (item.description ? '<div style="font-size:13px;color:var(--label-secondary);line-height:1.6">' + escHtml(item.description) + '</div>' : '');
@@ -1197,10 +1315,10 @@ export const JS = `
     dpEl.className   = 'hero-sub-value ' + (totalPnl > 0 ? 'positive' : totalPnl < 0 ? 'negative' : 'neutral');
 
     var roiEl = el('roi-value');
-    var roi = totalPnl / INITIAL_CAPITAL * 100;
+    var roiDecimal = totalPnl / INITIAL_CAPITAL;
     if (roiEl) {
-      roiEl.textContent = (roi >= 0 ? '+' : '') + roi.toFixed(2) + '%';
-      roiEl.className = 'hero-sub-value ' + (roi > 0 ? 'positive' : roi < 0 ? 'negative' : 'neutral');
+      roiEl.textContent = (roiDecimal >= 0 ? '+' : '') + roiDecimal.toFixed(2);
+      roiEl.className = 'hero-sub-value ' + (roiDecimal > 0 ? 'positive' : roiDecimal < 0 ? 'negative' : 'neutral');
     }
     el('win-rate').textContent     = perf.winRate.toFixed(1) + '%';
     el('total-trades').textContent = perf.totalClosed + ' 件';
@@ -1212,15 +1330,19 @@ export const JS = `
     var ld = data.latestDecision;
     var recentAction = (data.recentDecisions || []).length > 0 ? data.recentDecisions[0] : null;
 
-    // ポートフォリオタブ: 直近アクション + 稼働状況
+    // ポートフォリオタブ: 直近アクション（リッチカード）
     if (recentAction) {
       var bc = recentAction.decision === 'BUY' ? 'badge-buy' : 'badge-sell';
       var b1 = el('ai-badge');
       if (b1) { b1.textContent = recentAction.decision; b1.className = 'badge ' + bc + ' ai-badge'; }
+      var pairEl = el('ai-pair');
+      if (pairEl) pairEl.textContent = recentAction.pair;
+      var rateEl = el('ai-rate');
+      if (rateEl) rateEl.textContent = '@ ' + fmt(recentAction.rate, recentAction.rate < 10 ? 4 : recentAction.rate < 1000 ? 2 : 0);
       var r1 = el('ai-reasoning');
-      if (r1) r1.textContent = fmtReasoning(recentAction.reasoning);
+      if (r1) r1.textContent = recentAction.reasoning || '';
       var t1 = el('ai-time');
-      if (t1) t1.textContent = '[' + recentAction.pair + '] ' + fmtTime(recentAction.created_at);
+      if (t1) t1.textContent = fmtTime(recentAction.created_at);
     }
     // 稼働状況ライン
     var statusEl = el('ai-status');
@@ -1537,6 +1659,14 @@ export const JS = `
       });
   }
 
+  // ── AI判断理由の展開トグル ──
+  var aiReasoning = el('ai-reasoning');
+  if (aiReasoning) {
+    aiReasoning.addEventListener('click', function() {
+      aiReasoning.classList.toggle('expanded');
+    });
+  }
+
   // ── イベントリスナー ──
   var btn = el('refresh-btn');
   if (btn) {
@@ -1558,18 +1688,26 @@ export const JS = `
 
   // テーマ切替
   var themeBtn = el('theme-btn');
+  var sunIcon = el('theme-icon-sun');
+  var moonIcon = el('theme-icon-moon');
+  function updateThemeIcon(theme) {
+    if (!sunIcon || !moonIcon) return;
+    // ダークモード時: 太陽アイコン（ライトに切替）、ライトモード時: 月アイコン（ダークに切替）
+    sunIcon.style.display = theme === 'light' ? 'none' : '';
+    moonIcon.style.display = theme === 'light' ? '' : 'none';
+  }
   if (themeBtn) {
     var savedTheme = localStorage.getItem('fx-theme');
     if (savedTheme) {
       document.documentElement.setAttribute('data-theme', savedTheme);
-      themeBtn.textContent = savedTheme === 'light' ? '🌙' : '☀️';
+      updateThemeIcon(savedTheme);
     }
     themeBtn.addEventListener('click', function() {
       var current = document.documentElement.getAttribute('data-theme');
       var next = current === 'light' ? 'dark' : 'light';
       document.documentElement.setAttribute('data-theme', next);
       localStorage.setItem('fx-theme', next);
-      themeBtn.textContent = next === 'light' ? '🌙' : '☀️';
+      updateThemeIcon(next);
     });
   }
 
