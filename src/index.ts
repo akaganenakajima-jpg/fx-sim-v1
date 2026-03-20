@@ -94,7 +94,6 @@ export default {
             TRADING_ENABLED: env.TRADING_ENABLED, OANDA_LIVE: env.OANDA_LIVE,
             RISK_MAX_DAILY_LOSS: env.RISK_MAX_DAILY_LOSS, RISK_MAX_LIVE_POSITIONS: env.RISK_MAX_LIVE_POSITIONS,
             RISK_MAX_LOT_SIZE: env.RISK_MAX_LOT_SIZE, RISK_ANOMALY_THRESHOLD: env.RISK_ANOMALY_THRESHOLD,
-            geminiApiKey: env.GEMINI_API_KEY,
           });
           // unpaired surrogateを除去して不正JSONを防止
           const json = JSON.stringify(status).replace(/[\uD800-\uDFFF]/g, '');

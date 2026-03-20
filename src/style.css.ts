@@ -15,6 +15,7 @@ export const CSS = `
   --red:              #FF453A;
   --orange:           #FF9F0A;
   --blue:             #0A84FF;
+  --teal:             #5AC8FA;
   --purple:           #BF5AF2;
   --label-tertiary:   rgba(235,235,245,0.3);
   --label-quaternary: rgba(235,235,245,0.18);
@@ -44,6 +45,7 @@ export const CSS = `
     --red:              #FF3B30;
     --orange:           #FF9500;
     --blue:             #007AFF;
+    --teal:             #32ADE6;
     --purple:           #AF52DE;
   }
 }
@@ -61,6 +63,7 @@ export const CSS = `
   --red:              #FF3B30;
   --orange:           #FF9500;
   --blue:             #007AFF;
+  --teal:             #32ADE6;
   --purple:           #AF52DE;
 }
 
@@ -2110,14 +2113,14 @@ body.sheet-open .tab-bar {
 
 /* タイムラインカード */
 .tl-list { display: flex; flex-direction: column; gap: 8px; }
-.tl-card { background: var(--bg-elevated); border-radius: 14px; overflow: hidden; cursor: pointer; transition: opacity 0.1s ease; }
+.tl-card { position: relative; background: var(--bg-elevated); border-radius: 14px; overflow: hidden; cursor: pointer; transition: opacity 0.1s ease; }
 .tl-card:active { opacity: 0.75; }
 .tl-accent { position: absolute; left: 0; top: 0; bottom: 0; width: 3px; }
 .tl-accent.open   { background: var(--blue); }
 .tl-accent.tp     { background: var(--green); }
 .tl-accent.sl     { background: var(--red); }
 .tl-accent.closed { background: var(--label-tertiary); }
-.tl-inner { position: relative; padding: 12px 12px 12px 16px; }
+.tl-inner { padding: 12px 12px 12px 16px; }
 .tl-row1 { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; }
 .tl-row2 { display: flex; align-items: center; gap: 6px; margin-bottom: 8px; }
 .tl-row3 { display: flex; align-items: center; justify-content: space-between; }
