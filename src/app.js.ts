@@ -1315,10 +1315,10 @@ export const JS = `
     dpEl.className   = 'hero-sub-value ' + (totalPnl > 0 ? 'positive' : totalPnl < 0 ? 'negative' : 'neutral');
 
     var roiEl = el('roi-value');
-    var roiDecimal = totalPnl / INITIAL_CAPITAL;
+    var roiPct = (totalPnl / INITIAL_CAPITAL) * 100;
     if (roiEl) {
-      roiEl.textContent = (roiDecimal >= 0 ? '+' : '') + roiDecimal.toFixed(2);
-      roiEl.className = 'hero-sub-value ' + (roiDecimal > 0 ? 'positive' : roiDecimal < 0 ? 'negative' : 'neutral');
+      roiEl.textContent = (roiPct >= 0 ? '+' : '') + roiPct.toFixed(2) + '%';
+      roiEl.className = 'hero-sub-value ' + (roiPct > 0 ? 'positive' : roiPct < 0 ? 'negative' : 'neutral');
     }
     el('win-rate').textContent     = perf.winRate.toFixed(1) + '%';
     el('total-trades').textContent = perf.totalClosed + ' 件';
