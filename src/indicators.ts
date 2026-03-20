@@ -1,6 +1,7 @@
 // Yahoo Finance から VIX・日経(^N225)・S&P500(^GSPC)・米10年債(^TNX) を取得
 // ^TNX = CBOE 10-Year Treasury Note Yield Index（単位: %）
 // FRED API 依存を廃止し全指標をYahoo Financeに統一
+// Yahoo Finance 障害時は Twelve Data API へ自動フォールバック
 
 export interface MarketIndicators {
   vix: number | null;
@@ -57,7 +58,31 @@ async function fetchYahoo(symbol: string): Promise<number | null> {
   }
 }
 
-export async function getMarketIndicators(): Promise<MarketIndicators> {
+/** Twelve Data API から主要銘柄を取得（Yahoo Finance 障害時フォールバック）
+ *  無料枠: 800 req/day → 障害検知時のみ呼び出す
+ */
+async function fetchFromTwelveData(apiKey: string): Promise<Partial<MarketIndicators>> {
+  // Twelve Data は複数銘柄をカンマ区切りで1リクエストに集約
+  const symbols = 'USD/JPY,XAU/USD,BTC/USD,EUR/USD,GBP/USD,AUD/USD';
+  const url = `https://api.twelvedata.com/price?symbol=${symbols}&apikey=${apiKey}`;
+  try {
+    const res = await fetch(url, { signal: AbortSignal.timeout(8000) });
+    if (!res.ok) return {};
+    const data = await res.json() as Record<string, { price?: string; code?: number }>;
+    return {
+      usdjpy:  data['USD/JPY']?.price  ? parseFloat(data['USD/JPY'].price!)  : null,
+      gold:    data['XAU/USD']?.price  ? parseFloat(data['XAU/USD'].price!)  : null,
+      btcusd:  data['BTC/USD']?.price  ? parseFloat(data['BTC/USD'].price!)  : null,
+      eurusd:  data['EUR/USD']?.price  ? parseFloat(data['EUR/USD'].price!)  : null,
+      gbpusd:  data['GBP/USD']?.price  ? parseFloat(data['GBP/USD'].price!)  : null,
+      audusd:  data['AUD/USD']?.price  ? parseFloat(data['AUD/USD'].price!)  : null,
+    };
+  } catch {
+    return {};
+  }
+}
+
+export async function getMarketIndicators(twelveDataApiKey?: string): Promise<MarketIndicators> {
   const [vix, nikkei, sp500, us10y, usdjpy, btcusd, gold, eurusd, ethusd, crudeoil, natgas, copper, silver, gbpusd, audusd, solusd, dax, nasdaq] = await Promise.all([
     fetchYahoo('^VIX'),
     fetchYahoo('^N225'),
@@ -79,5 +104,23 @@ export async function getMarketIndicators(): Promise<MarketIndicators> {
     fetchYahoo('^IXIC'),      // NASDAQ
   ]);
 
-  return { vix, us10y, nikkei, sp500, usdjpy, btcusd, gold, eurusd, ethusd, crudeoil, natgas, copper, silver, gbpusd, audusd, solusd, dax, nasdaq };
+  const result: MarketIndicators = { vix, us10y, nikkei, sp500, usdjpy, btcusd, gold, eurusd, ethusd, crudeoil, natgas, copper, silver, gbpusd, audusd, solusd, dax, nasdaq };
+
+  // Yahoo Finance 結果の null 数をカウント
+  const nullCount = [result.usdjpy, result.gold, result.btcusd, result.eurusd, result.nikkei, result.sp500]
+    .filter(v => v == null).length;
+
+  if (nullCount >= 3 && twelveDataApiKey) {
+    console.warn(`[indicators] Yahoo障害(${nullCount}件null) → Twelve Data フォールバック`);
+    const tdResult = await fetchFromTwelveData(twelveDataApiKey);
+    // null の値だけ Twelve Data で補完
+    const resultAny = result as unknown as Record<string, number | null>;
+    for (const [k, v] of Object.entries(tdResult)) {
+      if (v != null && resultAny[k] == null) {
+        resultAny[k] = v;
+      }
+    }
+  }
+
+  return result;
 }
