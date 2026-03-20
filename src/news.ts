@@ -29,28 +29,17 @@ interface SourceDef {
 }
 
 const SOURCES: SourceDef[] = [
-  // === 日本語ソース ===
+  // === 日本語速報 ===
   { name: 'NHK', url: 'https://www3.nhk.or.jp/rss/news/cat6.xml' },
   { name: 'Investing', url: 'https://jp.investing.com/rss/news.rss' },
   { name: 'Reuters_JP', url: 'https://assets.wor.jp/rss/rdf/reuters/top.rdf' },
   { name: '2NN_Biz', url: 'https://www.2nn.jp/rss/bizplus.rdf' },
-  { name: 'GNews_FX', url: 'https://news.google.com/rss/search?q=%E7%82%BA%E6%9B%BF+%E3%83%89%E3%83%AB%E5%86%86+%E6%97%A5%E9%8A%80&hl=ja&gl=JP&ceid=JP%3Aja' },
-  { name: 'GNews_Nikkei', url: 'https://news.google.com/rss/search?q=%E6%97%A5%E7%B5%8C%E5%B9%B3%E5%9D%87+%E6%A0%AA%E4%BE%A1+%E6%9D%B1%E8%A8%BC&hl=ja&gl=JP&ceid=JP%3Aja' },
-
-  // === 英語ソース（グローバル市場） ===
-  { name: 'GNews_Fed', url: 'https://news.google.com/rss/search?q=Federal+Reserve+interest+rates+Treasury+bond+yield&hl=en&gl=US&ceid=US%3Aen' },
-  { name: 'GNews_Stocks', url: 'https://news.google.com/rss/search?q=S%26P500+NASDAQ+stock+market+Wall+Street&hl=en&gl=US&ceid=US%3Aen' },
-  { name: 'GNews_Metals', url: 'https://news.google.com/rss/search?q=gold+silver+copper+price+metals+market&hl=en&gl=US&ceid=US%3Aen' },
-  { name: 'GNews_Oil', url: 'https://news.google.com/rss/search?q=crude+oil+natural+gas+OPEC+energy+price&hl=en&gl=US&ceid=US%3Aen' },
-  { name: 'GNews_Crypto', url: 'https://news.google.com/rss/search?q=bitcoin+ethereum+solana+crypto+market&hl=en&gl=US&ceid=US%3Aen' },
-  { name: 'GNews_Geo', url: 'https://news.google.com/rss/search?q=geopolitics+Iran+trade+war+sanctions&hl=en&gl=US&ceid=US%3Aen' },
-  { name: 'GNews_EU', url: 'https://news.google.com/rss/search?q=ECB+euro+DAX+European+markets&hl=en&gl=US&ceid=US%3Aen' },
-  { name: 'GNews_GBP', url: 'https://news.google.com/rss/search?q=Bank+of+England+GBP+pound+UK+economy&hl=en&gl=US&ceid=US%3Aen' },
-  { name: 'GNews_AUD', url: 'https://news.google.com/rss/search?q=Reserve+Bank+Australia+AUD+Australian+dollar&hl=en&gl=US&ceid=US%3Aen' },
-
-  // === WSJ（米国金融専門） ===
-  { name: 'WSJ_Markets', url: 'https://feeds.a.dj.com/rss/RSSMarketsMain.xml' },
-  { name: 'WSJ_Biz', url: 'https://feeds.a.dj.com/rss/WSJcomUSBusiness.xml' },
+  // === 英語速報 ===
+  { name: 'Bloomberg', url: 'https://feeds.bloomberg.com/markets/news.rss' },
+  { name: 'CNBC', url: 'https://search.cnbc.com/rs/search/combinedcms/view.xml?partnerId=wrss01&id=100003114' },
+  { name: 'FXStreet', url: 'https://www.fxstreet.com/rss' },
+  { name: 'CoinDesk', url: 'https://www.coindesk.com/arc/outboundfeeds/rss/' },
+  // WSJ削除: RSSフィードが2025年1月で停止（更新されない）
 ];
 
 function extractCdata(tag: string, xml: string): string {
@@ -143,7 +132,7 @@ export async function fetchNews(): Promise<FetchNewsResult> {
     })
   );
 
-  // 重複除去してマージ（初出ソースが記録される）
+  // 重複除去してマージ → 鮮度順ソート → 30件にカット
   const seen = new Set<string>();
   const merged: NewsItem[] = [];
   for (const r of results) {
@@ -152,10 +141,15 @@ export async function fetchNews(): Promise<FetchNewsResult> {
       if (!seen.has(item.title)) {
         seen.add(item.title);
         merged.push(item);
-        if (merged.length >= 30) break;
       }
     }
-    if (merged.length >= 30) break;
   }
-  return { items: merged, stats };
+  // 鮮度順（新しい順）にソート。日付パース失敗は末尾へ
+  merged.sort((a, b) => {
+    if (a.freshnessMin < 0 && b.freshnessMin < 0) return 0;
+    if (a.freshnessMin < 0) return 1;
+    if (b.freshnessMin < 0) return 1;
+    return a.freshnessMin - b.freshnessMin;
+  });
+  return { items: merged.slice(0, 30), stats };
 }

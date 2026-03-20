@@ -291,8 +291,13 @@ async function run(env: Env): Promise<void> {
         const enriched = analysis.map((a: { index: number; attention: boolean; impact: string | null; title_ja: string | null }) => ({
           ...a,
           title: news[a.index]?.title ?? null,
+          pubDate: news[a.index]?.pubDate ?? null,
+          description: news[a.index]?.description ?? null,
+          source: (news[a.index] as any)?.source ?? null,
         }));
         await setCacheValue(env.DB, 'news_analysis', JSON.stringify(enriched));
+        // 分析と同じニュースセットをキャッシュ（APIで同期を保証）
+        await setCacheValue(env.DB, 'latest_news', JSON.stringify(news.slice(0, 30)));
         // 成功時はクールダウンをクリア
         await setCacheValue(env.DB, 'news_analysis_failed_at', '0');
         newsAnalysisRan = true;

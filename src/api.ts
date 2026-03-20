@@ -81,8 +81,8 @@ export interface StatusResponse {
   recentCloses: Position[];
   systemLogs: SystemLog[];
   logStats: LogStats;
-  latestNews: Array<{ title: string; pubDate: string; description: string }>;
-  newsAnalysis: Array<{ index: number; attention: boolean; impact: string | null; title_ja: string | null }>;
+  latestNews: Array<{ title: string; pubDate: string; description: string; source?: string }>;
+  newsAnalysis: Array<{ index: number; attention: boolean; impact: string | null; title_ja: string | null; title?: string | null }>;
   tradingMode: 'paper' | 'demo' | 'live';
   riskStatus: {
     killSwitchActive: boolean;
@@ -233,14 +233,12 @@ export async function getApiStatus(db: D1Database, tradingEnv?: { TRADING_ENABLE
 
   const sysLogs = sysLogsRaw.results ?? [];
 
-  // ニュースをリアルタイム取得（DB依存を廃止）
-  let latestNews: Array<{ title: string; pubDate: string; description: string }> = [];
+  // ニュースをリアルタイム取得
+  let latestNews: Array<{ title: string; pubDate: string; description: string; source?: string }> = [];
   try {
     const newsResult = await fetchNews();
     latestNews = newsResult.items;
   } catch {
-    // フォールバック: DBのnews_summaryから取得
-    type NewsEntry = { title: string; pubDate: string; description: string };
     for (const row of (newsRaw.results ?? [])) {
       try {
         let parsed = JSON.parse(row.news_summary);
@@ -301,6 +299,22 @@ export async function getApiStatus(db: D1Database, tradingEnv?: { TRADING_ENABLE
     } catch {}
   }
 
+  // 分析データ取得 → ニュースリストとマージ（分析のtitleがlatestNewsに存在しなければ先頭に挿入）
+  const { items: newsAnalysis, updatedAt: analysisUpdatedAt } = await getNewsAnalysis(db);
+  const existingTitles = new Set(latestNews.map(n => n.title));
+  for (const a of newsAnalysis) {
+    if (a.title && !existingTitles.has(a.title) && a.attention) {
+      // 注目ニュースのみマージ（impact情報があるため詳細表示に価値がある）
+      const pubDate = a.pubDate || (a as any).pubDate || analysisUpdatedAt || '';
+      const desc = (a as any).description || a.impact || '';
+      const source = (a as any).source || undefined;
+      latestNews.unshift({ title: a.title, pubDate, description: desc, source });
+      existingTitles.add(a.title);
+    }
+  }
+  // 30件に制限（分析マッチ済みニュースが先頭にあるため切り捨ては末尾から）
+  if (latestNews.length > 30) latestNews.length = 30;
+
   return {
     rate,
     tradingMode,
@@ -324,7 +338,7 @@ export async function getApiStatus(db: D1Database, tradingEnv?: { TRADING_ENABLE
     riskStatus,
     instrumentScores: instrScoresRaw.results ?? [],
     latestNews,
-    newsAnalysis: await getNewsAnalysis(db),
+    newsAnalysis,
     systemLogs: sysLogs,
     logStats: {
       totalRuns: logStatsRaw?.totalRuns ?? 0,
@@ -338,10 +352,13 @@ export async function getApiStatus(db: D1Database, tradingEnv?: { TRADING_ENABLE
   };
 }
 
-async function getNewsAnalysis(db: D1Database): Promise<Array<{ index: number; attention: boolean; impact: string | null }>> {
+async function getNewsAnalysis(db: D1Database): Promise<{
+  items: Array<{ index: number; attention: boolean; impact: string | null; title_ja: string | null; title?: string | null; pubDate?: string | null }>;
+  updatedAt: string | null;
+}> {
   try {
-    const row = await db.prepare("SELECT value FROM market_cache WHERE key = 'news_analysis'").first<{ value: string }>();
-    if (row) return JSON.parse(row.value);
+    const row = await db.prepare("SELECT value, updated_at FROM market_cache WHERE key = 'news_analysis'").first<{ value: string; updated_at: string }>();
+    if (row) return { items: JSON.parse(row.value), updatedAt: row.updated_at };
   } catch {}
-  return [];
+  return { items: [], updatedAt: null };
 }

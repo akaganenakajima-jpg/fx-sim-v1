@@ -169,7 +169,7 @@ body, #app {
 }
 
 /* ─── Hero PnL ─── */
-.card-hero { padding: 16px 16px 12px; }
+.card-hero { padding: 16px; }
 .hero-label {
   font-size: 12px;
   font-weight: 500;
@@ -183,6 +183,8 @@ body, #app {
   letter-spacing: -2px;
   line-height: 1;
   font-variant-numeric: tabular-nums;
+  margin-bottom: 4px;
+  transition: color 0.3s ease;
 }
 .hero-sub {
   display: flex;
@@ -202,10 +204,12 @@ body, #app {
   color: var(--label-secondary);
 }
 .hero-sub-value {
-  font-size: 17px;
+  font-size: 15px;
   font-weight: 600;
   font-variant-numeric: tabular-nums;
   letter-spacing: -0.3px;
+  white-space: nowrap;
+  transition: color 0.3s ease;
 }
 .hero-divider {
   width: 1px;

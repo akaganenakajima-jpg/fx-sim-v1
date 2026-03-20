@@ -1770,6 +1770,38 @@ export const JS = `
     dpEl.textContent = fmtYenCompact(totalPnl);
     dpEl.className   = 'hero-sub-value ' + (totalPnl > 0 ? 'positive' : totalPnl < 0 ? 'negative' : 'neutral');
 
+    // 含み損益（全オープンポジション合計）
+    var unrealizedTotal = 0;
+    var opens = data.openPositions || [];
+    if (opens.length > 0) {
+      var rMap = {};
+      rMap['USD/JPY'] = data.rate;
+      var ld2 = data.latestDecision;
+      if (ld2) { rMap['Nikkei225'] = ld2.nikkei; rMap['S&P500'] = ld2.sp500; rMap['US10Y'] = ld2.us10y; }
+      var spk = data.sparklines || {};
+      INSTRUMENTS.forEach(function(instr) {
+        if (!rMap[instr.pair]) {
+          var pts = spk[instr.pair];
+          if (pts && pts.length > 0) rMap[instr.pair] = pts[pts.length - 1].rate;
+        }
+      });
+      opens.forEach(function(pos) {
+        var instr = INSTRUMENTS.find(function(i) { return i.pair === pos.pair; });
+        var cr = rMap[pos.pair];
+        if (instr && cr != null) {
+          var pnl = pos.direction === 'BUY'
+            ? (cr - pos.entry_rate) * (pos.lot || 1) * (instr.multiplier || 100)
+            : (pos.entry_rate - cr) * (pos.lot || 1) * (instr.multiplier || 100);
+          unrealizedTotal += pnl;
+        }
+      });
+    }
+    var upEl = el('unrealized-pnl');
+    if (upEl) {
+      upEl.textContent = fmtYenCompact(Math.round(unrealizedTotal));
+      upEl.className = 'hero-sub-value ' + (unrealizedTotal > 0 ? 'positive' : unrealizedTotal < 0 ? 'negative' : 'neutral');
+    }
+
     var roiEl = el('roi-value');
     var roiPct = (totalPnl / INITIAL_CAPITAL) * 100;
     if (roiEl) {

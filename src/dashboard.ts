@@ -116,6 +116,11 @@ export function getDashboardHtml(): string {
           </span>
           <span class="hero-divider"></span>
           <span class="hero-sub-item">
+            <span class="hero-sub-label">含み</span>
+            <span id="unrealized-pnl" class="hero-sub-value neutral">—</span>
+          </span>
+          <span class="hero-divider"></span>
+          <span class="hero-sub-item">
             <span class="hero-sub-label">ROI</span>
             <span id="roi-value" class="hero-sub-value">—</span>
           </span>
