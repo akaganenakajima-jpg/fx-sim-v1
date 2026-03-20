@@ -190,7 +190,7 @@ Windows 10/11 では4Kモニタに150〜200%スケーリングがデフォルト
 既存CSS変数を再利用し、PC専用の新規追加は最小限にする。
 
 **既存CSS変数（そのまま使用）**:
-- `--bg`, `--bg-elevated`, `--bg-secondary`, `--text`, `--text-secondary`, `--border`
+- `--bg`, `--bg-elevated`, `--bg-secondary`, `--label`, `--label-secondary`, `--separator`
 - `--accent` (#0A84FF), `--green` (#30D158), `--red` (#FF453A), `--orange` (#FF9F0A)
 - `--radius` (12px), `--radius-sm` (8px)
 
@@ -199,7 +199,7 @@ Windows 10/11 では4Kモニタに150〜200%スケーリングがデフォルト
 |---|---|---|---|
 | `--sidebar-bg` | var(--bg) | var(--bg) | サイドバー背景 |
 | `--panel-bg` | var(--bg-elevated) | var(--bg-elevated) | 右パネル背景 |
-| `--panel-border` | var(--border) | var(--border) | パネル区切り線 |
+| `--panel-border` | var(--separator) | var(--separator) | パネル区切り線 |
 
 **border-radius**: 既存の `--radius` (12px) / `--radius-sm` (8px) を統一的に使用。設計モックアップの14px/10px/6pxは既存変数に合わせて12px/8px/4pxに修正。
 
