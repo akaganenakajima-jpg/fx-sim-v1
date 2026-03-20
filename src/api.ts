@@ -3,7 +3,7 @@
 import type { Position } from './db';
 import { fetchNews } from './news';
 import { getRiskStatus, type RiskEnv } from './risk-guard';
-import { wilsonCI, sharpeWithSE, varCvar, kellyFraction, markovTransition, maxDrawdown, rollingReturns, pnlVolatility, profitFactor, bootstrapROI, aiAccuracy, randomBaselineComparison, pairCorrelation, logReturnStats, powerAnalysis } from './stats';
+import { wilsonCI, sharpeWithSE, varCvar, kellyFraction, markovTransition, maxDrawdown, rollingReturns, pnlVolatility, profitFactor, bootstrapROI, aiAccuracy, randomBaselineComparison, pairCorrelation, logReturnStats, powerAnalysis, ewmaVolatility, engleGrangerCointegration, hierarchicalWinRate } from './stats';
 
 export interface LatestDecision {
   id: number;
@@ -119,6 +119,9 @@ export interface StatusResponse {
     pairCorrelations: Array<{ pair1: string; pair2: string; r: number; n: number }>;
     logReturnStats: { mean: number; stdev: number; skewness: number; kurtosis: number } | null;
     powerAnalysis: { requiredN: number; currentN: number; currentWinRate: number; progressPct: number; isAdequate: boolean } | null;
+    ewmaVol: { sigma2: number; sigmaAnnualized: number; forecastSigma2: number; isHighVol: boolean } | null;
+    cointegrationPairs: Array<{ name: string; residualADF: number; cointegrated: boolean; sampleN: number }>;
+    hierarchicalWinRates: Array<{ pair: string; rawRate: number; bayesRate: number; n: number }>;
   } | null;
   slPatterns: Array<{
     vixBucket: string; session: string; pairCategory: string;
@@ -331,6 +334,39 @@ export async function getApiStatus(db: D1Database, tradingEnv?: { TRADING_ENABLE
         (pnlByPair[r.pair] ??= []).push(r.pnl);
       }
 
+      // EWMA ボラティリティ（positions.log_return から計算）
+      const ewmaLogReturnsRaw = await db.prepare(
+        'SELECT log_return FROM positions WHERE status = \'CLOSED\' AND log_return IS NOT NULL ORDER BY closed_at ASC'
+      ).all<{ log_return: number }>();
+      const ewmaLogReturns = (ewmaLogReturnsRaw.results ?? []).map(r => r.log_return);
+      const ewmaVol = ewmaLogReturns.length >= 5 ? ewmaVolatility(ewmaLogReturns) : null;
+
+      // 共和分検証（銘柄価格系列）
+      const priceSeriesRaw = await db.prepare(
+        `SELECT pair, rate FROM decisions
+         WHERE pair IN ('EUR/USD','GBP/USD','Gold','Silver')
+         ORDER BY pair, created_at ASC`
+      ).all<{ pair: string; rate: number }>();
+      const pricesByPair: Record<string, number[]> = {};
+      for (const r of priceSeriesRaw.results ?? []) {
+        (pricesByPair[r.pair] ??= []).push(r.rate);
+      }
+      const cointegrationPairs = [
+        { name: 'EUR/USD vs GBP/USD', pair1: 'EUR/USD', pair2: 'GBP/USD' },
+        { name: 'Gold vs Silver',     pair1: 'Gold',     pair2: 'Silver'  },
+      ].map(({ name, pair1, pair2 }) => {
+        const x = pricesByPair[pair1] ?? [];
+        const y = pricesByPair[pair2] ?? [];
+        return { name, ...engleGrangerCointegration(x, y) };
+      });
+
+      // 階層ベイズ勝率推定
+      const pairWinData = (perfByPairRaw.results ?? []).map(r => ({
+        pair: r.pair,
+        wins: r.wins,
+        total: r.total,
+      }));
+
       statistics = {
         winRateCI: ci,
         roiCI: bootstrapROI(allPnls),
@@ -350,6 +386,9 @@ export async function getApiStatus(db: D1Database, tradingEnv?: { TRADING_ENABLE
         pairCorrelations: pairCorrelation(pnlByPair),
         logReturnStats: logReturns.length >= 4 ? logReturnStats(logReturns) : null,
         powerAnalysis: powerAnalysis(totalClosed, wins),
+        ewmaVol,
+        cointegrationPairs,
+        hierarchicalWinRates: hierarchicalWinRate(pairWinData),
       };
     } catch {}
   }

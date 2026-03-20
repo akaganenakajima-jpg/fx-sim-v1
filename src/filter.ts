@@ -95,8 +95,14 @@ export function shouldCallGemini(params: {
   redditSignal: RedditSignal;
   now: Date;
   lastCallTime?: string | null;
+  thompsonScore?: number;   // トンプソン・サンプリングスコア（0〜1）
 }): FilterResult {
-  const { currentRate, prevRate, rateChangeTh, hasNewNews, redditSignal, now, lastCallTime } = params;
+  const { currentRate, prevRate, rateChangeTh, hasNewNews, redditSignal, now, lastCallTime, thompsonScore } = params;
+
+  // トンプソンスコアが低い銘柄は低優先度として HOLD
+  if (thompsonScore !== undefined && thompsonScore < 0.3) {
+    return { shouldCall: false, reason: `Thompson低優先度(${thompsonScore.toFixed(2)})` };
+  }
 
   // 1. スキップ時間帯チェック
   const { skip, matchedRule } = isSkipSchedule(now);

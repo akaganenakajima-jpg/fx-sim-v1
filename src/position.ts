@@ -7,6 +7,7 @@ import type { InstrumentConfig } from './instruments';
 import { getBroker, withFallback, type BrokerEnv } from './broker';
 import { kellyFraction, logReturn } from './stats';
 import { sendNotification, buildTpSlMessage, buildDrawdownMessage } from './notify';
+import { updateThompsonParams } from './thompson';
 
 function calcPnl(
   direction: 'BUY' | 'SELL',
@@ -120,6 +121,8 @@ export async function checkAndCloseAllPositions(
         closeRate: currentRate,
       }));
       await updateDecisionOutcome(db, pos.pair, pos.direction, pos.entry_at, pnl > 0 ? 'WIN' : 'LOSE');
+      // トンプソン・サンプリングパラメータ更新
+      await updateThompsonParams(db, pos.pair, pnl > 0).catch(() => {});
       await insertSystemLog(db, 'INFO', 'POSITION',
         `TP決済: ${pos.pair} ${pos.direction} PnL ${pnl >= 0 ? '+' : ''}${pnl.toFixed(2)}`,
         JSON.stringify({ id: pos.id, entry: pos.entry_rate, close: currentRate, pnl }));
@@ -150,6 +153,8 @@ export async function checkAndCloseAllPositions(
         closeRate: currentRate,
       }));
       await updateDecisionOutcome(db, pos.pair, pos.direction, pos.entry_at, pnl > 0 ? 'WIN' : 'LOSE');
+      // トンプソン・サンプリングパラメータ更新
+      await updateThompsonParams(db, pos.pair, pnl > 0).catch(() => {});
       await insertSystemLog(db, 'WARN', 'POSITION',
         `SL決済: ${pos.pair} ${pos.direction} PnL ${pnl >= 0 ? '+' : ''}${pnl.toFixed(2)}`,
         JSON.stringify({ id: pos.id, entry: pos.entry_rate, close: currentRate, pnl }));

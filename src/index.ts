@@ -27,6 +27,8 @@ import { checkRisk, type RiskEnv } from './risk-guard';
 import { checkTpSlSanity } from './sanity';
 import { runMigrations } from './migration';
 import { sendNotification, getWebhookUrl, buildDailySummaryMessage } from './notify';
+import { sampleBeta } from './thompson';
+import { kalmanFilter, type KalmanState } from './kalman';
 
 interface Env {
   DB: D1Database;
@@ -291,6 +293,14 @@ async function runAIDecisions(
     ny:     ['S&P500', 'NASDAQ', 'US10Y', 'CrudeOil', 'NatGas', 'BTC/USD', 'ETH/USD', 'SOL/USD'],
   };
 
+  // トンプソン・サンプリングスコアを一括取得（N+1クエリを回避）
+  const thompsonRows = await env.DB
+    .prepare('SELECT pair, thompson_alpha, thompson_beta FROM instrument_scores')
+    .all<{ pair: string; thompson_alpha: number; thompson_beta: number }>();
+  const thompsonMap = new Map(
+    (thompsonRows.results ?? []).map(r => [r.pair, sampleBeta(r.thompson_alpha ?? 1, r.thompson_beta ?? 1)])
+  );
+
   // 全銘柄のprevRate・lastCallTimeを一括取得（D1クエリ削減）
   const cacheKeys = INSTRUMENTS.flatMap(i => [`prev_rate_${i.pair}`, `last_ai_call_${i.pair}`]);
   const cacheRows = await env.DB
@@ -318,10 +328,12 @@ async function runAIDecisions(
     const lastCallKey = `last_ai_call_${instrument.pair}`;
     const lastCallTime = cacheMap.get(lastCallKey) ?? null;
 
+    const thompsonScore = thompsonMap.get(instrument.pair);
     const filterResult = shouldCallGemini({
       currentRate, prevRate,
       rateChangeTh: instrument.rateChangeTh,
       hasNewNews, redditSignal, now, lastCallTime,
+      thompsonScore,
     });
 
     const changePct = prevRate !== 0 ? Math.abs(currentRate - prevRate) / prevRate : 0;
@@ -335,7 +347,7 @@ async function runAIDecisions(
     candidateList.push({
       instrument, currentRate, prevRate, filterResult,
       volatilityScore, sessionBonus,
-      totalScore: volatilityScore + sessionBonus,
+      totalScore: volatilityScore + sessionBonus + (thompsonScore ?? 0.5),
     });
   }
 
@@ -421,6 +433,15 @@ async function runAIDecisions(
     }
   }
 
+  // カルマンフィルタで各銘柄のレジームを計算（スパークラインデータを利用）
+  const regimeMap = new Map<string, KalmanState['regime']>();
+  for (const [pair, rates] of sparkMap) {
+    if (rates.length >= 5) {
+      const state = kalmanFilter(rates);
+      regimeMap.set(pair, state.regime);
+    }
+  }
+
   // 4c. スコア上位からAI判定（並列バッチ処理: 最大parallelLimit件同時実行）
   type AIResult = { provider: 'gemini' | 'gpt' | 'claude' | 'fail'; pair: string };
 
@@ -457,6 +478,7 @@ async function runAIDecisions(
             recentTrades,
             allPositionDirections,
             sparkRates,
+            regime: regimeMap.get(instrument.pair),
             geminiApiKey: getApiKey(env),
             openaiApiKey: env.OPENAI_API_KEY,
             openaiApiKey2: env.OPENAI_API_KEY_2,

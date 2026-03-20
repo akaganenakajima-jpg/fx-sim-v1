@@ -66,6 +66,16 @@ const MIGRATIONS: Array<{ version: number; description: string; sql: string }> =
     description: 'decisions.prompt_version カラム追加',
     sql: 'ALTER TABLE decisions ADD COLUMN prompt_version TEXT',
   },
+  {
+    version: 110,
+    description: 'instrument_scores に thompson_alpha カラム追加',
+    sql: 'ALTER TABLE instrument_scores ADD COLUMN thompson_alpha REAL NOT NULL DEFAULT 1',
+  },
+  {
+    version: 111,
+    description: 'instrument_scores に thompson_beta カラム追加',
+    sql: 'ALTER TABLE instrument_scores ADD COLUMN thompson_beta REAL NOT NULL DEFAULT 1',
+  },
 ];
 
 export async function runMigrations(db: D1Database): Promise<void> {
@@ -128,6 +138,32 @@ export async function runMigrations(db: D1Database): Promise<void> {
         // カラムが既に存在する場合は無視
       }
       // outcome の事後紐付けは省略（新規データから自動記録）
+      await db.prepare(
+        'INSERT OR IGNORE INTO schema_version (version, description, applied_at) VALUES (?, ?, ?)'
+      ).bind(m.version, m.description, new Date().toISOString()).run();
+      console.log(`[migration] Applied v${m.version}: ${m.description}`);
+      continue;
+    }
+
+    // version 110/111 は ALTER TABLE（特殊処理: カラムが既存でも無視）
+    if (m.version === 110) {
+      try {
+        await db.prepare(`ALTER TABLE instrument_scores ADD COLUMN thompson_alpha REAL NOT NULL DEFAULT 1`).run();
+      } catch {
+        // カラムが既に存在する場合は無視
+      }
+      await db.prepare(
+        'INSERT OR IGNORE INTO schema_version (version, description, applied_at) VALUES (?, ?, ?)'
+      ).bind(m.version, m.description, new Date().toISOString()).run();
+      console.log(`[migration] Applied v${m.version}: ${m.description}`);
+      continue;
+    }
+    if (m.version === 111) {
+      try {
+        await db.prepare(`ALTER TABLE instrument_scores ADD COLUMN thompson_beta REAL NOT NULL DEFAULT 1`).run();
+      } catch {
+        // カラムが既に存在する場合は無視
+      }
       await db.prepare(
         'INSERT OR IGNORE INTO schema_version (version, description, applied_at) VALUES (?, ?, ?)'
       ).bind(m.version, m.description, new Date().toISOString()).run();
