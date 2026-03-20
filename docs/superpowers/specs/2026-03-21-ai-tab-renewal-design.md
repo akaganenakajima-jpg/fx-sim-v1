@@ -238,13 +238,109 @@
 ### 実装しないこと
 - バックエンドAPI変更なし（既存のdecisionsテーブルをそのまま使用）
 - 他タブ（資産・統計・ログ）への変更なし
-- 新規データ収集なし（トリガー種別はdecisionsテーブルの既存フィールドから判定）
+- `--purple` CSS変数はAI判断タブに定義しない（廃止済み）
 
-### トリガー種別の判定ロジック
-decisionsテーブルの既存カラムから推定：
-- `reddit_signal` に値あり OR `news_summary` に変化 → `trigger-news`
-- 前回レートとの差 ≥ 0.05 → `trigger-rate`
-- 上記以外の定期実行 → `trigger-cron`
+---
+
+## データマッピング仕様（既存APIとの対応）
+
+### KPI「今日の判断」カード
+`recentDecisions`（BUY/SELL 直近20件）はHOLDを含まないため、件数表示は **BUY X · SELL Y のみ**。
+HOLDは表示しない。
+
+```javascript
+// 当日分を絞り込み
+const todayDecisions = recentDecisions.filter(d => isToday(d.created_at));
+const buyCount  = todayDecisions.filter(d => d.decision === 'BUY').length;
+const sellCount = todayDecisions.filter(d => d.decision === 'SELL').length;
+// サブテキスト: `BUY ${buyCount} · SELL ${sellCount}`
+```
+
+### KPI「AI的中率」カード
+**`data.statistics.aiAccuracy`（全期間値）をそのまま使用**。`n=N` は `aiAccuracy.n` から取得。
+今日分限定の的中率は算出しない。
+
+```javascript
+const accuracy   = data.statistics?.aiAccuracy?.accuracy ?? null;
+const brierScore = data.statistics?.aiAccuracy?.brierScore ?? null;
+const n          = data.statistics?.aiAccuracy?.n ?? 0;
+```
+
+### KPI「今日の損益」カード
+既存の `data.performance.todayPnl` をそのまま使用（変更なし）。
+
+### KPI「最新判断」カード
+`recentDecisions[0]`（最新1件）の `decision` / `pair` / `created_at` を使用。
+
+### トリガー種別の判定ロジック（フロントエンド推定）
+`reasoning` テキストのパターンマッチングで分類（前回レート差分の計算は不要）：
+
+```javascript
+function inferTrigger(d: RecentDecision): 'news' | 'rate' | 'cron' {
+  const r = (d.reasoning ?? '').toLowerCase();
+  const n = (d.news_summary ?? '');
+  // ニュース：news_summaryに内容があるか、reasoning内に「ニュース」「news」を含む
+  if (n.length > 10 || r.includes('ニュース') || r.includes('news')) return 'news';
+  // レート変動：reasoning内に「レート」「rate」「変動」を含む
+  if (r.includes('レート') || r.includes('rate') || r.includes('変動')) return 'rate';
+  // それ以外：定期チェック
+  return 'cron';
+}
+```
+
+### タイムラインカード表示データ
+`recentDecisions`（BUY/SELL 直近20件）を降順で表示。
+
+**HOLDセパレーターは静的テキスト固定**。APIからHOLDデータは取得しないため、
+「HOLD件数 省略」は表示せず「HOLD は統計タブで確認」に変更する。
+
+```html
+<!-- HOLDセパレーター（静的） -->
+<div class="hold-sep">
+  <div class="hold-sep-line"></div>
+  <div class="hold-sep-label">HOLD · 統計タブで確認</div>
+  <div class="hold-sep-line"></div>
+</div>
+```
+
+**フィルターボタン「BUY/SELL のみ ›」は常時ONの状態を示す装飾**。
+タップ動作は実装しない（APIがHOLDを返さないため切り替え不可）。
+
+### 詳細パネル「判断結果」セル
+`decision.id` と `position` の紐付けフィールドが存在しないため、**損益金額は表示しない**。
+代わりにオープンポジションとの照合で以下を表示：
+
+```javascript
+// openPositionsと銘柄・方向で照合してステータス判定
+const matched = openPositions.find(p =>
+  p.direction === d.decision && p.entry_rate === d.rate
+);
+const resultText = matched
+  ? '保有中'
+  : d.close_reason === 'TP' ? 'TP 利確'
+  : d.close_reason === 'SL' ? 'SL 損切'
+  : 'クローズ済';
+```
+
+損益金額（+¥XXX）は統計タブに委ねる。
+
+> **注意**: `RecentDecision` 型に `close_reason` フィールドは存在しない（`Position` 型にのみ存在）。
+> そのため `d.close_reason === 'TP'` は常に `undefined` となり、open照合に失敗した場合は
+> 常に「クローズ済」と表示される。これは仕様上許容する。
+
+### 詳細パネル「判断時刻」vs「保有時間」
+- Openポジション: 「判断時刻」を表示（`created_at` を HH:MM:SS 形式）
+- クローズ済み: 「保有時間」を表示（close_reason があれば `(closed_at - entry_at)` を分単位で）
+  - ただしdecisionsテーブルに `closed_at` はないため、クローズ済みは「判断時刻」のみ表示
+
+### トリガーカウントグリッド
+`recentDecisions` の当日分に対して `inferTrigger()` を適用し件数を集計：
+```javascript
+const todayAll = recentDecisions.filter(d => isToday(d.created_at));
+const newsCount = todayAll.filter(d => inferTrigger(d) === 'news').length;
+const rateCount = todayAll.filter(d => inferTrigger(d) === 'rate').length;
+const cronCount = todayAll.filter(d => inferTrigger(d) === 'cron').length;
+```
 
 ---
 
