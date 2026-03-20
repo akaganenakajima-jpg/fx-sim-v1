@@ -106,6 +106,22 @@ export const JS = `
     return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
   }
 
+  // ── レジーム判定（EWMA ボラ + 全体ボラ比から3値） ──
+  // 注: statistics.volatility は api.ts L116 で定義済み（overallStd/recentStd/volRatio/isHighVol）
+  function calcRegime(statistics) {
+    if (!statistics) return 'ranging';
+    var ewma = statistics.ewmaVol;     // { isHighVol: boolean, ... } | null
+    var vol  = statistics.volatility;  // { volRatio: number, isHighVol: boolean }
+    if (ewma && ewma.isHighVol) return 'volatile';
+    if (vol  && vol.volRatio < 0.8) return 'trending';
+    return 'ranging';
+  }
+
+  function regimeBadgeHtml(regime) {
+    var cls = 'regime-badge regime-badge--' + (regime || 'ranging');
+    return '<span class="' + cls + '">' + escHtml(regime || 'ranging') + '</span>';
+  }
+
   // ── タブ切替 ──
   function switchTab(targetId) {
     document.querySelectorAll('.tab-panel').forEach(function(p) {
@@ -1158,94 +1174,268 @@ export const JS = `
     });
   }
 
-  // ── パフォーマンスサマリー ──
-  function renderPerfSummary(data) {
-    var target = el('perf-summary');
-    if (!target) return;
-    var closes = (data.recentCloses || []).slice().reverse();
-    var perf = data.performance || {};
-    var totalPnl = perf.totalPnl || 0;
-    var totalClosed = perf.totalClosed || 0;
-    var wins = perf.wins || 0;
+  // ── 市場状態サマリーバー（ヒーロー下の帯） ──
+  function renderMarketStateBar(data) {
+    var bar = el('market-state-bar');
+    if (!bar) return;
+    var st = data.statistics;
+    var regime = calcRegime(st);
+    var ewma = st && st.ewmaVol;
+    var volLabel = ewma ? (ewma.isHighVol ? '高め' : '普通') : '—';
+    var volColor = !ewma ? 'var(--label-secondary)' : ewma.isHighVol ? 'var(--orange)' : 'var(--green)';
+    var regimeColor = regime === 'volatile' ? 'var(--red)'
+                    : regime === 'trending' ? 'var(--blue)'
+                    : 'var(--orange)';
+    var sysStatus = data.systemStatus;
+    var totalRuns = (sysStatus && sysStatus.totalRuns) || 0;
+    var aiConf = st && st.aiAccuracy ? (st.aiAccuracy.accuracy * 100).toFixed(0) + '%' : '—';
 
-    // 最大ドローダウン計算（資産推移のピークからの最大落差）
-    var closePnlSum = 0;
-    closes.forEach(function(c) { closePnlSum += (c.pnl || 0); });
-    var missingPnl = totalPnl - closePnlSum;
-    var peak = INITIAL_CAPITAL + missingPnl;
-    var maxDD = 0;
-    var cumPnl = 0;
-    closes.forEach(function(c) {
-      cumPnl += (c.pnl || 0);
-      var equity = INITIAL_CAPITAL + missingPnl + cumPnl;
-      if (equity > peak) peak = equity;
-      var dd = peak - equity;
-      if (dd > maxDD) maxDD = dd;
-    });
-
-    // シャープレシオ計算（簡易: 平均リターン / 標準偏差）
-    var pnls = closes.map(function(c) { return c.pnl || 0; });
-    var avgPnl = pnls.length > 0 ? pnls.reduce(function(a, b) { return a + b; }, 0) / pnls.length : 0;
-    var variance = pnls.length > 1 ? pnls.reduce(function(a, b) { return a + (b - avgPnl) * (b - avgPnl); }, 0) / (pnls.length - 1) : 0;
-    var stdDev = Math.sqrt(variance);
-    var sharpe = stdDev > 0 ? (avgPnl / stdDev) : 0;
-
-    // RR比（平均利益 / 平均損失）
-    var winsArr = pnls.filter(function(p) { return p > 0; });
-    var lossArr = pnls.filter(function(p) { return p < 0; });
-    var avgWin = winsArr.length > 0 ? winsArr.reduce(function(a, b) { return a + b; }, 0) / winsArr.length : 0;
-    var avgLoss = lossArr.length > 0 ? Math.abs(lossArr.reduce(function(a, b) { return a + b; }, 0) / lossArr.length) : 0;
-    var rrRatio = avgLoss > 0 ? (avgWin / avgLoss) : 0;
-
-    // プロフィットファクター（総利益 / 総損失）
-    var totalWin = winsArr.reduce(function(a, b) { return a + b; }, 0);
-    var totalLoss = Math.abs(lossArr.reduce(function(a, b) { return a + b; }, 0));
-    var profitFactor = totalLoss > 0 ? (totalWin / totalLoss) : 0;
-
-    function stat(label, value, color) {
-      return '<div style="text-align:center;min-width:0">' +
-        '<div style="font-size:11px;color:var(--label-secondary);margin-bottom:2px">' + label + '</div>' +
-        '<div style="font-size:15px;font-weight:700;color:' + (color || 'var(--label)') + '">' + value + '</div>' +
+    bar.style.display = '';
+    bar.innerHTML =
+      '<div class="market-state-cell">' +
+        '<div class="market-state-label">EWMAボラ</div>' +
+        '<div class="market-state-value" style="color:' + volColor + '">' + volLabel + '</div>' +
+      '</div>' +
+      '<div class="market-state-cell">' +
+        '<div class="market-state-label">主流レジーム</div>' +
+        '<div class="market-state-value" style="color:' + regimeColor + '">' + regime + '</div>' +
+      '</div>' +
+      '<div class="market-state-cell">' +
+        '<div class="market-state-label">AI信頼度</div>' +
+        '<div class="market-state-value">' + aiConf + '</div>' +
+      '</div>' +
+      '<div class="market-state-cell">' +
+        '<div class="market-state-label">稼働</div>' +
+        '<div class="market-state-value">' + totalRuns.toLocaleString('ja-JP') + '回</div>' +
       '</div>';
+  }
+
+  // ── AI期待銘柄ランキング（階層ベイズ勝率 TOP3） ──
+  function renderAiRanking(data) {
+    var section = el('ai-ranking-section');
+    var listEl  = el('ai-ranking-list');
+    if (!section || !listEl) return;
+    var rates = (data.statistics && data.statistics.hierarchicalWinRates) || [];
+    // n >= 3 のみ対象、bayesRate 降順
+    var ranked = rates
+      .filter(function(r) { return r.n >= 3; })
+      .sort(function(a, b) { return b.bayesRate - a.bayesRate; })
+      .slice(0, 3);
+    if (ranked.length === 0) { section.style.display = 'none'; return; }
+
+    var medals = ['🥇', '🥈', '🥉'];
+    var html = ranked.map(function(r, i) {
+      var pct = (r.bayesRate * 100).toFixed(1);
+      var barW = Math.round(r.bayesRate * 100);
+      var inst = INSTRUMENTS.find(function(x) { return x.pair === r.pair; });
+      var label = inst ? inst.label : r.pair;
+      return '<div class="ai-ranking-row">' +
+        '<span class="ai-ranking-medal">' + medals[i] + '</span>' +
+        '<span class="ai-ranking-name">' + escHtml(label) + '</span>' +
+        '<div class="ai-ranking-bar"><div class="ai-ranking-bar-fill" style="width:' + barW + '%"></div></div>' +
+        '<span class="ai-ranking-pct">' + pct + '%</span>' +
+      '</div>';
+    }).join('');
+
+    listEl.innerHTML = html;
+    section.style.display = '';
+  }
+
+  // ── 統計的有意性プログレスバー（ヒーロー内） ──
+  function renderPowerProgress(data) {
+    var wrap   = el('power-progress-wrap');
+    var fillEl = el('power-progress-fill');
+    var pctEl  = el('power-progress-pct');
+    var subEl  = el('power-progress-sub');
+    if (!wrap || !fillEl) return;
+
+    var pa = data.statistics && data.statistics.powerAnalysis;
+    if (!pa) { wrap.style.display = 'none'; return; }
+
+    wrap.style.display = '';
+    var pct = Math.max(0, Math.min(Math.round(pa.progressPct), 100));
+    fillEl.style.width = pct + '%';
+    if (pctEl) pctEl.textContent = pct + '% 達成';
+    if (subEl) subEl.textContent = pa.currentN.toLocaleString('ja-JP') + ' / ' + pa.requiredN.toLocaleString('ja-JP') + ' 件';
+
+    if (pa.isAdequate) {
+      fillEl.style.background = 'var(--green)';
+      if (pctEl) { pctEl.textContent = '✓ 達成'; pctEl.style.color = 'var(--green)'; }
+    }
+  }
+
+  // ── 統計タブ ナラティブサマリー（問い→答え形式） ──
+  function renderPerfSummary(data) {
+    var target = el('stats-narrative');
+    if (!target) return;
+    var st = data.statistics;
+    if (!st) {
+      target.innerHTML = '<div style="text-align:center;padding:40px 16px;color:var(--label-secondary);font-size:13px">統計データ蓄積中...</div>';
+      return;
     }
 
-    var ddColor = maxDD > 1000 ? 'var(--red)' : maxDD > 500 ? 'var(--orange, #FF9500)' : 'var(--label)';
-    var sharpeColor = sharpe >= 1 ? 'var(--green)' : sharpe >= 0.5 ? 'var(--label)' : 'var(--red)';
-    var pfColor = profitFactor >= 2 ? 'var(--green)' : profitFactor >= 1 ? 'var(--label)' : 'var(--red)';
+    // null ガード（データ不足時のクラッシュ防止）
+    var wrCI = st.winRateCI;
+    var roiCI = st.roiCI;
+    if (!wrCI || !wrCI.lower) {
+      target.innerHTML = '<div style="text-align:center;padding:40px 16px;color:var(--label-secondary);font-size:13px">統計データ蓄積中...</div>';
+      return;
+    }
+    var baseline = st.randomBaseline;
+    var aiAcc = st.aiAccuracy;
+    var wrLo = (wrCI.lower * 100).toFixed(1);
+    var wrHi = (wrCI.upper * 100).toFixed(1);
+    var wrPct = roiCI ? (roiCI.roi >= 0 ? '+' : '') + roiCI.roi.toFixed(1) + '%' : '—';
+    var roiLo = roiCI ? (roiCI.ciLower >= 0 ? '+' : '') + roiCI.ciLower.toFixed(1) + '%' : '—';
+    var roiHi = roiCI ? (roiCI.ciUpper >= 0 ? '+' : '') + roiCI.ciUpper.toFixed(1) + '%' : '—';
+    var beatRate = (baseline && baseline.beatRate != null) ? (baseline.beatRate * 100 >= 50 ? '+' : '') + (baseline.beatRate * 100 - 50).toFixed(1) + '%' : '—';
+    var pValue   = baseline ? 'p=' + baseline.mwu.pValue.toFixed(3) + (baseline.mwu.significant ? ' 有意' : '') : '—';
+    var brierStr = aiAcc ? aiAcc.brierScore.toFixed(2) : '—';
+    var accPct   = aiAcc ? (aiAcc.accuracy * 100).toFixed(1) + '%' : '—';
 
-    // 2σ統計的有意性判定（Qiita Sunset_Yuhi氏の数式）
-    // 勝率閾値: p ≥ 1/2 + σ_th/(2√N)
-    // PF閾値: PF ≥ a × (√N + σ_th)/(√N - σ_th)
-    var n = totalClosed;
-    var p = n > 0 ? wins / n : 0;
-    var sqrtN = Math.sqrt(n);
-    var pThreshold = n >= 10 ? 0.5 + 1 / sqrtN : null; // 2σ (σ_th=2 → 2/(2√N) = 1/√N)
-    var pfThreshold = (n >= 10 && rrRatio > 0 && sqrtN > 2) ? rrRatio * (sqrtN + 2) / (sqrtN - 2) : null;
-    var pPass = pThreshold !== null && p > pThreshold;
-    var pfPass = pfThreshold !== null && profitFactor > pfThreshold;
-    var sigPass = pPass && pfPass;
-    var sigColor = sigPass ? 'var(--green)' : 'var(--orange, #FF9500)';
-    var sigLabel = n < 10 ? 'N不足' : sigPass ? '有意' : '偶然の範囲';
+    var winVerdict = wrCI.lower > 0.5 && (roiCI && roiCI.ciLower > 0);
+    var verdictCls = winVerdict ? 'yes' : 'warn';
+    var verdictTxt = winVerdict ? '✓ YES' : '△ 様子見';
+
+    var sharpe = st.sharpe || 0;
+    var dd = st.drawdown || { maxDDPct: 0, currentDDPct: 0, recoveryRatio: 1 };
+    var var95 = st.var95 != null ? Math.round(st.var95) : 0;
+    var kelly = st.kellyFraction != null ? (st.kellyFraction * 100).toFixed(1) : '—';
+    var sharpeColor = sharpe >= 1 ? 'var(--green)' : sharpe >= 0.5 ? 'var(--label)' : 'var(--red)';
+    var ddColor = dd.maxDDPct > 15 ? 'var(--red)' : dd.maxDDPct > 8 ? 'var(--orange)' : 'var(--label)';
+    var riskVerdict = sharpe >= 0.5 && dd.maxDDPct < 20;
+    var riskVerdictCls = riskVerdict ? 'yes' : 'warn';
+    var riskVerdictTxt = riskVerdict ? '✓ YES' : '△ 要注意';
+
+    var hierRates = st.hierarchicalWinRates || [];
+    var topPairs = hierRates
+      .filter(function(r) { return r.n >= 3; })
+      .sort(function(a, b) { return b.bayesRate - a.bayesRate; })
+      .slice(0, 3);
+    var medals = ['🥇', '🥈', '🥉'];
+    var pairsVerdict = topPairs.length >= 2 ? 'yes' : 'warn';
+    var pairsVerdictTxt = topPairs.length >= 2 ? '✓ 明確' : '△ 不明瞭';
+
+    // CI バー計算
+    var ciMin = Math.min(wrCI.lower * 100 - 2, 47);
+    var ciMax = Math.max(wrCI.upper * 100 + 2, 53);
+    var ciRange = ciMax - ciMin || 1;
+    var lineAt50 = ((50 - ciMin) / ciRange * 100).toFixed(1);
+    var fillLeft  = Math.max(0, Math.min(((wrCI.lower * 100 - ciMin) / ciRange * 100), 100)).toFixed(1);
+    var fillWidth = Math.max(0, Math.min((((wrCI.upper - wrCI.lower) * 100) / ciRange * 100), 100 - parseFloat(fillLeft))).toFixed(1);
+    var above50 = wrCI.lower * 100 > 50 ? '50% 超え確認' : '50% 超え未確認';
+    var above50Color = wrCI.lower * 100 > 50 ? 'var(--green)' : 'var(--label-secondary)';
 
     target.innerHTML =
-      '<div style="display:grid;grid-template-columns:repeat(4,1fr);gap:8px;padding:0 4px">' +
-        stat('最大DD', '¥' + Math.round(maxDD).toLocaleString(), ddColor) +
-        stat('Sharpe', sharpe.toFixed(2), sharpeColor) +
-        stat('RR比', rrRatio.toFixed(2), 'var(--label)') +
-        stat('PF', profitFactor.toFixed(2), pfColor) +
-      '</div>' +
-      '<div style="margin-top:10px;padding:8px 12px;border-radius:8px;background:var(--bg-secondary, rgba(120,120,128,0.08))">' +
-        '<div style="display:flex;justify-content:space-between;align-items:center">' +
-          '<span style="font-size:11px;color:var(--label-secondary)">2σ有意性（N=' + n + '）</span>' +
-          '<span style="font-size:12px;font-weight:700;color:' + sigColor + '">' + sigLabel + '</span>' +
+      // ① 勝てているか
+      '<div class="stats-narrative-section">' +
+        '<div class="stats-narrative-header">' +
+          '<div class="stats-narrative-question">' +
+            '<span>📊</span><span>このAIは統計的に勝てているか？</span>' +
+          '</div>' +
+          '<span class="stats-verdict stats-verdict--' + verdictCls + '">' + verdictTxt + '</span>' +
         '</div>' +
-        (pThreshold !== null ? '<div style="font-size:10px;color:var(--label-tertiary, rgba(120,120,128,0.6));margin-top:4px;line-height:1.5">' +
-          '勝率 ' + (p * 100).toFixed(1) + '% ' + (pPass ? '>' : '≤') + ' ' + (pThreshold * 100).toFixed(1) + '%' +
-          '<span style="margin:0 6px">|</span>' +
-          'PF ' + profitFactor.toFixed(2) + ' ' + (pfPass ? '>' : '≤') + ' ' + (pfThreshold !== null ? pfThreshold.toFixed(2) : '—') +
-          '<span style="margin:0 6px">|</span>' +
-          '3σ到達: ' + (n >= 10 ? (p > 0.5 + 1.5 / sqrtN ? '✓' : ((0.5 + 1.5 / sqrtN) * 100).toFixed(1) + '%必要') : '—') +
-        '</div>' : '') +
+        '<div class="stats-card">' +
+          '<div class="stats-grid-2">' +
+            '<div>' +
+              '<div class="stats-metric-label">勝率 95% CI</div>' +
+              '<div class="stats-metric-value" style="color:var(--green)">' + (wrCI.lower * 100).toFixed(1) + '%</div>' +
+              '<div class="stats-metric-sub">[' + wrLo + '% – ' + wrHi + '%]</div>' +
+            '</div>' +
+            '<div>' +
+              '<div class="stats-metric-label">ROI 95% CI</div>' +
+              '<div class="stats-metric-value" style="color:var(--green)">' + wrPct + '</div>' +
+              '<div class="stats-metric-sub">[' + roiLo + ' – ' + roiHi + ']</div>' +
+            '</div>' +
+            '<div>' +
+              '<div class="stats-metric-label">AI精度</div>' +
+              '<div class="stats-metric-value">' + accPct + '</div>' +
+              '<div class="stats-metric-sub">Brier ' + brierStr + '</div>' +
+            '</div>' +
+            '<div>' +
+              '<div class="stats-metric-label">vs ランダム</div>' +
+              '<div class="stats-metric-value" style="color:var(--green)">' + beatRate + '</div>' +
+              '<div class="stats-metric-sub">' + pValue + '</div>' +
+            '</div>' +
+          '</div>' +
+        '</div>' +
+        '<div class="ci-bar-wrap">' +
+          '<div class="ci-bar-header">' +
+            '<span>勝率信頼区間</span>' +
+            '<span style="color:' + above50Color + ';font-weight:600">' + above50 + '</span>' +
+          '</div>' +
+          '<div class="ci-bar-track">' +
+            '<div class="ci-bar-fill" style="left:' + fillLeft + '%;width:' + fillWidth + '%"></div>' +
+            '<div class="ci-bar-marker" style="left:' + lineAt50 + '%"></div>' +
+          '</div>' +
+          '<div class="ci-bar-labels">' +
+            '<span>' + ciMin.toFixed(1) + '%</span>' +
+            '<span>50% ライン</span>' +
+            '<span>' + ciMax.toFixed(1) + '%</span>' +
+          '</div>' +
+        '</div>' +
+      '</div>' +
+
+      // ② リスクに見合ったリターンか
+      '<div class="stats-narrative-section">' +
+        '<div class="stats-narrative-header">' +
+          '<div class="stats-narrative-question">' +
+            '<span>⚖️</span><span>リスクに見合ったリターンか？</span>' +
+          '</div>' +
+          '<span class="stats-verdict stats-verdict--' + riskVerdictCls + '">' + riskVerdictTxt + '</span>' +
+        '</div>' +
+        '<div class="stats-card">' +
+          '<div class="stats-grid-2">' +
+            '<div>' +
+              '<div class="stats-metric-label">Sharpe比</div>' +
+              '<div class="stats-metric-value" style="color:' + sharpeColor + '">' + sharpe.toFixed(2) + '</div>' +
+              '<div class="stats-metric-sub">±' + (st.sharpeSE != null ? st.sharpeSE.toFixed(2) : '—') + (st.sharpeSignificant ? ' (有意)' : '') + '</div>' +
+            '</div>' +
+            '<div>' +
+              '<div class="stats-metric-label">最大DD</div>' +
+              '<div class="stats-metric-value" style="color:' + ddColor + '">-' + dd.maxDDPct.toFixed(1) + '%</div>' +
+              '<div class="stats-metric-sub">許容範囲内</div>' +
+            '</div>' +
+            '<div>' +
+              '<div class="stats-metric-label">VaR 95%</div>' +
+              '<div class="stats-metric-value">-' + var95.toLocaleString('ja-JP') + '</div>' +
+              '<div class="stats-metric-sub">pip/トレード</div>' +
+            '</div>' +
+            '<div>' +
+              '<div class="stats-metric-label">Kelly推奨</div>' +
+              '<div class="stats-metric-value">' + kelly + '%</div>' +
+              '<div class="stats-metric-sub">ベットサイズ</div>' +
+            '</div>' +
+          '</div>' +
+        '</div>' +
+      '</div>' +
+
+      // ③ どの銘柄が得意か
+      '<div class="stats-narrative-section">' +
+        '<div class="stats-narrative-header">' +
+          '<div class="stats-narrative-question">' +
+            '<span>🎯</span><span>どの銘柄が得意か？</span>' +
+          '</div>' +
+          '<span class="stats-verdict stats-verdict--' + pairsVerdict + '">' + pairsVerdictTxt + '</span>' +
+        '</div>' +
+        (topPairs.length > 0 ?
+          '<div class="ai-ranking-list ai-ranking-list--inline">' +
+          topPairs.map(function(r, i) {
+            var inst = INSTRUMENTS.find(function(x) { return x.pair === r.pair; });
+            var label = inst ? inst.label : r.pair;
+            var pct = (r.bayesRate * 100).toFixed(1);
+            var barW = Math.round(r.bayesRate * 100);
+            return '<div class="ai-ranking-row">' +
+              '<span class="ai-ranking-medal">' + medals[i] + '</span>' +
+              '<span class="ai-ranking-name">' + escHtml(label) + '</span>' +
+              '<div class="ai-ranking-bar"><div class="ai-ranking-bar-fill" style="width:' + barW + '%"></div></div>' +
+              '<span class="ai-ranking-pct">' + pct + '%</span>' +
+              '<span style="font-size:11px;color:var(--label-secondary);margin-left:4px">n=' + r.n + '</span>' +
+            '</div>';
+          }).join('') +
+          '</div>'
+          : '<div style="padding:16px;font-size:13px;color:var(--label-secondary)">データ蓄積中</div>'
+        ) +
       '</div>';
   }
 
@@ -1887,6 +2077,11 @@ export const JS = `
 
     // 判定履歴
     renderHistory(data.recentDecisions);
+
+    // 市場状態バー・AI ランキング・プログレスバー（資産タブ）
+    renderMarketStateBar(data);
+    renderAiRanking(data);
+    renderPowerProgress(data);
 
     // 統計タブ
     renderStats(data);

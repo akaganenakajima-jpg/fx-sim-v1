@@ -18,8 +18,8 @@ export const CSS = `
   --purple:           #BF5AF2;
   --label-tertiary:   rgba(235,235,245,0.3);
   --label-quaternary: rgba(235,235,245,0.18);
-  --radius:           12px;
-  --radius-sm:        8px;
+  --radius:           16px;
+  --radius-sm:        10px;
   /* PC responsive */
   --sidebar-bg:       var(--bg);
   --sidebar-width:    clamp(56px, 3.5vw, 72px);
@@ -103,7 +103,10 @@ body.sheet-open {
   left: 0;
   right: 0;
   z-index: 10;
-  background: var(--bg);
+  background: rgba(28,28,30,0.92);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border-bottom: 1px solid rgba(84,84,88,0.3);
   -webkit-user-select: none;
   user-select: none;
 }
@@ -813,21 +816,24 @@ body, #app {
   right: 0;
   height: calc(64px + env(safe-area-inset-bottom));
   padding-bottom: env(safe-area-inset-bottom);
-  background: rgba(18, 18, 20, 0.80);
-  -webkit-backdrop-filter: blur(20px) saturate(1.8);
-  backdrop-filter: blur(20px) saturate(1.8);
-  border-top: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(28,28,30,0.92);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border-top: 1px solid rgba(84,84,88,0.3);
   z-index: 20;
 }
 @media (prefers-color-scheme: light) {
   :root:not([data-theme="dark"]) .tab-bar {
-    background: rgba(242, 242, 247, 0.80);
+    background: rgba(242, 242, 247, 0.92);
     border-top: 1px solid rgba(0, 0, 0, 0.10);
   }
 }
 :root[data-theme="light"] .tab-bar {
-  background: rgba(242, 242, 247, 0.80);
+  background: rgba(242, 242, 247, 0.92);
   border-top: 1px solid rgba(0, 0, 0, 0.10);
+}
+:root[data-theme="light"] .header {
+  background: rgba(242,242,247,0.92);
 }
 .tab-item {
   flex: 1;
@@ -1755,6 +1761,293 @@ body.sheet-open .tab-bar {
     display: grid !important;
     grid-template-columns: 1fr 1fr;
     gap: 0 24px;
+  }
+}
+
+/* ─── 市場状態サマリーバー ─── */
+.market-state-bar {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 0;
+  background: var(--bg-elevated);
+  border-radius: var(--radius);
+  border: 1px solid rgba(255,255,255,0.05);
+  margin: 0 16px 8px;
+  overflow: hidden;
+}
+.market-state-cell {
+  padding: 12px 8px;
+  text-align: center;
+  border-right: 1px solid rgba(84,84,88,0.2);
+}
+.market-state-cell:last-child { border-right: none; }
+.market-state-label {
+  font-size: 11px;
+  color: var(--label-secondary);
+  margin-bottom: 4px;
+}
+.market-state-value {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--label);
+}
+
+/* ─── AI期待銘柄ランキング ─── */
+.ai-ranking-header {
+  padding: 8px 16px 4px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--label-secondary);
+}
+.ai-ranking-list {
+  background: var(--bg-elevated);
+  border-radius: var(--radius);
+  border: 1px solid rgba(255,255,255,0.05);
+  margin: 0 16px 8px;
+  overflow: hidden;
+}
+.ai-ranking-list--inline {
+  margin: 0;
+  border-radius: 0;
+}
+.ai-ranking-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 16px;
+  min-height: 44px;
+  border-bottom: 1px solid rgba(84,84,88,0.15);
+  transition: background 0.15s;
+}
+.ai-ranking-row:last-child { border-bottom: none; }
+.ai-ranking-row:active { background: rgba(255,255,255,0.12); }
+.ai-ranking-medal {
+  font-size: 16px;
+  width: 24px;
+  text-align: center;
+  flex-shrink: 0;
+}
+.ai-ranking-name {
+  flex: 1;
+  font-size: 15px;
+  font-weight: 500;
+}
+.ai-ranking-bar {
+  width: 80px;
+  height: 4px;
+  background: rgba(255,255,255,0.08);
+  border-radius: 2px;
+  overflow: hidden;
+  flex-shrink: 0;
+}
+.ai-ranking-bar-fill {
+  height: 100%;
+  background: var(--green);
+  border-radius: 2px;
+}
+.ai-ranking-pct {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--green);
+  width: 44px;
+  text-align: right;
+  flex-shrink: 0;
+}
+
+/* ─── 統計的有意性プログレスバー（ヒーロー内） ─── */
+.power-progress-wrap {
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid rgba(84,84,88,0.2);
+}
+.power-progress-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 6px;
+}
+.power-progress-label {
+  font-size: 11px;
+  color: var(--label-secondary);
+}
+.power-progress-pct {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--orange);
+}
+.power-progress-track {
+  height: 6px;
+  background: rgba(255,255,255,0.08);
+  border-radius: 3px;
+  position: relative;
+  overflow: visible;
+}
+.power-progress-fill {
+  height: 100%;
+  border-radius: 3px;
+  background: linear-gradient(90deg, var(--orange), var(--green));
+  position: relative;
+  transition: width 0.6s cubic-bezier(0.25, 0.46, 0.45, 0.94);
+}
+.power-progress-dot {
+  position: absolute;
+  right: -5px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--bg-elevated);
+  border: 2px solid var(--green);
+  box-shadow: 0 0 6px rgba(48,209,88,0.5);
+}
+.power-progress-sub {
+  font-size: 10px;
+  color: var(--label-secondary);
+  margin-top: 4px;
+}
+
+/* ─── レジームバッジ ─── */
+.regime-badge {
+  display: inline-block;
+  font-size: 10px;
+  font-weight: 600;
+  padding: 3px 8px;
+  border-radius: 6px;
+  letter-spacing: 0.02em;
+}
+.regime-badge--volatile {
+  background: rgba(255,69,58,0.15);
+  color: var(--red);
+}
+.regime-badge--ranging {
+  background: rgba(255,159,10,0.15);
+  color: var(--orange);
+}
+.regime-badge--trending {
+  background: rgba(10,132,255,0.15);
+  color: var(--blue);
+}
+
+/* ─── 統計タブ ナラティブ構造 ─── */
+.stats-narrative-section {
+  margin: 0 16px 12px;
+}
+.stats-narrative-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 0 8px;
+}
+.stats-narrative-question {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--label);
+}
+.stats-verdict {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 12px;
+  font-weight: 700;
+  padding: 4px 10px;
+  border-radius: 8px;
+  flex-shrink: 0;
+}
+.stats-verdict--yes {
+  background: rgba(48,209,88,0.15);
+  color: var(--green);
+}
+.stats-verdict--no {
+  background: rgba(255,69,58,0.15);
+  color: var(--red);
+}
+.stats-verdict--warn {
+  background: rgba(255,159,10,0.15);
+  color: var(--orange);
+}
+.stats-card {
+  background: var(--bg-elevated);
+  border-radius: var(--radius);
+  border: 1px solid rgba(255,255,255,0.05);
+  padding: 16px;
+  margin-bottom: 8px;
+}
+.stats-grid-2 {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px 24px;
+}
+.stats-metric-label {
+  font-size: 11px;
+  color: var(--label-secondary);
+  margin-bottom: 2px;
+}
+.stats-metric-value {
+  font-size: 22px;
+  font-weight: 700;
+  line-height: 1.2;
+}
+.stats-metric-sub {
+  font-size: 11px;
+  color: var(--label-secondary);
+  margin-top: 2px;
+}
+.ci-bar-wrap {
+  background: var(--bg-elevated);
+  border-radius: var(--radius);
+  border: 1px solid rgba(255,255,255,0.05);
+  padding: 12px 16px;
+  margin-bottom: 8px;
+}
+.ci-bar-header {
+  display: flex;
+  justify-content: space-between;
+  font-size: 11px;
+  color: var(--label-secondary);
+  margin-bottom: 8px;
+}
+.ci-bar-track {
+  height: 6px;
+  background: rgba(255,255,255,0.08);
+  border-radius: 3px;
+  position: relative;
+  overflow: hidden;
+}
+.ci-bar-fill {
+  position: absolute;
+  height: 100%;
+  background: var(--blue);
+  border-radius: 3px;
+}
+.ci-bar-marker {
+  position: absolute;
+  top: -4px;
+  width: 2px;
+  height: 14px;
+  background: rgba(255,255,255,0.4);
+  border-radius: 1px;
+}
+.ci-bar-labels {
+  display: flex;
+  justify-content: space-between;
+  font-size: 10px;
+  color: var(--label-secondary);
+  margin-top: 4px;
+}
+
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme="dark"]) .header {
+    background: rgba(242,242,247,0.92);
+  }
+  :root:not([data-theme="dark"]) .market-state-bar,
+  :root:not([data-theme="dark"]) .ai-ranking-list,
+  :root:not([data-theme="dark"]) .stats-card,
+  :root:not([data-theme="dark"]) .ci-bar-wrap {
+    border-color: rgba(0,0,0,0.06);
   }
 }
 `;
