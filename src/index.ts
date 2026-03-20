@@ -717,6 +717,69 @@ async function runDailyTasks(env: Env, _now: Date): Promise<void> {
   } catch (e) {
     console.error('[fx-sim] instrument_scores update failed:', e);
   }
+
+  // 日次サマリー Webhook 通知（前日の取引実績）
+  try {
+    // 前日の日付文字列を UTC で計算
+    const yesterdayStart = new Date(Date.UTC(
+      _now.getUTCFullYear(), _now.getUTCMonth(), _now.getUTCDate() - 1
+    ));
+    const todayStart = new Date(Date.UTC(
+      _now.getUTCFullYear(), _now.getUTCMonth(), _now.getUTCDate()
+    ));
+    const dateStr = yesterdayStart.toISOString().slice(0, 10);
+
+    const dailyStats = await env.DB.prepare(`
+      SELECT
+        COUNT(*) as total,
+        SUM(CASE WHEN pnl > 0 THEN 1 ELSE 0 END) as wins,
+        COALESCE(SUM(pnl), 0) as total_pnl
+      FROM positions
+      WHERE status = 'CLOSED'
+        AND closed_at >= ? AND closed_at < ?
+    `)
+    .bind(yesterdayStart.toISOString(), todayStart.toISOString())
+    .first<{ total: number; wins: number; total_pnl: number }>();
+
+    if (dailyStats && dailyStats.total > 0) {
+      // decisions.provider カラムは Batch C-3 で追加される予定
+      // カラムが存在しない場合は 0 をフォールバックとして使う
+      let geminiOk = 0, gptOk = 0, claudeOk = 0;
+      try {
+        const aiStats = await env.DB.prepare(`
+          SELECT
+            SUM(CASE WHEN provider = 'gemini' THEN 1 ELSE 0 END) as gemini_ok,
+            SUM(CASE WHEN provider = 'gpt'    THEN 1 ELSE 0 END) as gpt_ok,
+            SUM(CASE WHEN provider = 'claude' THEN 1 ELSE 0 END) as claude_ok
+          FROM decisions
+          WHERE decision IN ('BUY', 'SELL')
+            AND created_at >= ? AND created_at < ?
+        `)
+        .bind(yesterdayStart.toISOString(), todayStart.toISOString())
+        .first<{ gemini_ok: number; gpt_ok: number; claude_ok: number }>();
+        if (aiStats) {
+          geminiOk = aiStats.gemini_ok ?? 0;
+          gptOk    = aiStats.gpt_ok    ?? 0;
+          claudeOk = aiStats.claude_ok ?? 0;
+        }
+      } catch {
+        // provider カラムが存在しない場合はスキップ（Batch C-3 適用前）
+      }
+
+      const msg = buildDailySummaryMessage({
+        date: dateStr,
+        totalTrades: dailyStats.total,
+        wins: dailyStats.wins,
+        totalPnl: dailyStats.total_pnl,
+        geminiOk,
+        gptOk,
+        claudeOk,
+      });
+      await sendNotification(getWebhookUrl(env), msg);
+    }
+  } catch (e) {
+    console.warn('[fx-sim] daily summary notification failed:', e);
+  }
 }
 
 // ── 銘柄スコア日次更新 ──
