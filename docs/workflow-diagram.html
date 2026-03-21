@@ -1,0 +1,735 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>fx-sim ワークフロー図</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Helvetica Neue', sans-serif;
+    background: #0a0a0f;
+    color: #e8e8ed;
+    padding: 40px 24px;
+    min-height: 100vh;
+  }
+  h1 {
+    text-align: center;
+    font-size: 28px;
+    font-weight: 700;
+    letter-spacing: -0.5px;
+    margin-bottom: 8px;
+    background: linear-gradient(135deg, #60a5fa, #a78bfa);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+  }
+  .subtitle {
+    text-align: center;
+    font-size: 13px;
+    color: #6b7280;
+    margin-bottom: 40px;
+  }
+  .flow-container {
+    max-width: 920px;
+    margin: 0 auto;
+    position: relative;
+  }
+
+  /* ── Phase Row ── */
+  .phase {
+    position: relative;
+    margin-bottom: 16px;
+  }
+  .phase-label {
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 1.5px;
+    color: #6b7280;
+    margin-bottom: 8px;
+    padding-left: 4px;
+  }
+
+  /* ── Node ── */
+  .node {
+    border-radius: 12px;
+    padding: 16px 20px;
+    position: relative;
+    border: 1px solid rgba(255,255,255,0.06);
+  }
+  .node-title {
+    font-size: 14px;
+    font-weight: 600;
+    margin-bottom: 6px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .node-desc {
+    font-size: 12px;
+    color: #9ca3af;
+    line-height: 1.6;
+  }
+  .node-badge {
+    font-size: 10px;
+    font-weight: 600;
+    padding: 2px 8px;
+    border-radius: 6px;
+    letter-spacing: 0.5px;
+  }
+
+  /* ── Colors ── */
+  .bg-data { background: rgba(59,130,246,0.08); border-color: rgba(59,130,246,0.2); }
+  .bg-data .node-title { color: #60a5fa; }
+  .bg-tpsl { background: rgba(234,179,8,0.08); border-color: rgba(234,179,8,0.2); }
+  .bg-tpsl .node-title { color: #fbbf24; }
+  .bg-weekend { background: rgba(168,85,247,0.08); border-color: rgba(168,85,247,0.2); }
+  .bg-weekend .node-title { color: #c084fc; }
+  .bg-pathb { background: rgba(16,185,129,0.08); border-color: rgba(16,185,129,0.2); }
+  .bg-pathb .node-title { color: #34d399; }
+  .bg-patha { background: rgba(251,146,60,0.08); border-color: rgba(251,146,60,0.2); }
+  .bg-patha .node-title { color: #fb923c; }
+  .bg-final { background: rgba(236,72,153,0.08); border-color: rgba(236,72,153,0.2); }
+  .bg-final .node-title { color: #f472b6; }
+
+  .badge-parallel { background: rgba(59,130,246,0.2); color: #93c5fd; }
+  .badge-serial { background: rgba(234,179,8,0.2); color: #fde68a; }
+  .badge-conditional { background: rgba(168,85,247,0.2); color: #d8b4fe; }
+  .badge-feature-flag { background: rgba(16,185,129,0.2); color: #6ee7b7; border: 1px dashed rgba(16,185,129,0.4); }
+
+  /* ── Mode Switch ── */
+  .mode-switch {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 12px;
+    margin: 16px 0;
+  }
+  .mode-panel {
+    border-radius: 12px;
+    padding: 16px;
+    position: relative;
+  }
+  .mode-panel.active {
+    border: 2px solid rgba(16,185,129,0.5);
+    box-shadow: 0 0 20px rgba(16,185,129,0.1);
+  }
+  .mode-panel.inactive {
+    border: 1px dashed rgba(255,255,255,0.1);
+    opacity: 0.6;
+  }
+  .mode-label {
+    font-size: 11px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    margin-bottom: 8px;
+  }
+  .mode-label.default { color: #fbbf24; }
+  .mode-label.new { color: #34d399; }
+  @media (max-width: 640px) {
+    .mode-switch { grid-template-columns: 1fr; }
+  }
+
+  /* ── Parallel Fork Visual ── */
+  .parallel-fork {
+    display: flex;
+    align-items: stretch;
+    gap: 12px;
+    margin-top: 12px;
+  }
+  .parallel-fork > .fork-branch {
+    flex: 1;
+    border-radius: 10px;
+    padding: 12px;
+    position: relative;
+  }
+  .fork-branch.left {
+    background: rgba(16,185,129,0.06);
+    border: 1px solid rgba(16,185,129,0.2);
+  }
+  .fork-branch.right {
+    background: rgba(251,146,60,0.06);
+    border: 1px solid rgba(251,146,60,0.2);
+  }
+  .fork-label {
+    font-size: 10px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    margin-bottom: 6px;
+  }
+  .fork-label.green { color: #34d399; }
+  .fork-label.orange { color: #fb923c; }
+  .fork-join {
+    text-align: center;
+    font-size: 11px;
+    color: #6b7280;
+    padding: 8px 0;
+    position: relative;
+  }
+  .fork-join::before {
+    content: '';
+    display: block;
+    width: 60%;
+    margin: 0 auto 8px;
+    border-top: 1px solid rgba(16,185,129,0.3);
+  }
+
+  /* ── Arrow ── */
+  .arrow {
+    display: flex;
+    justify-content: center;
+    padding: 6px 0;
+    color: #374151;
+    font-size: 18px;
+    position: relative;
+  }
+  .arrow::after {
+    content: '↓';
+    font-size: 20px;
+  }
+  .arrow-label {
+    position: absolute;
+    right: 0;
+    top: 50%;
+    transform: translateY(-50%);
+    font-size: 10px;
+    color: #6b7280;
+    background: #0a0a0f;
+    padding: 2px 8px;
+    border-radius: 4px;
+    border: 1px solid rgba(255,255,255,0.06);
+  }
+
+  /* ── Sub-steps ── */
+  .sub-steps {
+    display: grid;
+    gap: 8px;
+    margin-top: 12px;
+  }
+  .sub-step {
+    background: rgba(255,255,255,0.03);
+    border-radius: 8px;
+    padding: 10px 14px;
+    font-size: 12px;
+    border: 1px solid rgba(255,255,255,0.04);
+    line-height: 1.5;
+  }
+  .sub-step-title {
+    font-weight: 600;
+    color: #d1d5db;
+    margin-bottom: 2px;
+  }
+  .sub-step-desc {
+    color: #6b7280;
+    font-size: 11px;
+  }
+
+  /* ── Parallel Grid ── */
+  .parallel-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 8px;
+    margin-top: 12px;
+  }
+  @media (max-width: 640px) {
+    .parallel-grid { grid-template-columns: 1fr; }
+  }
+
+  /* ── Fallback chain ── */
+  .fallback-chain {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin-top: 8px;
+    flex-wrap: wrap;
+  }
+  .fb-item {
+    font-size: 11px;
+    padding: 3px 10px;
+    border-radius: 6px;
+    background: rgba(255,255,255,0.05);
+    border: 1px solid rgba(255,255,255,0.08);
+    color: #9ca3af;
+    white-space: nowrap;
+  }
+  .fb-item.primary { background: rgba(16,185,129,0.15); color: #6ee7b7; border-color: rgba(16,185,129,0.3); }
+  .fb-arrow { color: #374151; font-size: 12px; }
+
+  /* ── Gate list ── */
+  .gate-list {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin-top: 8px;
+  }
+  .gate {
+    font-size: 10px;
+    padding: 3px 8px;
+    border-radius: 5px;
+    background: rgba(251,146,60,0.1);
+    color: #fdba74;
+    border: 1px solid rgba(251,146,60,0.2);
+  }
+
+  /* ── Separator ── */
+  .separator {
+    border: none;
+    border-top: 1px dashed rgba(255,255,255,0.06);
+    margin: 24px 0;
+  }
+
+  /* ── Legend ── */
+  .legend {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 16px;
+    justify-content: center;
+    margin-top: 32px;
+    padding: 16px;
+    border-radius: 12px;
+    background: rgba(255,255,255,0.02);
+    border: 1px solid rgba(255,255,255,0.06);
+  }
+  .legend-item {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 11px;
+    color: #9ca3af;
+  }
+  .legend-dot {
+    width: 10px;
+    height: 10px;
+    border-radius: 3px;
+  }
+
+  /* ── Data flow annotation ── */
+  .data-flow {
+    margin-top: 10px;
+    padding: 8px 12px;
+    border-radius: 8px;
+    background: rgba(255,255,255,0.02);
+    border-left: 3px solid rgba(59,130,246,0.4);
+    font-size: 11px;
+    color: #6b7280;
+  }
+  .data-flow code {
+    color: #93c5fd;
+    font-family: 'SF Mono', monospace;
+    font-size: 11px;
+  }
+</style>
+</head>
+<body>
+
+<h1>fx-sim ワークフロー</h1>
+<p class="subtitle">1分 Cron → run() 関数の実行フロー（並列化フィーチャーフラグ対応 v2）</p>
+
+<div class="flow-container">
+
+  <!-- ═══ Phase 0: Weekend ═══ -->
+  <div class="phase">
+    <div class="phase-label">Phase 0 — 初期化</div>
+    <div class="node bg-weekend">
+      <div class="node-title">
+        🌙 週末ウィンドダウン判定
+        <span class="node-badge badge-serial">直列</span>
+      </div>
+      <div class="node-desc">
+        <code>getWeekendStatus(now)</code> で現在の週末フェーズを判定。<br>
+        市場クローズ中は <strong>cryptoOnlyMode = true</strong>（BTC/ETH/SOLのみ取引継続）
+      </div>
+      <div class="sub-steps" style="grid-template-columns: repeat(4, 1fr); display: grid;">
+        <div class="sub-step">
+          <div class="sub-step-title">Phase 1</div>
+          <div class="sub-step-desc">金曜夕方<br>新規ロット50%</div>
+        </div>
+        <div class="sub-step">
+          <div class="sub-step-title">Phase 2</div>
+          <div class="sub-step-desc">金曜夜<br>含み益SLロック</div>
+        </div>
+        <div class="sub-step">
+          <div class="sub-step-title">Phase 3</div>
+          <div class="sub-step-desc">金曜深夜<br>非クリプト強制決済</div>
+        </div>
+        <div class="sub-step">
+          <div class="sub-step-title">Phase 4</div>
+          <div class="sub-step-desc">土日<br>新規エントリー×0</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="arrow"><span class="arrow-label">runMigrations() 実行後</span></div>
+
+  <!-- ═══ Phase 1: Data Fetch ═══ -->
+  <div class="phase">
+    <div class="phase-label">Step 1 — 市場データ一括取得</div>
+    <div class="node bg-data">
+      <div class="node-title">
+        📡 fetchMarketData()
+        <span class="node-badge badge-parallel">並列</span>
+      </div>
+      <div class="node-desc">
+        3ソースを <code>Promise.allSettled()</code> で完全並列取得。いずれかが失敗しても他は継続。
+      </div>
+      <div class="parallel-grid">
+        <div class="sub-step">
+          <div class="sub-step-title">fetchNews()</div>
+          <div class="sub-step-desc">CNBC / Bloomberg / FXStreet / CoinDesk<br>Reuters / Nikkei / Minkabu（wor.jp経由）</div>
+        </div>
+        <div class="sub-step">
+          <div class="sub-step-title">getMarketIndicators()</div>
+          <div class="sub-step-desc">Yahoo Finance: VIX / 日経 / S&P500 等19銘柄<br>FRED: 米10年債（日次キャッシュ）</div>
+        </div>
+        <div class="sub-step">
+          <div class="sub-step-title">getUSDJPY()</div>
+          <div class="sub-step-desc">frankfurter.app（フォールバック用）<br>indicators.usdjpy 優先</div>
+        </div>
+      </div>
+      <div class="data-flow" style="margin-top: 12px;">
+        📝 取得後: <code>filterNikkeiWithHaiku()</code> → FX無関係記事除外 → <code>translateAndCacheNews()</code> → 英語タイトル日本語翻訳（個別キャッシュ 6h TTL）
+      </div>
+    </div>
+  </div>
+
+  <div class="arrow"><span class="arrow-label">USD/JPY null → cron終了</span></div>
+
+  <!-- ═══ Phase 2: TP/SL Check ═══ -->
+  <div class="phase">
+    <div class="phase-label">Step 2 — 既存ポジション管理</div>
+    <div class="node bg-tpsl">
+      <div class="node-title">
+        🎯 checkAndCloseAllPositions()
+        <span class="node-badge badge-serial">直列</span>
+      </div>
+      <div class="node-desc">
+        全OPEN銘柄の現在レートを検査。TP到達 → 利確、SL到達 → 損切り、トレイリングストップ更新。
+      </div>
+      <div class="sub-steps" style="grid-template-columns: repeat(3, 1fr); display: grid;">
+        <div class="sub-step">
+          <div class="sub-step-title">TP1 分割決済</div>
+          <div class="sub-step-desc">RR 1:1到達で50%決済<br>SLを建値に移動</div>
+        </div>
+        <div class="sub-step">
+          <div class="sub-step-title">TP/SL チェック</div>
+          <div class="sub-step-desc">TP到達 → CLOSED (TP)<br>SL到達 → CLOSED (SL)</div>
+        </div>
+        <div class="sub-step">
+          <div class="sub-step-title">トレイリング</div>
+          <div class="sub-step-desc">含み益拡大時にSL追従<br>銘柄別の距離設定</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="arrow"><span class="arrow-label">週末Phase 2/3 処理も実行</span></div>
+
+  <!-- ═══ Phase 2.5: Weekend Actions ═══ -->
+  <div class="phase">
+    <div class="phase-label">Step 2.5 — 週末アクション（条件付き）</div>
+    <div class="node bg-weekend">
+      <div class="node-title">
+        🔒 週末ウィンドダウン実行
+        <span class="node-badge badge-conditional">条件付き</span>
+      </div>
+      <div class="node-desc">
+        Phase 2: <code>lockProfitsForWeekend()</code> — 含み益ポジションのSL引き上げ（非クリプトのみ）<br>
+        Phase 3: <code>forceCloseAllForWeekend()</code> — 非クリプトを全強制決済
+      </div>
+    </div>
+  </div>
+
+  <div class="arrow"></div>
+
+  <!-- ═══ Phase 3: Path B — B1 (共通) ═══ -->
+  <div class="phase">
+    <div class="phase-label">Step 3 — Path B: B1 ニュース分析（共通）</div>
+    <div class="node bg-pathb">
+      <div class="node-title">
+        📰 runPathB() → B1: newsStage1WithHedge
+        <span class="node-badge badge-conditional">条件付き</span>
+      </div>
+      <div class="node-desc">
+        <strong>起動条件:</strong> ニュースハッシュ変化 AND 前回B実行から5分経過<br>
+        <strong>目的:</strong> ニュース内容変化を検知し、影響銘柄 (<code>affected_pairs</code>) を特定
+      </div>
+
+      <div class="sub-steps" style="margin-top: 16px;">
+        <div class="sub-step">
+          <div class="sub-step-title">B1: newsStage1WithHedge（タイムアウト 10秒）</div>
+          <div class="sub-step-desc">
+            ニュース最大20件 + 指標 → AI分析<br>
+            出力: <code>news_analysis[]</code>（attention/impact） + <code>trade_signals[]</code>（BUY/SELL + 対象ペア）
+          </div>
+          <div class="fallback-chain">
+            <span class="fb-item primary">Gemini 2.5 Pro</span>
+            <span class="fb-arrow">→</span>
+            <span class="fb-item">GPT-4.1-mini</span>
+            <span class="fb-arrow">→</span>
+            <span class="fb-item">Claude Sonnet</span>
+            <span class="fb-arrow">→</span>
+            <span class="fb-item" style="color: #f87171;">全失敗: Path Bスキップ + 2分CD</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="arrow" style="padding: 4px 0;"></div>
+
+      <!-- B1 post-processing -->
+      <div class="sub-steps">
+        <div class="sub-step">
+          <div class="sub-step-title">B1後処理（直列）</div>
+          <div class="sub-step-desc">
+            ① <code>translateTitlesWithHaiku()</code> — 英語タイトル→日本語翻訳<br>
+            ② <code>fetchOgDescription()</code> — attention上位5件の og:description 並列取得（3秒TO）<br>
+            ③ 過剰検出ガード: signals > 10件 → 先頭5件のみ
+          </div>
+        </div>
+      </div>
+
+      <div class="data-flow">
+        🔀 <strong>ここで分岐:</strong> B1の <code>trade_signals[].pair</code> から <code>pathBAffectedPairs</code> を確定 → 以降のフローがモード分岐
+      </div>
+    </div>
+  </div>
+
+  <div class="arrow"><span class="arrow-label">PARALLEL_PATH_AB フラグで分岐</span></div>
+
+  <!-- ═══ Phase 3.5: Mode Split ═══ -->
+  <div class="phase">
+    <div class="phase-label">Step 3.5 / 4 — 実行モード分岐</div>
+
+    <div class="mode-switch">
+      <!-- Serial Mode (Default) -->
+      <div class="mode-panel inactive" style="background: rgba(234,179,8,0.04);">
+        <div class="mode-label default">🔗 直列モード（デフォルト）</div>
+        <div style="font-size: 12px; color: #9ca3af; margin-bottom: 12px;">
+          <code>PARALLEL_PATH_AB</code> 未設定 or <code>false</code>
+        </div>
+
+        <div class="sub-step" style="margin-bottom: 8px;">
+          <div class="sub-step-title" style="color: #34d399;">① B2 → B結果適用（await）</div>
+          <div class="sub-step-desc">
+            B2セカンドオピニオン → REVERSE/CONFIRM → ポジション操作 → DB記録
+          </div>
+        </div>
+
+        <div style="text-align: center; color: #374151; font-size: 16px; padding: 4px 0;">↓</div>
+
+        <div class="sub-step">
+          <div class="sub-step-title" style="color: #fb923c;">② Path A（await）</div>
+          <div class="sub-step-desc">
+            B処理済み銘柄を除外 → 残り銘柄でAI判定<br>
+            <strong>合計時間 = B2 + Path A（順番待ち）</strong>
+          </div>
+        </div>
+
+        <div class="data-flow" style="margin-top: 8px; border-left-color: rgba(234,179,8,0.4);">
+          ⏱️ 最悪ケース: B2(8s) + Path A(6.5s) = <strong>34.8s</strong>（30s制限超過リスク）
+        </div>
+      </div>
+
+      <!-- Parallel Mode (Feature Flag) -->
+      <div class="mode-panel active" style="background: rgba(16,185,129,0.04);">
+        <div class="mode-label new">⚡ 並列モード（フィーチャーフラグ）</div>
+        <div style="font-size: 12px; color: #9ca3af; margin-bottom: 12px;">
+          <code>PARALLEL_PATH_AB = 'true'</code>
+          <span class="node-badge badge-feature-flag" style="font-size: 9px; margin-left: 6px;">Feature Flag</span>
+        </div>
+
+        <div class="parallel-fork">
+          <div class="fork-branch left">
+            <div class="fork-label green">🟢 Branch L: B2 + 結果適用</div>
+            <div style="font-size: 11px; color: #6b7280;">
+              B2セカンドオピニオン → REVERSE/CONFIRM<br>
+              → ポジション操作 → DB記録<br>
+              対象: <code>pathBAffectedPairs</code> のみ
+            </div>
+          </div>
+          <div class="fork-branch right">
+            <div class="fork-label orange">🟠 Branch R: Path A</div>
+            <div style="font-size: 11px; color: #6b7280;">
+              B影響銘柄を除外して独立実行<br>
+              → フィルタ → AI判定 → ゲート → オープン<br>
+              対象: <code>全銘柄 - pathBAffectedPairs</code>
+            </div>
+          </div>
+        </div>
+
+        <div class="fork-join">
+          <code>Promise.allSettled([applyPathBResults(), runPathAWithExclusion()])</code><br>
+          どちらかが失敗しても他方は継続
+        </div>
+
+        <div class="data-flow" style="margin-top: 4px; border-left-color: rgba(16,185,129,0.4);">
+          ⏱️ 最悪ケース: max(B2(8s), Path A(6.5s)) = <strong>max(28.3s, 6.5s) ≈ 28.3s</strong>（30s以内に収束）<br>
+          📐 Amdahl則: S = 1/(0.103 + 0.897/2) ≈ <strong>1.81倍高速化</strong>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="arrow"><span class="arrow-label">B1失敗時 → 直列フォールバック（excludedPairs=空）</span></div>
+
+  <!-- ═══ Phase 4: Path A Detail (共通) ═══ -->
+  <div class="phase">
+    <div class="phase-label">Path A 詳細（両モード共通）</div>
+    <div class="node bg-patha">
+      <div class="node-title">
+        🤖 runAIDecisions()
+        <span class="node-badge badge-serial">直列（内部は並列バッチ）</span>
+      </div>
+      <div class="node-desc">
+        <strong>目的:</strong> レート変化・フィルタ条件で銘柄を選別し、個別にAI判定。<code>excludedPairs</code> は除外。
+      </div>
+
+      <!-- Pre-processing -->
+      <div class="sub-steps" style="margin-top: 16px;">
+        <div class="sub-step">
+          <div class="sub-step-title">前処理（バッチクエリ最適化）</div>
+          <div class="sub-step-desc">
+            Thompson Sampling スコア一括取得 / prev_rate一括取得 / OPENポジション一括取得 / 過去取引履歴 / スパークライン→カルマンフィルタ→レジーム判定
+          </div>
+        </div>
+      </div>
+
+      <div class="arrow" style="padding: 4px 0;"></div>
+
+      <!-- Filter -->
+      <div class="sub-steps">
+        <div class="sub-step">
+          <div class="sub-step-title">フィルタリング + 優先度スコアリング</div>
+          <div class="sub-step-desc">
+            <code>shouldCallGemini()</code>: レート変化率 + 最終AI呼び出し時刻 + Thompsonスコア<br>
+            優先度: <code>volatilityScore + sessionBonus(0.5) + thompsonScore</code><br>
+            上限: <code>MAX_GEMINI_PER_RUN</code> = 3〜8件（前回cron時間で動的調整）
+          </div>
+        </div>
+      </div>
+
+      <div class="arrow" style="padding: 4px 0;"></div>
+
+      <!-- AI Decision -->
+      <div class="sub-steps">
+        <div class="sub-step">
+          <div class="sub-step-title">AI判定: getDecisionWithHedge（銘柄ごと）</div>
+          <div class="sub-step-desc">
+            Gemini即座開始 → 4秒後にGPTを並列起動 → <code>Promise.any()</code> で先着採用
+          </div>
+          <div class="fallback-chain">
+            <span class="fb-item primary">Gemini 2.5 Pro</span>
+            <span class="fb-arrow">+</span>
+            <span class="fb-item primary">GPT-4.1-mini（4秒遅延）</span>
+            <span class="fb-arrow">→</span>
+            <span class="fb-item">Claude Sonnet</span>
+            <span class="fb-arrow">→</span>
+            <span class="fb-item" style="color: #f87171;">全失敗: HOLD記録</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="arrow" style="padding: 4px 0;"></div>
+
+      <!-- Gates -->
+      <div class="sub-steps">
+        <div class="sub-step">
+          <div class="sub-step-title">多重ゲート（BUY/SELL時のみ）</div>
+          <div class="sub-step-desc">全ゲート通過 → <code>openPosition()</code></div>
+          <div class="gate-list">
+            <span class="gate">checkTpSlSanity</span>
+            <span class="gate">RR比 ≥1.0</span>
+            <span class="gate">セッション許可</span>
+            <span class="gate">銘柄マトリクス</span>
+            <span class="gate">確信度 ≥40</span>
+            <span class="gate">S級イベント回避</span>
+            <span class="gate">週末制限（クリプト免除）</span>
+            <span class="gate">HWM DD制御</span>
+            <span class="gate">相関リスクガード</span>
+            <span class="gate">日次損失上限</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="data-flow">
+        💰 最終ロット = <code>base × kelly × DD × HWM × RR × SL幅 × session × tier × matrix × confidence × weekend × calendar</code>
+      </div>
+    </div>
+  </div>
+
+  <div class="arrow"></div>
+
+  <!-- ═══ Phase 5: Final ═══ -->
+  <div class="phase">
+    <div class="phase-label">Step 5 — 記録・完了</div>
+    <div class="node bg-final">
+      <div class="node-title">
+        📊 バッチ記録 + ログ出力
+      </div>
+      <div class="node-desc">
+        スキップ銘柄を HOLD として <code>decisions</code> にバッチINSERT。<br>
+        レートキャッシュ更新（<code>prev_rate_*</code> / <code>last_ai_call_*</code>）。<br>
+        日次タスク（JST 0:00）: 週次/月次レビュー、キャンドル更新、相関グループ更新。
+      </div>
+    </div>
+  </div>
+
+  <hr class="separator">
+
+  <!-- ═══ Path C ═══ -->
+  <div class="phase">
+    <div class="node" style="background: rgba(255,255,255,0.02); border: 1px dashed rgba(255,255,255,0.1);">
+      <div class="node-title" style="color: #4b5563;">
+        🚧 Path C（未実装）
+      </div>
+      <div class="node-desc" style="color: #4b5563;">
+        型定義に <code>'PATH_C'</code> が予約されているが、実装は未着手。
+      </div>
+    </div>
+  </div>
+
+  <!-- ═══ Legend ═══ -->
+  <div class="legend">
+    <div class="legend-item">
+      <div class="legend-dot" style="background: #60a5fa;"></div>
+      データ取得
+    </div>
+    <div class="legend-item">
+      <div class="legend-dot" style="background: #fbbf24;"></div>
+      TP/SL管理
+    </div>
+    <div class="legend-item">
+      <div class="legend-dot" style="background: #c084fc;"></div>
+      週末制御
+    </div>
+    <div class="legend-item">
+      <div class="legend-dot" style="background: #34d399;"></div>
+      Path B（ニュース）
+    </div>
+    <div class="legend-item">
+      <div class="legend-dot" style="background: #fb923c;"></div>
+      Path A（銘柄別AI）
+    </div>
+    <div class="legend-item">
+      <div class="legend-dot" style="background: #f472b6;"></div>
+      記録・完了
+    </div>
+    <div class="legend-item">
+      <span class="node-badge badge-parallel" style="font-size: 10px;">並列</span>
+    </div>
+    <div class="legend-item">
+      <span class="node-badge badge-serial" style="font-size: 10px;">直列</span>
+    </div>
+    <div class="legend-item">
+      <span class="node-badge badge-conditional" style="font-size: 10px;">条件付き</span>
+    </div>
+    <div class="legend-item">
+      <span class="node-badge badge-feature-flag" style="font-size: 10px;">Feature Flag</span>
+    </div>
+  </div>
+
+</div>
+
+</body>
+</html>

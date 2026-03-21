@@ -2,7 +2,6 @@
 
 import type { MarketIndicators } from './indicators';
 import type { NewsItem } from './news';
-import type { RedditSignal } from './reddit';
 import type { InstrumentConfig } from './instruments';
 
 // ── 429 Rate Limit エラー（キー別クールダウン用）──
@@ -61,7 +60,6 @@ function buildUserMessage(params: {
   rate: number;
   indicators: MarketIndicators;
   news: NewsItem[];
-  redditSignal: RedditSignal;
   hasOpenPosition: boolean;
   recentTrades?: Array<{ pair: string; direction: string; pnl: number; close_reason: string }>;
   allPositionDirections?: string[];
@@ -70,7 +68,7 @@ function buildUserMessage(params: {
   technicalText?: string; // テスタ施策6: テクニカル環境認識テキスト
   regimeProhibitions?: string; // テスタ施策20: レジーム別禁止行動
 }): string {
-  const { instrument, rate, indicators, news, redditSignal, hasOpenPosition, recentTrades, allPositionDirections, sparkRates, regime } = params;
+  const { instrument, rate, indicators, news, hasOpenPosition, recentTrades, allPositionDirections, sparkRates, regime } = params;
 
   const newsText = news
     .map((n, i) => `  ${i + 1}. ${n.title}`)
@@ -91,7 +89,6 @@ function buildUserMessage(params: {
     `VIX: ${indicators.vix != null ? indicators.vix.toFixed(2) : 'N/A'}`,
     `日経平均: ${indicators.nikkei != null ? indicators.nikkei.toFixed(0) : 'N/A'}`,
     `S&P500: ${indicators.sp500 != null ? indicators.sp500.toFixed(0) : 'N/A'}`,
-    `Redditシグナル: ${redditSignal.keywords.length > 0 ? redditSignal.keywords.join(', ') : 'なし'}`,
     `直近ニュース（箇条書き5件）:`,
     newsText || '  (取得なし)',
     `オープンポジション: ${hasOpenPosition ? 'あり（原則HOLDを返すこと）' : 'なし'}`,
@@ -149,7 +146,6 @@ export async function getDecision(params: {
   rate: number;
   indicators: MarketIndicators;
   news: NewsItem[];
-  redditSignal: RedditSignal;
   hasOpenPosition: boolean;
   recentTrades?: Array<{ pair: string; direction: string; pnl: number; close_reason: string }>;
   allPositionDirections?: string[];
@@ -209,7 +205,6 @@ export async function getDecisionGPT(params: {
   rate: number;
   indicators: MarketIndicators;
   news: NewsItem[];
-  redditSignal: RedditSignal;
   hasOpenPosition: boolean;
   recentTrades?: Array<{ pair: string; direction: string; pnl: number; close_reason: string }>;
   allPositionDirections?: string[];
@@ -261,7 +256,6 @@ export async function getDecisionClaude(params: {
   rate: number;
   indicators: MarketIndicators;
   news: NewsItem[];
-  redditSignal: RedditSignal;
   hasOpenPosition: boolean;
   recentTrades?: Array<{ pair: string; direction: string; pnl: number; close_reason: string }>;
   allPositionDirections?: string[];
@@ -323,7 +317,6 @@ export async function getDecisionWithHedge(params: {
   rate: number;
   indicators: MarketIndicators;
   news: NewsItem[];
-  redditSignal: RedditSignal;
   hasOpenPosition: boolean;
   recentTrades?: Array<{ pair: string; direction: string; pnl: number; close_reason: string }>;
   allPositionDirections?: string[];
@@ -574,12 +567,11 @@ const STAGE1_TIMEOUT_MS = 10_000;
  */
 export async function newsStage1(params: {
   news: NewsItem[];
-  redditSignal: { hasSignal: boolean; keywords: string[]; topPosts: string[] };
   indicators: MarketIndicators;
   instruments: Array<{ pair: string; hasOpenPosition: boolean }>;
   apiKey: string;
 }): Promise<NewsStage1Result> {
-  const { news, redditSignal, indicators, instruments, apiKey } = params;
+  const { news, indicators, instruments, apiKey } = params;
 
   const newsList = news.slice(0, 20).map((n, i) =>
     `[${i}] ${n.title}${(n as any).source ? ` (${(n as any).source})` : ''}`
@@ -598,7 +590,6 @@ export async function newsStage1(params: {
     `VIX: ${indicators.vix != null ? indicators.vix.toFixed(2) : 'N/A'}`,
     `日経平均: ${indicators.nikkei != null ? indicators.nikkei.toFixed(0) : 'N/A'}`,
     `S&P500: ${indicators.sp500 != null ? indicators.sp500.toFixed(0) : 'N/A'}`,
-    `Redditシグナル: ${redditSignal.hasSignal ? redditSignal.keywords.join(', ') : 'なし'}`,
     ``,
     `【対象銘柄】（[OP]=既存ポジションあり、trade_signalsに含めない）`,
     instrumentList,
@@ -722,7 +713,6 @@ export async function newsStage2(params: {
 /** newsStage1 + GPT/Claude フォールバック */
 export async function newsStage1WithHedge(params: {
   news: NewsItem[];
-  redditSignal: { hasSignal: boolean; keywords: string[]; topPosts: string[] };
   indicators: MarketIndicators;
   instruments: Array<{ pair: string; hasOpenPosition: boolean }>;
   apiKey: string;
@@ -765,12 +755,11 @@ export async function newsStage1WithHedge(params: {
 /** B1 GPT版: newsStage1 と同じプロンプトを GPT に送る */
 async function newsStage1GPT(params: {
   news: NewsItem[];
-  redditSignal: { hasSignal: boolean; keywords: string[]; topPosts: string[] };
   indicators: MarketIndicators;
   instruments: Array<{ pair: string; hasOpenPosition: boolean }>;
   apiKey: string;
 }): Promise<NewsStage1Result> {
-  const { news, redditSignal, indicators, instruments, apiKey } = params;
+  const { news, indicators, instruments, apiKey } = params;
 
   const newsList = news.slice(0, 20).map((n, i) =>
     `[${i}] ${n.title}${(n as any).source ? ` (${(n as any).source})` : ''}`
@@ -787,7 +776,6 @@ async function newsStage1GPT(params: {
     `VIX: ${indicators.vix != null ? indicators.vix.toFixed(2) : 'N/A'}`,
     `日経平均: ${indicators.nikkei != null ? indicators.nikkei.toFixed(0) : 'N/A'}`,
     `S&P500: ${indicators.sp500 != null ? indicators.sp500.toFixed(0) : 'N/A'}`,
-    `Redditシグナル: ${redditSignal.hasSignal ? redditSignal.keywords.join(', ') : 'なし'}`,
     ``, `【対象銘柄】（[OP]=既存ポジションあり、trade_signalsに含めない）`, instrumentList,
   ].join('\n');
 
@@ -835,12 +823,11 @@ async function newsStage1GPT(params: {
 /** B1 Claude版: newsStage1 と同じプロンプトを Claude に送る */
 async function newsStage1Claude(params: {
   news: NewsItem[];
-  redditSignal: { hasSignal: boolean; keywords: string[]; topPosts: string[] };
   indicators: MarketIndicators;
   instruments: Array<{ pair: string; hasOpenPosition: boolean }>;
   apiKey: string;
 }): Promise<NewsStage1Result> {
-  const { news, redditSignal, indicators, instruments, apiKey } = params;
+  const { news, indicators, instruments, apiKey } = params;
 
   const newsList = news.slice(0, 20).map((n, i) =>
     `[${i}] ${n.title}${(n as any).source ? ` (${(n as any).source})` : ''}`
@@ -857,7 +844,6 @@ async function newsStage1Claude(params: {
     `VIX: ${indicators.vix != null ? indicators.vix.toFixed(2) : 'N/A'}`,
     `日経平均: ${indicators.nikkei != null ? indicators.nikkei.toFixed(0) : 'N/A'}`,
     `S&P500: ${indicators.sp500 != null ? indicators.sp500.toFixed(0) : 'N/A'}`,
-    `Redditシグナル: ${redditSignal.hasSignal ? redditSignal.keywords.join(', ') : 'なし'}`,
     ``, `【対象銘柄】（[OP]=既存ポジションあり、trade_signalsに含めない）`, instrumentList,
   ].join('\n');
 

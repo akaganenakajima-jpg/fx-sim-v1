@@ -2204,9 +2204,6 @@ body.sheet-open .tab-bar {
 .detail-news-ref-label { font-size: 10px; color: var(--label-tertiary); display: block; margin-bottom: 6px; }
 .detail-news-ref-item { font-size: 11px; color: var(--label-tertiary); line-height: 1.5; padding: 2px 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
-/* Reddit */
-.detail-reddit { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--label-secondary); margin-top: 6px; }
-.detail-reddit-icon { font-size: 10px; font-weight: 700; color: #FF4500; background: rgba(255,69,0,0.15); padding: 1px 5px; border-radius: 4px; }
 
 /* フッター */
 .detail-footer { display: flex; align-items: center; justify-content: space-between; padding-top: 10px; border-top: 1px solid var(--separator); }
