@@ -7,6 +7,10 @@ dist/
 
 # 一時ファイル・デバッグ出力
 api_out.json
+tmp_*.json
+tmp_*.sql
 audit/
+screenshots/
+mockups/
 .claude/
 .superpowers/

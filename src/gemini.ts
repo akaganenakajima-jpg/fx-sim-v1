@@ -5,6 +5,18 @@ import type { NewsItem } from './news';
 import type { RedditSignal } from './reddit';
 import type { InstrumentConfig } from './instruments';
 
+// ── 429 Rate Limit エラー（キー別クールダウン用）──
+export class RateLimitError extends Error {
+  constructor(
+    public readonly apiKey: string,
+    public readonly retryAfterSec: number,
+    detail: string,
+  ) {
+    super(`429 Rate Limited (retry after ${retryAfterSec}s): ${detail.slice(0, 100)}`);
+    this.name = 'RateLimitError';
+  }
+}
+
 export interface GeminiDecision {
   decision: 'BUY' | 'SELL' | 'HOLD';
   tp_rate: number | null;
@@ -156,6 +168,10 @@ export async function getDecision(params: {
 
   if (!res.ok) {
     const body = await res.text();
+    if (res.status === 429) {
+      const retryAfter = parseInt(res.headers.get('Retry-After') ?? '60', 10);
+      throw new RateLimitError(apiKey, retryAfter > 0 ? retryAfter : 60, body);
+    }
     throw new Error(`Gemini API error ${res.status}: ${body}`);
   }
 
@@ -604,6 +620,10 @@ export async function newsStage1(params: {
 
   if (!res.ok) {
     const body = await res.text();
+    if (res.status === 429) {
+      const retryAfter = parseInt(res.headers.get('Retry-After') ?? '60', 10);
+      throw new RateLimitError(apiKey, retryAfter > 0 ? retryAfter : 60, body);
+    }
     throw new Error(`newsStage1 API error ${res.status}: ${body.slice(0, 200)}`);
   }
 
@@ -672,10 +692,196 @@ export async function newsStage2(params: {
 
   if (!res.ok) {
     const body = await res.text();
+    if (res.status === 429) {
+      const retryAfter = parseInt(res.headers.get('Retry-After') ?? '60', 10);
+      throw new RateLimitError(apiKey, retryAfter > 0 ? retryAfter : 60, body);
+    }
     throw new Error(`newsStage2 API error ${res.status}: ${body.slice(0, 200)}`);
   }
 
   const data = await res.json<GeminiResponse>();
   const text = data.candidates[0].content.parts[0].text;
   return JSON.parse(text) as NewsStage2Result;
+}
+
+// ── B1/B2 ヘッジ: Gemini → GPT → Claude フォールバック ──
+
+/** newsStage1 + GPT/Claude フォールバック */
+export async function newsStage1WithHedge(params: {
+  news: NewsItem[];
+  redditSignal: { hasSignal: boolean; keywords: string[]; topPosts: string[] };
+  indicators: MarketIndicators;
+  instruments: Array<{ pair: string; hasOpenPosition: boolean }>;
+  apiKey: string;
+  openaiApiKey?: string;
+  anthropicApiKey?: string;
+}): Promise<NewsStage1Result & { provider: string }> {
+  const { openaiApiKey, anthropicApiKey, ...geminiParams } = params;
+
+  // 1. Gemini を試行
+  try {
+    const result = await newsStage1(geminiParams);
+    return { ...result, provider: 'gemini' };
+  } catch (geminiErr) {
+    console.warn(`[fx-sim] B1 Gemini failed: ${String(geminiErr).split('\n')[0].slice(0, 80)}`);
+
+    // 2. GPT フォールバック
+    if (openaiApiKey) {
+      try {
+        const result = await newsStage1GPT({ ...params, apiKey: openaiApiKey });
+        return { ...result, provider: 'gpt' };
+      } catch (gptErr) {
+        console.warn(`[fx-sim] B1 GPT failed: ${String(gptErr).split('\n')[0].slice(0, 80)}`);
+      }
+    }
+
+    // 3. Claude フォールバック
+    if (anthropicApiKey) {
+      try {
+        const result = await newsStage1Claude({ ...params, apiKey: anthropicApiKey });
+        return { ...result, provider: 'claude' };
+      } catch (claudeErr) {
+        console.warn(`[fx-sim] B1 Claude failed: ${String(claudeErr).split('\n')[0].slice(0, 80)}`);
+      }
+    }
+
+    throw geminiErr; // 全プロバイダー失敗
+  }
+}
+
+/** B1 GPT版: newsStage1 と同じプロンプトを GPT に送る */
+async function newsStage1GPT(params: {
+  news: NewsItem[];
+  redditSignal: { hasSignal: boolean; keywords: string[]; topPosts: string[] };
+  indicators: MarketIndicators;
+  instruments: Array<{ pair: string; hasOpenPosition: boolean }>;
+  apiKey: string;
+}): Promise<NewsStage1Result> {
+  const { news, redditSignal, indicators, instruments, apiKey } = params;
+
+  const newsList = news.slice(0, 20).map((n, i) =>
+    `[${i}] ${n.title}${(n as any).source ? ` (${(n as any).source})` : ''}`
+  ).join('\n');
+
+  const instrumentList = instruments.map(inst =>
+    inst.hasOpenPosition ? `${inst.pair}[OP]` : inst.pair
+  ).join(', ');
+
+  const userMessage = [
+    `【ニュース一覧】`, newsList, ``,
+    `【市場状況】`,
+    `米10年債利回り: ${indicators.us10y != null ? indicators.us10y.toFixed(2) + '%' : 'N/A'}`,
+    `VIX: ${indicators.vix != null ? indicators.vix.toFixed(2) : 'N/A'}`,
+    `日経平均: ${indicators.nikkei != null ? indicators.nikkei.toFixed(0) : 'N/A'}`,
+    `S&P500: ${indicators.sp500 != null ? indicators.sp500.toFixed(0) : 'N/A'}`,
+    `Redditシグナル: ${redditSignal.hasSignal ? redditSignal.keywords.join(', ') : 'なし'}`,
+    ``, `【対象銘柄】（[OP]=既存ポジションあり、trade_signalsに含めない）`, instrumentList,
+  ].join('\n');
+
+  const systemPrompt =
+    'あなたは為替FXトレーダーのAIアシスタントです。\n' +
+    '以下のニュース一覧と市場状況を分析し、次の2つのことを返してください。\n' +
+    '1. 各ニュースの注目度評価（news_analysis）\n' +
+    '2. ニュースに基づいた売買シグナル（trade_signals）\n\n' +
+    '必ず以下のJSON形式のみで返答してください:\n' +
+    '{"news_analysis":[{"index":0,"attention":true,"impact":"円安要因（50文字以内）","title_ja":"日本語タイトル","affected_pairs":["USD/JPY"]}],' +
+    '"trade_signals":[{"pair":"USD/JPY","decision":"BUY","tp_rate":150.50,"sl_rate":149.80,"reasoning":"日本語100文字以内"}]}\n\n' +
+    'ルール:\n- trade_signalsはBUYまたはSELLのみ（HOLDは含めない）\n- [OP]マークの銘柄はtrade_signalsに含めない\n' +
+    '- tp_rate/sl_rateは必ず数値で返す（nullは不可）\n- リスクリワード比は1.5以上\n- 確信度が低いニュースはtrade_signalsに含めない';
+
+  const res = await fetchWithTimeout('https://api.openai.com/v1/chat/completions', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` },
+    body: JSON.stringify({
+      model: 'gpt-4.1-mini',
+      messages: [
+        { role: 'system', content: systemPrompt },
+        { role: 'user', content: userMessage },
+      ],
+      response_format: { type: 'json_object' },
+      temperature: 0.3,
+    }),
+  }, STAGE1_TIMEOUT_MS);
+
+  if (!res.ok) {
+    const body = await res.text();
+    throw new Error(`GPT newsStage1 error ${res.status}: ${body.slice(0, 200)}`);
+  }
+
+  const data = await res.json<{ choices: Array<{ message: { content: string } }> }>();
+  const text = data.choices[0].message.content;
+  const parsed = JSON.parse(text);
+  // GPTはルートオブジェクトまたはネストで返す可能性がある
+  return {
+    news_analysis: parsed.news_analysis ?? [],
+    trade_signals: parsed.trade_signals ?? [],
+  };
+}
+
+/** B1 Claude版: newsStage1 と同じプロンプトを Claude に送る */
+async function newsStage1Claude(params: {
+  news: NewsItem[];
+  redditSignal: { hasSignal: boolean; keywords: string[]; topPosts: string[] };
+  indicators: MarketIndicators;
+  instruments: Array<{ pair: string; hasOpenPosition: boolean }>;
+  apiKey: string;
+}): Promise<NewsStage1Result> {
+  const { news, redditSignal, indicators, instruments, apiKey } = params;
+
+  const newsList = news.slice(0, 20).map((n, i) =>
+    `[${i}] ${n.title}${(n as any).source ? ` (${(n as any).source})` : ''}`
+  ).join('\n');
+
+  const instrumentList = instruments.map(inst =>
+    inst.hasOpenPosition ? `${inst.pair}[OP]` : inst.pair
+  ).join(', ');
+
+  const userMessage = [
+    `【ニュース一覧】`, newsList, ``,
+    `【市場状況】`,
+    `米10年債利回り: ${indicators.us10y != null ? indicators.us10y.toFixed(2) + '%' : 'N/A'}`,
+    `VIX: ${indicators.vix != null ? indicators.vix.toFixed(2) : 'N/A'}`,
+    `日経平均: ${indicators.nikkei != null ? indicators.nikkei.toFixed(0) : 'N/A'}`,
+    `S&P500: ${indicators.sp500 != null ? indicators.sp500.toFixed(0) : 'N/A'}`,
+    `Redditシグナル: ${redditSignal.hasSignal ? redditSignal.keywords.join(', ') : 'なし'}`,
+    ``, `【対象銘柄】（[OP]=既存ポジションあり、trade_signalsに含めない）`, instrumentList,
+  ].join('\n');
+
+  const systemPrompt =
+    'あなたは為替FXトレーダーのAIアシスタントです。\n' +
+    'ニュース一覧と市場状況を分析し、news_analysisとtrade_signalsを返してください。\n' +
+    '必ずJSON形式で返答:\n' +
+    '{"news_analysis":[{"index":0,"attention":true,"impact":"50文字以内","title_ja":"日本語","affected_pairs":["USD/JPY"]}],' +
+    '"trade_signals":[{"pair":"USD/JPY","decision":"BUY","tp_rate":150.50,"sl_rate":149.80,"reasoning":"100文字以内"}]}';
+
+  const res = await fetchWithTimeout('https://api.anthropic.com/v1/messages', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'x-api-key': apiKey,
+      'anthropic-version': '2023-06-01',
+    },
+    body: JSON.stringify({
+      model: 'claude-sonnet-4-20250514',
+      max_tokens: 2048,
+      system: systemPrompt,
+      messages: [{ role: 'user', content: userMessage }],
+      temperature: 0.3,
+    }),
+  }, STAGE1_TIMEOUT_MS);
+
+  if (!res.ok) {
+    const body = await res.text();
+    throw new Error(`Claude newsStage1 error ${res.status}: ${body.slice(0, 200)}`);
+  }
+
+  const data = await res.json<{ content: Array<{ type: string; text: string }> }>();
+  const text = data.content[0].text;
+  const jsonMatch = text.match(/\{[\s\S]*\}/);
+  if (!jsonMatch) throw new Error('Claude newsStage1: no JSON object found');
+  const parsed = JSON.parse(jsonMatch[0]);
+  return {
+    news_analysis: parsed.news_analysis ?? [],
+    trade_signals: parsed.trade_signals ?? [],
+  };
 }

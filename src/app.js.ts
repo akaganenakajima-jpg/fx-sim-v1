@@ -2356,14 +2356,45 @@ export const JS = `
       var dirCls   = d.decision === 'BUY' ? 'buy' : d.decision === 'SELL' ? 'sell' : 'hold';
       var reasoning = fmtReasoning(d.reasoning);
 
-      // 判断結果の判定（openPositionsとの照合）
-      // IPA品質修正: IEEE 754 浮動小数点の完全一致比較は誤判定リスクあり
-      // entry_rate は保存時の丸めで微小誤差が生じる可能性があるため許容差 0.01 を使用
-      var matched = openPos.find(function(p) {
-        return p.direction === d.decision && Math.abs(p.entry_rate - d.rate) < 0.01;
-      });
-      var resultKey  = matched ? 'open' : 'closed';
-      var resultText = matched ? '保有中' : 'クローズ済';
+      // 判断結果の判定（4分類: 保有中 / TP勝ち / SL負け / 未実行）
+      // openPositions → recentCloses → 未実行 の順で照合
+      // IPA品質修正: IEEE 754 浮動小数点許容差 0.01 を使用
+      var resultKey  = 'closed';
+      var resultText = '⏸ 未実行';
+      var resultPnl  = '';
+      if (d.decision === 'BUY' || d.decision === 'SELL') {
+        var matchedOpen = openPos.find(function(p) {
+          return p.pair === (d.pair || 'USD/JPY') && p.direction === d.decision && Math.abs(p.entry_rate - d.rate) < 0.01;
+        });
+        if (matchedOpen) {
+          resultKey  = 'open';
+          resultText = '📂 保有中';
+        } else {
+          var closes = data.recentCloses || [];
+          var matchedClose = closes.find(function(p) {
+            return p.pair === (d.pair || 'USD/JPY') && p.direction === d.decision && Math.abs(p.entry_rate - d.rate) < 0.01;
+          });
+          if (matchedClose) {
+            if (matchedClose.close_reason === 'TP') {
+              resultKey  = 'tp';
+              resultText = '✅ TP';
+              resultPnl  = matchedClose.pnl != null ? (matchedClose.pnl >= 0 ? ' +' : ' ') + fmt(matchedClose.pnl, 0) : '';
+            } else if (matchedClose.close_reason === 'SL') {
+              resultKey  = 'sl';
+              resultText = '❌ SL';
+              resultPnl  = matchedClose.pnl != null ? (matchedClose.pnl >= 0 ? ' +' : ' ') + fmt(matchedClose.pnl, 0) : '';
+            } else {
+              resultKey  = 'closed';
+              resultText = '📋 決済済';
+              resultPnl  = matchedClose.pnl != null ? (matchedClose.pnl >= 0 ? ' +' : ' ') + fmt(matchedClose.pnl, 0) : '';
+            }
+          }
+        }
+      } else {
+        // HOLD判断 → 常に「様子見」
+        resultKey  = 'closed';
+        resultText = '👀 様子見';
+      }
 
       // 指標チップ
       var chips = [];
@@ -2403,7 +2434,7 @@ export const JS = `
             '</div>' +
             '<div class="tl-result">' +
               '<div class="result-dot ' + resultKey + '"></div>' +
-              '<span class="tl-result-text ' + resultKey + '">' + resultText + '</span>' +
+              '<span class="tl-result-text ' + resultKey + '">' + resultText + resultPnl + '</span>' +
             '</div>' +
           '</div>' +
         '</div>' +
@@ -2418,7 +2449,30 @@ export const JS = `
           '<div class="detail-4pt">' +
             '<div>' +
               '<div class="detail-label">判断基準</div>' +
-              '<div class="detail-value">' + escHtml(d.pair || 'USD/JPY') + '</div>' +
+              '<div class="detail-value" style="font-size:11px;line-height:1.4">' +
+                escHtml((function() {
+                  // トリガー種別に応じて最も関連する判断基準を表示
+                  // ニューストリガー → 日本語タイトル(title_ja)優先、なければ英語title
+                  if (trigger === 'news' && d.news_summary) {
+                    try {
+                      var parsed = JSON.parse(d.news_summary);
+                      if (Array.isArray(parsed) && parsed.length > 0) {
+                        var t = parsed[0].title_ja || parsed[0].title || parsed[0];
+                        var impact = parsed[0].impact ? ' (' + parsed[0].impact + ')' : '';
+                        return '📰 ' + (typeof t === 'string' ? t : String(t)).slice(0, 60) + impact + (parsed.length > 1 ? ' 他' + (parsed.length - 1) + '件' : '');
+                      }
+                    } catch(e) {}
+                    return '📰 ' + d.news_summary.slice(0, 60);
+                  }
+                  // Redditシグナル
+                  if (d.reddit_signal) return '💬 Reddit: ' + d.reddit_signal;
+                  // レート変動・定期トリガー → 指標値を表示
+                  var indicators = [];
+                  if (d.vix != null) indicators.push('VIX ' + fmt(d.vix, 1));
+                  if (d.us10y != null) indicators.push('米10Y ' + fmt(d.us10y, 2) + '%');
+                  return indicators.length > 0 ? '📊 ' + indicators.join(' / ') : triggerLabel(trigger);
+                })()) +
+              '</div>' +
             '</div>' +
             '<div>' +
               '<div class="detail-label">判断内容</div>' +
@@ -2428,7 +2482,7 @@ export const JS = `
               '<div class="detail-label">判断結果</div>' +
               '<div class="tl-result" style="margin-top:2px">' +
                 '<div class="result-dot ' + resultKey + '"></div>' +
-                '<span class="tl-result-text ' + resultKey + '">' + resultText + '</span>' +
+                '<span class="tl-result-text ' + resultKey + '">' + resultText + resultPnl + '</span>' +
               '</div>' +
             '</div>' +
             '<div>' +
