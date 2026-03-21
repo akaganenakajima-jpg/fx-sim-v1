@@ -733,8 +733,8 @@
         <span class="node-badge badge-parallel">3層マージ + ソート</span>
       </div>
       <div class="node-desc">
-        APIリクエスト毎に以下の3ソースをマージし、<code>pubDate</code>降順で最大30件を返す。<br>
-        <code>title_ja</code>（日本語翻訳）があれば優先表示。
+        APIリクエスト毎に以下のソースをマージし、<code>pubDate</code>降順で最大30件を返す。<br>
+        <strong>Layer 1+2はcron非依存で単体動作可能。</strong> Layer 3と分析マージはPath Bキャッシュに依存。
       </div>
 
       <div class="merge-layers">
@@ -773,8 +773,8 @@
 
       <div class="data-flow" style="border-left-color: rgba(20,184,166,0.4); margin-top: 12px;">
         📤 出力: <code>latestNews[]</code>（最大30件, pubDate降順）→ フロントエンドのモーダルに渡す<br>
-        🔗 cronが書き込んだ <code>latest_news</code> / <code>news_analysis</code> キャッシュをAPIが読み取る構造
-        （APIリクエスト側でGemini呼び出しなし）
+        ⚠️ <strong>完全独立ではない</strong>: <code>title_ja</code>（日本語）と attention ニュースの先頭挿入は Path B キャッシュ依存。
+        Path B未動作時はRSS+decisionsで英語タイトルのみ表示。APIリクエスト側でGemini呼び出しなし。
       </div>
     </div>
   </div>
