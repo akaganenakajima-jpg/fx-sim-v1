@@ -2615,11 +2615,6 @@ export const JS = `
               '</div>';
             }
 
-            // Reddit（共通）
-            if (d.reddit_signal) {
-              sectionHtml += '<div class="detail-reddit"><span class="detail-reddit-icon">R</span>' + escHtml(d.reddit_signal) + '</div>';
-            }
-
             sectionHtml += '</div>';
             return sectionHtml;
           })() +
@@ -2714,13 +2709,6 @@ export const JS = `
           }).join('') +
           '</div>';
       }
-    }
-
-    if (d.reddit_signal) {
-      rows += '<div style="margin-top:12px;padding-top:12px;border-top:1px solid var(--separator)">' +
-        '<div style="font-size:12px;color:var(--label-secondary);margin-bottom:6px">Redditシグナル</div>' +
-        '<div style="font-size:13px;color:var(--label)">' + escHtml(d.reddit_signal) + '</div>' +
-        '</div>';
     }
 
     el('sheet-body').innerHTML = rows;

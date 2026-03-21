@@ -4,7 +4,6 @@
 
 import { getUSDJPY } from './rate';
 import { fetchNews, filterNikkeiWithHaiku, translateTitlesWithHaiku, translateAndCacheNews, type SourceFetchStat } from './news';
-import { fetchRedditSignal } from './reddit';
 import { getMarketIndicators } from './indicators';
 import { getDecisionWithHedge, fetchOgDescription, newsStage1WithHedge, newsStage2, RateLimitError, type NewsAnalysisItem, type NewsStage1Result } from './gemini';
 import { checkAndCloseAllPositions, openPosition } from './position';
@@ -54,8 +53,6 @@ interface Env {
   OPENAI_API_KEY?: string;
   OPENAI_API_KEY_2?: string;
   ANTHROPIC_API_KEY?: string;
-  REDDIT_CLIENT_ID?: string;
-  REDDIT_CLIENT_SECRET?: string;
   // OANDA実弾取引
   OANDA_API_TOKEN?: string;
   OANDA_ACCOUNT_ID?: string;
@@ -239,25 +236,20 @@ interface MarketData {
   news: ReturnType<typeof fetchNews> extends Promise<infer T> ? T extends { items: infer I } ? I : never : never;
   newsFetchStats: SourceFetchStat[];
   activeNewsSources: string;
-  redditSignal: { hasSignal: boolean; keywords: string[]; topPosts: string[] };
   indicators: Awaited<ReturnType<typeof getMarketIndicators>>;
   prices: Map<string, number | null>;
 }
 
 /** 市場データ一括取得（RSS/Reddit/Yahoo Finance/Frankfurter + キャッシュフォールバック） */
 async function fetchMarketData(env: Env, now: Date): Promise<MarketData | null> {
-  const [newsResult, redditResult, indicatorsResult, frankfurterResult] = await Promise.allSettled([
+  const [newsResult, indicatorsResult, frankfurterResult] = await Promise.allSettled([
     fetchNews(),
-    fetchRedditSignal(env.REDDIT_CLIENT_ID, env.REDDIT_CLIENT_SECRET),
     getMarketIndicators(env.TWELVE_DATA_API_KEY),
     getUSDJPY(),
   ]);
 
   if (newsResult.status === 'rejected') {
     await insertSystemLog(env.DB, 'WARN', 'NEWS', 'ニュース取得失敗', String(newsResult.reason).slice(0, 200));
-  }
-  if (redditResult.status === 'rejected') {
-    await insertSystemLog(env.DB, 'WARN', 'REDDIT', 'Reddit取得失敗', String(redditResult.reason).slice(0, 200));
   }
   if (indicatorsResult.status === 'rejected') {
     await insertSystemLog(env.DB, 'WARN', 'INDICATORS', '指標取得失敗', String(indicatorsResult.reason).slice(0, 200));
@@ -290,7 +282,6 @@ async function fetchMarketData(env: Env, now: Date): Promise<MarketData | null> 
     console.warn(`[fx-sim] translateAndCacheNews error: ${e}`);
   }
   const activeNewsSources = [...new Set(news.map(n => n.source))].join(',');
-  const redditSignal = redditResult.status === 'fulfilled' ? redditResult.value : { hasSignal: false, keywords: [], topPosts: [] };
   const indicators = indicatorsResult.status === 'fulfilled' ? indicatorsResult.value : { vix: null, us10y: null, nikkei: null, sp500: null, usdjpy: null, btcusd: null, gold: null, eurusd: null, ethusd: null, crudeoil: null, natgas: null, copper: null, silver: null, gbpusd: null, audusd: null, solusd: null, dax: null, nasdaq: null, uk100: null, hk33: null };
   const frankfurterRate = frankfurterResult.status === 'fulfilled' ? frankfurterResult.value : null;
 
@@ -345,7 +336,7 @@ async function fetchMarketData(env: Env, now: Date): Promise<MarketData | null> 
     }
   }
 
-  return { news, newsFetchStats, activeNewsSources, redditSignal, indicators, prices };
+  return { news, newsFetchStats, activeNewsSources, indicators, prices };
 }
 
 interface AIDecisionSummary {
@@ -358,7 +349,6 @@ interface AIDecisionSummary {
 interface AIRunContext {
   indicators: Awaited<ReturnType<typeof getMarketIndicators>>;
   news: MarketData['news'];
-  redditSignal: { hasSignal: boolean; keywords: string[]; topPosts: string[] };
   newsSummary: string | null;
   activeNewsSources: string;
   brokerEnv: BrokerEnv;
@@ -406,7 +396,7 @@ async function runAIDecisions(
   cronStart: number,
 ): Promise<AIDecisionSummary> {
   const {
-    indicators, news, redditSignal, newsSummary, activeNewsSources,
+    indicators, news, newsSummary, activeNewsSources,
     brokerEnv, now, prices, prevElapsed, excludedPairs, economicEventGuard, weekendStatus, cryptoOnlyMode,
   } = context;
 
@@ -650,7 +640,6 @@ async function runAIDecisions(
             rate: currentRate,
             indicators,
             news,
-            redditSignal,
             hasOpenPosition,
             recentTrades,
             allPositionDirections,
@@ -720,7 +709,7 @@ async function runAIDecisions(
             sl_rate: finalSl,
             reasoning: triggerPrefix + geminiResult.reasoning,
             news_summary: newsSummary || null,
-            reddit_signal: redditSignal.keywords.join(', ') || null,
+            reddit_signal: null,
             vix: indicators.vix,
             us10y: indicators.us10y,
             nikkei: indicators.nikkei,
@@ -890,7 +879,7 @@ async function runAIDecisions(
             sl_rate: null,
             reasoning: `AI判定失敗: ${errMsg.split('\n')[0].slice(0, 80)}`,
             news_summary: null,
-            reddit_signal: redditSignal.keywords.join(', ') || null,
+            reddit_signal: null,
             vix: indicators.vix,
             us10y: indicators.us10y,
             nikkei: indicators.nikkei,
@@ -926,7 +915,6 @@ async function runPathB(
   env: Env,
   sharedNewsStore: SharedNewsStore,
   indicators: Awaited<ReturnType<typeof getMarketIndicators>>,
-  redditSignal: { hasSignal: boolean; keywords: string[]; topPosts: string[] },
   openPairs: Set<string>,
   apiKey: string,
   hedgeKeys?: { openaiApiKey?: string; anthropicApiKey?: string },
@@ -973,7 +961,7 @@ async function runPathB(
     try {
       const tB1 = Date.now();
       const b1Result = await newsStage1WithHedge({
-        news, redditSignal, indicators, instruments: instrumentList, apiKey,
+        news, indicators, instruments: instrumentList, apiKey,
         openaiApiKey: hedgeKeys?.openaiApiKey,
         anthropicApiKey: hedgeKeys?.anthropicApiKey,
       });
@@ -1122,7 +1110,7 @@ async function run(env: Env): Promise<void> {
     if (marketData == null) return;
     const fetchMs = Date.now() - t0;
 
-    const { news, newsFetchStats: _newsFetchStats, activeNewsSources, redditSignal, indicators, prices } = marketData;
+    const { news, newsFetchStats: _newsFetchStats, activeNewsSources, indicators, prices } = marketData;
     await insertSystemLog(env.DB, 'INFO', 'FLOW', 'FETCH完了', JSON.stringify({
       ms: fetchMs, news: news.length,
       prices: [...prices.values()].filter(v => v != null).length,
@@ -1369,7 +1357,7 @@ async function run(env: Env): Promise<void> {
 
       try {
         // Step 1: B1 を先行実行して affected_pairs を特定
-        pathBResult = await runPathB(env, sharedNewsStore, indicators, redditSignal, openPairsForPathB, getApiKey(env), {
+        pathBResult = await runPathB(env, sharedNewsStore, indicators, openPairsForPathB, getApiKey(env), {
           openaiApiKey: env.OPENAI_API_KEY,
           anthropicApiKey: env.ANTHROPIC_API_KEY,
         });
