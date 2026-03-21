@@ -516,14 +516,43 @@ async function runAIDecisions(
             await insertSystemLog(env.DB, 'INFO', hedgeResult.provider.toUpperCase(), `${hedgeResult.provider}ヘッジ成功 (${instrument.pair}) → ${geminiResult.decision}`);
           }
 
-          // トリガー種別プレフィックスを付与（inferTrigger で分類するため）
+          // ── IPA品質修正: サニティチェックを insertDecision 前に実行し補正値をDBに保存 ──
+          // BUY/SELL の TP/SL を事前にサニティ補正する（異常値がDBに記録されることを防止）
           const triggerPrefix = candidate.filterResult.reason.startsWith('レート変化') ? '[RATE] ' : '[CRON] ';
+          let finalTp = geminiResult.tp_rate;
+          let finalSl = geminiResult.sl_rate;
+          let sanityValid = true;
+          if ((geminiResult.decision === 'BUY' || geminiResult.decision === 'SELL') &&
+              finalTp != null && finalSl != null) {
+            const preSanity = checkTpSlSanity({
+              direction: geminiResult.decision,
+              rate: currentRate,
+              tp: finalTp,
+              sl: finalSl,
+              instrument,
+            });
+            if (!preSanity.valid) {
+              sanityValid = false;
+              finalTp = null;
+              finalSl = null;
+              console.warn(`[fx-sim] Sanity pre-check rejected: ${instrument.pair} ${preSanity.reason}`);
+              await insertSystemLog(env.DB, 'WARN', 'SANITY',
+                `TP/SL異常値拒否: ${instrument.pair} ${geminiResult.decision}`,
+                preSanity.reason ?? undefined);
+            } else {
+              // 補正値があれば適用（差分値・比率値・ミラーを自動修正）
+              if (preSanity.correctedTp != null) finalTp = preSanity.correctedTp;
+              if (preSanity.correctedSl != null) finalSl = preSanity.correctedSl;
+            }
+          }
+
+          // 補正済み TP/SL で decisions テーブルに記録（生の異常値は保存しない）
           await insertDecision(env.DB, {
             pair: instrument.pair,
             rate: currentRate,
             decision: geminiResult.decision,
-            tp_rate: geminiResult.tp_rate,
-            sl_rate: geminiResult.sl_rate,
+            tp_rate: finalTp,
+            sl_rate: finalSl,
             reasoning: triggerPrefix + geminiResult.reasoning,
             news_summary: newsSummary || null,
             reddit_signal: redditSignal.keywords.join(', ') || null,
@@ -541,18 +570,8 @@ async function runAIDecisions(
             (geminiResult.decision === 'BUY' || geminiResult.decision === 'SELL') &&
             !hasOpenPosition
           ) {
-            const sanity = checkTpSlSanity({
-              direction: geminiResult.decision,
-              rate: currentRate,
-              tp: geminiResult.tp_rate,
-              sl: geminiResult.sl_rate,
-              instrument,
-            });
-            if (!sanity.valid) {
-              console.warn(`[fx-sim] Sanity rejected: ${instrument.pair} ${sanity.reason}`);
-              await insertSystemLog(env.DB, 'WARN', 'SANITY',
-                `TP/SL異常値拒否: ${instrument.pair} ${geminiResult.decision}`,
-                sanity.reason ?? undefined);
+            if (!sanityValid) {
+              // サニティ拒否済み — ポジションは開かない（ログは上で出力済み）
             } else {
               const broker = getBroker(instrument, brokerEnv);
               const isLive = broker.name === 'oanda';
@@ -580,8 +599,8 @@ async function runAIDecisions(
                     oandaSymbol: instrument.oandaSymbol,
                     direction: geminiResult!.decision as 'BUY' | 'SELL',
                     entryRate: currentRate,
-                    tpRate: geminiResult!.tp_rate,
-                    slRate: geminiResult!.sl_rate,
+                    tpRate: finalTp,
+                    slRate: finalSl,
                     lot: riskResult.adjustedLot ?? 1,
                   }), env.DB, `open ${instrument.pair} ${geminiResult.decision}`);
 
@@ -598,8 +617,8 @@ async function runAIDecisions(
                 instrument.pair,
                 geminiResult.decision,
                 currentRate,
-                geminiResult.tp_rate,
-                geminiResult.sl_rate,
+                finalTp,
+                finalSl,
                 source,
                 oandaTradeId,
                 getWebhookUrl(env),
@@ -607,7 +626,7 @@ async function runAIDecisions(
               await insertSystemLog(
                 env.DB, 'INFO', 'POSITION',
                 `ポジション開設: ${instrument.pair} ${geminiResult.decision} @ ${currentRate} [${source}]`,
-                JSON.stringify({ tp: geminiResult.tp_rate, sl: geminiResult.sl_rate, source, oandaTradeId, reasoning: geminiResult.reasoning?.slice(0, 100) })
+                JSON.stringify({ tp: finalTp, sl: finalSl, source, oandaTradeId, reasoning: geminiResult.reasoning?.slice(0, 100) })
               );
             }
           } else if (geminiResult.decision !== 'HOLD') {

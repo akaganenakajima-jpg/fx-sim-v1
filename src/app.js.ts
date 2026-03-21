@@ -102,14 +102,11 @@ export const JS = `
 
   // ── AI判断タブ: ユーティリティ ──
 
-  // 日付文字列が今日（ローカルタイム）かどうか
+  // 日付文字列が今日（UTC基準）かどうか
+  // IPA品質修正: DB の date('now') はUTC基準のためローカルタイムと統一
   function isToday(dateStr) {
     if (!dateStr) return false;
-    var d = new Date(dateStr);
-    var now = new Date();
-    return d.getFullYear() === now.getFullYear() &&
-           d.getMonth()    === now.getMonth() &&
-           d.getDate()     === now.getDate();
+    return dateStr.slice(0, 10) === new Date().toISOString().slice(0, 10);
   }
 
   // ISO日時 → 「X分前」「X時間前」形式
@@ -2282,10 +2279,14 @@ export const JS = `
     if (!timeline) return;
 
     // ─ KPI: 今日の判断 ─
-    var todayD    = decisions.filter(function(d) { return isToday(d.created_at); });
-    var buyCount  = todayD.filter(function(d) { return d.decision === 'BUY';  }).length;
-    var sellCount = todayD.filter(function(d) { return d.decision === 'SELL'; }).length;
-    var todayTotal = buyCount + sellCount;
+    // IPA品質修正: recentDecisions は LIMIT 20 のため過小計上になる
+    // サーバー側の専用COUNTクエリ値（todayDecisionCount 等）を使用する
+    var todayTotal = data.todayDecisionCount != null ? data.todayDecisionCount
+                   : decisions.filter(function(d) { return isToday(d.created_at); }).length;
+    var buyCount  = data.todayBuyCount  != null ? data.todayBuyCount
+                  : decisions.filter(function(d) { return isToday(d.created_at) && d.decision === 'BUY';  }).length;
+    var sellCount = data.todaySellCount != null ? data.todaySellCount
+                  : decisions.filter(function(d) { return isToday(d.created_at) && d.decision === 'SELL'; }).length;
 
     var kpiTodayVal = el('ai-kpi-today-val');
     var kpiTodaySub = el('ai-kpi-today-sub');
@@ -2355,8 +2356,10 @@ export const JS = `
       var reasoning = fmtReasoning(d.reasoning);
 
       // 判断結果の判定（openPositionsとの照合）
+      // IPA品質修正: IEEE 754 浮動小数点の完全一致比較は誤判定リスクあり
+      // entry_rate は保存時の丸めで微小誤差が生じる可能性があるため許容差 0.01 を使用
       var matched = openPos.find(function(p) {
-        return p.direction === d.decision && p.entry_rate === d.rate;
+        return p.direction === d.decision && Math.abs(p.entry_rate - d.rate) < 0.01;
       });
       var resultKey  = matched ? 'open' : 'closed';
       var resultText = matched ? '保有中' : 'クローズ済';
