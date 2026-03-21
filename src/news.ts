@@ -292,9 +292,67 @@ export const filterNikkeiWithHaiku = filterAllNewsWithHaiku;
 // filterAllNewsWithHaiku() + translateAndCacheNews() を1回のHaiku APIコールに統合。
 // - 無関係記事（スポーツ・芸能等）を除去
 // - title_ja（日本語タイトル）を付与
-// - desc_ja（日本語概要）を付与（descriptionがなければタイトルから要約）
+// - desc_ja（日本語概要）を付与（descriptionがなければURL先の本文から要約）
 // - latest_news キャッシュを title_ja + desc_ja 付きで更新
 // キャッシュ: タイトルハッシュが同一なら30分間再利用
+
+/**
+ * descriptionが空の記事に対して、URL先の本文を取得する。
+ * - 最大MAX_BODY_FETCH件まで並列フェッチ（cron 30秒制限対策）
+ * - 1件あたり3秒タイムアウト + エッジキャッシュ5分
+ * - HTMLタグ除去後、先頭300文字を返す
+ */
+const MAX_BODY_FETCH = 5;
+const BODY_FETCH_TIMEOUT_MS = 3000;
+
+async function fetchBodyForEmptyDesc(items: NewsItem[]): Promise<Map<number, string>> {
+  const bodyMap = new Map<number, string>();
+  const targets = items
+    .map((item, i) => ({ idx: i, url: item.url, desc: item.description }))
+    .filter(t => !t.desc && t.url)
+    .slice(0, MAX_BODY_FETCH);
+
+  if (targets.length === 0) return bodyMap;
+
+  const results = await Promise.allSettled(
+    targets.map(async (t) => {
+      const ctrl = new AbortController();
+      const timer = setTimeout(() => ctrl.abort(), BODY_FETCH_TIMEOUT_MS);
+      try {
+        const res = await fetch(t.url!, {
+          signal: ctrl.signal,
+          headers: { 'User-Agent': 'Mozilla/5.0 (compatible; FXNewsBot/1.0)' },
+          cf: { cacheTtl: 300 },
+        } as RequestInit);
+        if (!res.ok) return { idx: t.idx, body: '' };
+        const html = await res.text();
+        // <p>タグ内のテキストを優先抽出、なければbody全体からHTMLタグ除去
+        const paragraphs = html.match(/<p[^>]*>([\s\S]*?)<\/p>/gi);
+        let text: string;
+        if (paragraphs && paragraphs.length > 0) {
+          text = paragraphs.slice(0, 5).join(' ').replace(/<[^>]+>/g, '').trim();
+        } else {
+          text = html.replace(/<script[\s\S]*?<\/script>/gi, '')
+                     .replace(/<style[\s\S]*?<\/style>/gi, '')
+                     .replace(/<[^>]+>/g, ' ')
+                     .replace(/\s+/g, ' ')
+                     .trim();
+        }
+        return { idx: t.idx, body: text.slice(0, 300) };
+      } finally {
+        clearTimeout(timer);
+      }
+    })
+  );
+
+  for (const r of results) {
+    if (r.status === 'fulfilled' && r.value.body) {
+      bodyMap.set(r.value.idx, r.value.body);
+    }
+  }
+  console.log(`[news] URL本文フェッチ: ${targets.length}件中${bodyMap.size}件取得`);
+  return bodyMap;
+}
 
 /** Haikuによるフィルタ+翻訳の結果レコード */
 interface HaikuTranslatedItem {
@@ -338,13 +396,18 @@ export async function filterAndTranslateWithHaiku(
     }
   } catch { /* キャッシュ読み取り失敗は無視して再処理 */ }
 
+  // descriptionが空の記事はURL先から本文を取得
+  const bodyMap = await fetchBodyForEmptyDesc(items);
+
   // Haiku API 呼び出し: フィルタ + 翻訳を1回のバッチで
   try {
     const start = Date.now();
 
-    // 各記事のテキストを構築（descriptionは150字に切り詰め）
+    // 各記事のテキストを構築（description→URL本文→なし の優先順）
     const articleLines = items.map((item, i) => {
-      const desc = item.description ? item.description.replace(/<[^>]+>/g, '').slice(0, 150) : '';
+      const desc = item.description
+        ? item.description.replace(/<[^>]+>/g, '').slice(0, 150)
+        : bodyMap.get(i)?.slice(0, 200) || '';
       return desc
         ? `${i}: title=${item.title} | desc=${desc}`
         : `${i}: title=${item.title}`;
@@ -363,7 +426,7 @@ ${articleLines}
 【出力形式】
 関連する記事のみを以下のJSON配列で返してください。
 - title_ja: 日本語タイトル（30字以内に要約）
-- desc_ja: 日本語概要（descがあれば翻訳・要約、なければtitleから60字以内で要約）
+- desc_ja: 日本語概要（descがあれば翻訳・要約、なければ60字以内で要約）
 
 [{"index":0,"title_ja":"日本語タイトル","desc_ja":"日本語概要"},...]
 
