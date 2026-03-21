@@ -3,7 +3,7 @@
 // fetch:     GET / → ダッシュボード、GET /api/status → JSON、GET /style.css・/app.js → 静的ファイル
 
 import { getUSDJPY } from './rate';
-import { fetchNews, filterAndTranslateWithHaiku, translateTitlesWithHaiku, type SourceFetchStat } from './news';
+import { fetchNews, filterAndTranslateWithHaiku, type SourceFetchStat } from './news';
 import { getMarketIndicators } from './indicators';
 import { getDecisionWithHedge, fetchOgDescription, newsStage1WithHedge, newsStage2, RateLimitError, type NewsAnalysisItem, type NewsStage1Result } from './gemini';
 import { checkAndCloseAllPositions, openPosition } from './position';
@@ -984,9 +984,11 @@ async function runPathB(
     }
   }
 
-  // B1成功後: Haiku で英語タイトルを日本語翻訳（title_ja付与）
-  const originalTitles = news.map(n => n.title);
-  await translateTitlesWithHaiku(stage1.news_analysis, originalTitles, env.ANTHROPIC_API_KEY);
+  // B1成功後: filterAndTranslateWithHaikuで付与済みのtitle_jaを転写（APIコール不要）
+  for (const item of stage1.news_analysis) {
+    const src = news[item.index];
+    item.title_ja = src?.title_ja ?? src?.title ?? '';
+  }
 
   // og:description 並列取得（attention上位5件, 英語4ソースはスキップ）
   const attentionItems = stage1.news_analysis.filter((a: NewsAnalysisItem) => a.attention).slice(0, 5);
