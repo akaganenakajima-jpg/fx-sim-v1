@@ -1,7 +1,7 @@
 // GET /api/status — D1から全ダッシュボードデータをJSON返却
 
 import type { Position } from './db';
-import { fetchNews } from './news';
+// fetchNewsはcron側の責務。API側はlatest_newsキャッシュのみ参照
 import { getRiskStatus, type RiskEnv } from './risk-guard';
 import { wilsonCI, sharpeWithSE, varCvar, kellyFraction, markovTransition, maxDrawdown, rollingReturns, pnlVolatility, profitFactor, bootstrapROI, aiAccuracy, randomBaselineComparison, pairCorrelation, logReturnStats, powerAnalysis, ewmaVolatility, engleGrangerCointegration, hierarchicalWinRate } from './stats';
 
@@ -164,7 +164,7 @@ export interface StatusResponse {
 }
 
 export async function getApiStatus(db: D1Database, tradingEnv?: { TRADING_ENABLED?: string; OANDA_LIVE?: string; RISK_MAX_DAILY_LOSS?: string; RISK_MAX_LIVE_POSITIONS?: string; RISK_MAX_LOT_SIZE?: string; RISK_ANOMALY_THRESHOLD?: string }): Promise<StatusResponse> {
-  const [rateRow, openPositions, perf, latest, recent, sysRow, sparkRaw, perfByPairRaw, recentClosesRaw, newsRaw, sysLogsRaw, logStatsRaw, instrScoresRaw, slPatternsRow, cronTimingsRow, todayDecisionCountRow] =
+  const [rateRow, openPositions, perf, latest, recent, sysRow, sparkRaw, perfByPairRaw, recentClosesRaw, _newsRaw, sysLogsRaw, logStatsRaw, instrScoresRaw, slPatternsRow, cronTimingsRow, todayDecisionCountRow] =
     await Promise.all([
       db
         .prepare("SELECT value FROM market_cache WHERE key = 'prev_rate_USD/JPY'")
@@ -307,54 +307,21 @@ export async function getApiStatus(db: D1Database, tradingEnv?: { TRADING_ENABLE
 
   const sysLogs = sysLogsRaw.results ?? [];
 
-  // ニュースをリアルタイム取得
+  // ニュース: cron側のfilterAndTranslateWithHaikuで処理済みのlatest_newsキャッシュを使用
+  // RSS直接取得はcron側の責務。API側はキャッシュのみ参照（日本語翻訳済み）
   let latestNews: Array<{ title: string; pubDate: string; description: string; source?: string }> = [];
-  try {
-    const newsResult = await fetchNews();
-    latestNews = newsResult.items;
-  } catch {
-    for (const row of (newsRaw.results ?? [])) {
-      try {
-        let parsed = JSON.parse(row.news_summary);
-        if (typeof parsed === 'string') parsed = JSON.parse(parsed);
-        if (Array.isArray(parsed)) { latestNews = parsed; break; }
-      } catch {}
-    }
-  }
-
-  // latest_news キャッシュで日本語化＋補完
-  // cron側のfilterAndTranslateWithHaikuで付与済みのtitle_ja/desc_jaを反映
-  // knownTitles: 英語原題+日本語タイトル両方を保持（後段のnews_analysisマージで重複防止）
   const knownTitles = new Set<string>();
   try {
     const cachedRaw = await db.prepare("SELECT value FROM market_cache WHERE key = 'latest_news'").first<{ value: string }>();
     if (cachedRaw?.value) {
       const cached: Array<{ title: string; title_ja?: string | null; desc_ja?: string | null; pubDate: string; description: string; source?: string }> = JSON.parse(cachedRaw.value);
-      // キャッシュをtitleでルックアップ用マップに変換
-      const cacheMap = new Map(cached.filter(c => c.title).map(c => [c.title, c]));
-
-      // 既存のRSS記事にtitle_ja/desc_jaを上書き
-      for (const item of latestNews) {
-        knownTitles.add(item.title); // 英語原題を記録
-        const cached = cacheMap.get(item.title);
-        if (cached) {
-          if (cached.title_ja) item.title = cached.title_ja;
-          if (cached.desc_ja) item.description = cached.desc_ja;
-          knownTitles.add(item.title); // 日本語タイトルも記録
-          cacheMap.delete(cached.title);
-        }
-      }
-
-      // キャッシュにしかない記事を追加
-      for (const [, item] of cacheMap) {
-        if (item.title && !knownTitles.has(item.title) && !knownTitles.has(item.title_ja || '')) {
-          latestNews.push({
-            ...item,
-            title: item.title_ja || item.title,
-            description: item.desc_ja || item.description,
-          });
-          knownTitles.add(item.title);
-          if (item.title_ja) knownTitles.add(item.title_ja);
+      for (const item of cached) {
+        const title = item.title_ja || item.title;
+        const desc = item.desc_ja || item.description;
+        if (title) {
+          latestNews.push({ ...item, title, description: desc });
+          knownTitles.add(title);
+          if (item.title !== title) knownTitles.add(item.title); // 英語原題も記録（重複防止用）
         }
       }
     }
