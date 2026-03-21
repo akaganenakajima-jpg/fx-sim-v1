@@ -554,7 +554,7 @@
         <div class="sub-step">
           <div class="sub-step-title">B1後処理（直列）</div>
           <div class="sub-step-desc">
-            ① <code>translateTitlesWithHaiku()</code> — 英語タイトル→日本語翻訳<br>
+            ① title_ja転写 — <code>filterAndTranslateWithHaiku()</code>で付与済みの日本語タイトルを<code>news_analysis</code>にコピー（APIコール不要）<br>
             ② <code>fetchOgDescription()</code> — attention上位5件の og:description 並列取得（3秒TO）<br>
             ③ 過剰検出ガード: signals > 10件 → 先頭5件のみ
           </div>
@@ -875,7 +875,7 @@
           <span class="merge-layer-num">Layer 3</span>
           <div class="merge-layer-body">
             <strong>Path Bキャッシュ</strong> — <code>market_cache['latest_news']</code><br>
-            cron実行時にPath Bが保存したキャッシュ。<strong>title_ja（日本語翻訳済み）</strong>をここから取得。
+            cron実行時にPath Bが保存したキャッシュ。<strong>title_ja</strong>は<code>filterAndTranslateWithHaiku()</code>で全記事に付与済み。
             existingTitlesに存在しない記事を追加。
           </div>
         </div>
@@ -890,8 +890,8 @@
 
       <div class="data-flow" style="border-left-color: rgba(20,184,166,0.4); margin-top: 12px;">
         📤 出力: <code>latestNews[]</code>（最大30件, pubDate降順）→ フロントエンドのモーダルに渡す<br>
-        ⚠️ <strong>完全独立ではない</strong>: <code>title_ja</code>（日本語）と attention ニュースの先頭挿入は Path B キャッシュ依存。
-        Path B未動作時はRSS+decisionsで英語タイトルのみ表示。APIリクエスト側でGemini呼び出しなし。
+        ⚠️ <code>title_ja</code>は<code>filterAndTranslateWithHaiku()</code>で全記事に付与済みのためPath B非依存。
+        attention ニュースの先頭挿入のみ Path B キャッシュ依存。APIリクエスト側でAI呼び出しなし。
       </div>
     </div>
   </div>
