@@ -3,7 +3,7 @@
 // OandaBroker: OANDA REST API v20 経由で実弾発注
 // BrokerRouter: 銘柄ごとにBrokerを振り分け
 
-import { closePosition as dbClosePosition, insertSystemLog } from './db';
+import { insertSystemLog } from './db';
 import type { InstrumentConfig } from './instruments';
 
 // ─── 型定義 ─────────────────────────────────────
@@ -270,7 +270,7 @@ export async function withFallback(
     console.warn(`[broker] OANDA failed for ${context}: ${result.error}. Falling back to paper.`);
     await insertSystemLog(db, 'WARN', 'BROKER',
       `OANDA発注失敗→ペーパーフォールバック: ${context}`,
-      result.error ?? null
+      result.error ?? undefined
     );
     return { success: true, error: `Fallback to paper: ${result.error}` };
   }
