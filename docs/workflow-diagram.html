@@ -91,39 +91,6 @@
   .bg-patha .node-title { color: #fb923c; }
   .bg-final { background: rgba(236,72,153,0.08); border-color: rgba(236,72,153,0.2); }
   .bg-final .node-title { color: #f472b6; }
-  .bg-api { background: rgba(20,184,166,0.08); border-color: rgba(20,184,166,0.2); }
-  .bg-api .node-title { color: #2dd4bf; }
-
-  /* ── Merge Layers ── */
-  .merge-layers {
-    display: flex;
-    flex-direction: column;
-    gap: 6px;
-    margin-top: 12px;
-  }
-  .merge-layer {
-    display: flex;
-    align-items: flex-start;
-    gap: 10px;
-    background: rgba(255,255,255,0.025);
-    border-radius: 8px;
-    padding: 10px 12px;
-    border: 1px solid rgba(255,255,255,0.05);
-    font-size: 12px;
-  }
-  .merge-layer-num {
-    font-size: 11px;
-    font-weight: 700;
-    color: #2dd4bf;
-    background: rgba(20,184,166,0.15);
-    border-radius: 5px;
-    padding: 2px 7px;
-    white-space: nowrap;
-    flex-shrink: 0;
-  }
-  .merge-layer-body { color: #9ca3af; line-height: 1.6; }
-  .merge-layer-body code { color: #5eead4; font-family: 'SF Mono', monospace; font-size: 11px; }
-  .merge-layer-body strong { color: #d1d5db; }
 
   .badge-parallel { background: rgba(59,130,246,0.2); color: #93c5fd; }
   .badge-serial { background: rgba(234,179,8,0.2); color: #fde68a; }
@@ -405,12 +372,16 @@
         <span class="node-badge badge-parallel">並列</span>
       </div>
       <div class="node-desc">
-        3ソースを <code>Promise.allSettled()</code> で完全並列取得。いずれかが失敗しても他は継続。
+        4ソースを <code>Promise.allSettled()</code> で完全並列取得。いずれかが失敗しても他は継続。
       </div>
       <div class="parallel-grid">
         <div class="sub-step">
           <div class="sub-step-title">fetchNews()</div>
           <div class="sub-step-desc">CNBC / Bloomberg / FXStreet / CoinDesk<br>Reuters / Nikkei / Minkabu（wor.jp経由）</div>
+        </div>
+        <div class="sub-step">
+          <div class="sub-step-title">fetchRedditSignal()</div>
+          <div class="sub-step-desc">r/Forex 新着投稿<br>キーワード検出（BOJ, Fed, CPI等）</div>
         </div>
         <div class="sub-step">
           <div class="sub-step-title">getMarketIndicators()</div>
@@ -493,11 +464,11 @@
         <div class="sub-step">
           <div class="sub-step-title">B1: newsStage1WithHedge（タイムアウト 10秒）</div>
           <div class="sub-step-desc">
-            ニュース最大20件 + 指標 → AI分析<br>
+            ニュース最大20件 + 指標 + Redditシグナル → AI分析<br>
             出力: <code>news_analysis[]</code>（attention/impact） + <code>trade_signals[]</code>（BUY/SELL + 対象ペア）
           </div>
           <div class="fallback-chain">
-            <span class="fb-item primary">Gemini 3.1 Pro</span>
+            <span class="fb-item primary">Gemini 2.5 Pro</span>
             <span class="fb-arrow">→</span>
             <span class="fb-item">GPT-4.1-mini</span>
             <span class="fb-arrow">→</span>
@@ -652,7 +623,7 @@
             Gemini即座開始 → 4秒後にGPTを並列起動 → <code>Promise.any()</code> で先着採用
           </div>
           <div class="fallback-chain">
-            <span class="fb-item primary">Gemini 3.1 Pro</span>
+            <span class="fb-item primary">Gemini 2.5 Pro</span>
             <span class="fb-arrow">+</span>
             <span class="fb-item primary">GPT-4.1-mini（4秒遅延）</span>
             <span class="fb-arrow">→</span>
@@ -722,63 +693,6 @@
     </div>
   </div>
 
-  <hr class="separator">
-
-  <!-- ═══ API /api/status — ニュース一覧モーダル ═══ -->
-  <div class="phase">
-    <div class="phase-label">フロントエンド API — /api/status（ニュース一覧モーダル）</div>
-    <div class="node bg-api">
-      <div class="node-title">
-        📱 資産タブ下部モーダル — ニュース一覧
-        <span class="node-badge badge-parallel">3層マージ + ソート</span>
-      </div>
-      <div class="node-desc">
-        APIリクエスト毎に以下のソースをマージし、<code>pubDate</code>降順で最大30件を返す。<br>
-        <strong>Layer 1+2はcron非依存で単体動作可能。</strong> Layer 3と分析マージはPath Bキャッシュに依存。
-      </div>
-
-      <div class="merge-layers">
-        <div class="merge-layer">
-          <span class="merge-layer-num">Layer 1</span>
-          <div class="merge-layer-body">
-            <strong>RSSライブ取得</strong> — <code>fetchNews()</code><br>
-            CNBC / Bloomberg / FXStreet / CoinDesk / Reuters / Nikkei / Minkabu をリアルタイム取得。
-            失敗時は後続レイヤーで補完。
-          </div>
-        </div>
-        <div class="merge-layer">
-          <span class="merge-layer-num">Layer 2</span>
-          <div class="merge-layer-body">
-            <strong>decisionsキャッシュ補完</strong> — <code>decisions.news_summary</code><br>
-            最新5件のdecisionに保存されたニュースサマリーJSONを参照。
-            RSSで取得できなかった記事を補う。
-          </div>
-        </div>
-        <div class="merge-layer">
-          <span class="merge-layer-num">Layer 3</span>
-          <div class="merge-layer-body">
-            <strong>Path Bキャッシュ</strong> — <code>market_cache['latest_news']</code><br>
-            cron実行時にPath Bが保存したキャッシュ。<strong>title_ja（日本語翻訳済み）</strong>をここから取得。
-            existingTitlesに存在しない記事を追加。
-          </div>
-        </div>
-        <div class="merge-layer">
-          <span class="merge-layer-num">分析マージ</span>
-          <div class="merge-layer-body">
-            <strong>Path B B1分析結果</strong> — <code>market_cache['news_analysis']</code><br>
-            attention/impact付きの分析データ。latestNewsにないタイトルは<strong>先頭に挿入</strong>（重要ニュース優先）。
-          </div>
-        </div>
-      </div>
-
-      <div class="data-flow" style="border-left-color: rgba(20,184,166,0.4); margin-top: 12px;">
-        📤 出力: <code>latestNews[]</code>（最大30件, pubDate降順）→ フロントエンドのモーダルに渡す<br>
-        ⚠️ <strong>完全独立ではない</strong>: <code>title_ja</code>（日本語）と attention ニュースの先頭挿入は Path B キャッシュ依存。
-        Path B未動作時はRSS+decisionsで英語タイトルのみ表示。APIリクエスト側でGemini呼び出しなし。
-      </div>
-    </div>
-  </div>
-
   <!-- ═══ Legend ═══ -->
   <div class="legend">
     <div class="legend-item">
@@ -804,10 +718,6 @@
     <div class="legend-item">
       <div class="legend-dot" style="background: #f472b6;"></div>
       記録・完了
-    </div>
-    <div class="legend-item">
-      <div class="legend-dot" style="background: #2dd4bf;"></div>
-      API（フロントエンド）
     </div>
     <div class="legend-item">
       <span class="node-badge badge-parallel" style="font-size: 10px;">並列</span>
