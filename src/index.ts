@@ -1314,11 +1314,8 @@ async function run(env: Env): Promise<void> {
           source: (news[a.index] as any)?.source ?? null,
         }));
         await setCacheValue(env.DB, 'news_analysis', JSON.stringify(enriched));
-        const titleJaMap = new Map(
-          result.newsAnalysis.filter(a => a.title_ja).map(a => [a.index, a.title_ja] as [number, string])
-        );
         await setCacheValue(env.DB, 'latest_news', JSON.stringify(
-          news.slice(0, 30).map((n, i) => ({ ...n, title_ja: titleJaMap.get(i) || null }))
+          news.slice(0, 30).map(n => ({ ...n, title_ja: n.title_ja || null }))
         ));
       }
 
