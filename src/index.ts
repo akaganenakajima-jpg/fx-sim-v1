@@ -689,9 +689,12 @@ async function runPathB(
 
   // B1: タイトル即断（タイムアウト10秒）
   let stage1: NewsStage1Result;
+  let b1Ms = 0, b2Ms = 0;
   try {
+    const tB1 = Date.now();
     stage1 = await newsStage1({ news, redditSignal, indicators, instruments: instrumentList, apiKey });
-    console.log(`[fx-sim] Path B B1: ${stage1.news_analysis.filter((a: NewsAnalysisItem) => a.attention).length}件注目, ${stage1.trade_signals.length}件シグナル`);
+    b1Ms = Date.now() - tB1;
+    console.log(`[fx-sim] Path B B1: ${stage1.news_analysis.filter((a: NewsAnalysisItem) => a.attention).length}件注目, ${stage1.trade_signals.length}件シグナル (${b1Ms}ms)`);
   } catch (e) {
     await setCacheValue(env.DB, 'news_analysis_failed_at', String(Date.now()));
     await insertSystemLog(env.DB, 'WARN', 'PATH_B', 'B1失敗→2分クールダウン', String(e).split('\n')[0].slice(0, 120));
@@ -736,9 +739,11 @@ async function runPathB(
   // B2: og:desc付きで補正（タイムアウト8秒）
   let b2Corrections: { pair: string; action: 'CONFIRM' | 'REVISE' | 'REVERSE'; new_tp_rate?: number; new_sl_rate?: number; reasoning: string }[] = [];
   try {
+    const tB2 = Date.now();
     const stage2 = await newsStage2({ stage1Result: stage1, news, apiKey });
+    b2Ms = Date.now() - tB2;
     b2Corrections = stage2.corrections;
-    console.log(`[fx-sim] Path B B2: ${b2Corrections.filter(c => c.action === 'CONFIRM').length}件CONFIRM, ${b2Corrections.filter(c => c.action === 'REVISE').length}件REVISE, ${b2Corrections.filter(c => c.action === 'REVERSE').length}件REVERSE`);
+    console.log(`[fx-sim] Path B B2: ${b2Corrections.filter(c => c.action === 'CONFIRM').length}件CONFIRM, ${b2Corrections.filter(c => c.action === 'REVISE').length}件REVISE, ${b2Corrections.filter(c => c.action === 'REVERSE').length}件REVERSE (${b2Ms}ms)`);
   } catch (e) {
     // B2タイムアウト/失敗 → B1シグナルをそのまま採用
     console.warn(`[fx-sim] Path B B2 failed/timeout → B1採用: ${String(e).split('\n')[0].slice(0, 80)}`);
@@ -781,7 +786,7 @@ async function runPathB(
   void (async () => {
     try {
       await setCacheValue(env.DB, 'news_analysis_failed_at', '0');
-      await insertSystemLog(env.DB, 'INFO', 'PATH_B', `Path B完了: ${decisions.length}件決定, ${reversals.length}件REVERSE`, JSON.stringify({ signals: decisions.map(d => `${d.pair}:${d.decision}`) }));
+      await insertSystemLog(env.DB, 'INFO', 'PATH_B', `Path B完了: ${decisions.length}件決定, ${reversals.length}件REVERSE`, JSON.stringify({ b1Ms, b2Ms, signals: decisions.map(d => `${d.pair}:${d.decision}`) }));
     } catch {}
   })();
 
@@ -804,6 +809,11 @@ async function run(env: Env): Promise<void> {
     const fetchMs = Date.now() - t0;
 
     const { news, newsFetchStats: _newsFetchStats, activeNewsSources, redditSignal, indicators, prices } = marketData;
+    await insertSystemLog(env.DB, 'INFO', 'FLOW', 'FETCH完了', JSON.stringify({
+      ms: fetchMs, news: news.length,
+      prices: [...prices.values()].filter(v => v != null).length,
+      sources: activeNewsSources || 'none',
+    }));
 
     // ブローカー環境（TP/SL・ポジション開設で使用）
     const brokerEnv: BrokerEnv = {
@@ -817,6 +827,7 @@ async function run(env: Env): Promise<void> {
     const t1 = Date.now();
     await checkAndCloseAllPositions(env.DB, prices, INSTRUMENTS, brokerEnv, getWebhookUrl(env));
     const tpSlMs = Date.now() - t1;
+    await insertSystemLog(env.DB, 'INFO', 'FLOW', 'TPSL完了', JSON.stringify({ ms: tpSlMs }));
 
     // 3. 共有ニュースストア構築 + Path B 実行（計測開始）
     const t2 = Date.now();
@@ -858,6 +869,12 @@ async function run(env: Env): Promise<void> {
         await insertSystemLog(env.DB, 'WARN', 'PATH_B', 'Path B実行失敗', String(e).split('\n')[0].slice(0, 120));
       }
     }
+    await insertSystemLog(env.DB, 'INFO', 'FLOW', 'PATH_B完了', JSON.stringify({
+      ms: Date.now() - t2,
+      hasChanged: sharedNewsStore.hasChanged,
+      signals: pathBResult.decisions.length,
+      reversals: pathBResult.reversals.length,
+    }));
 
     // Path B が処理した銘柄（BUY/SELL + REVERSE）を Path A/C から除外
     const pathBHandledPairs = new Set([
@@ -968,6 +985,13 @@ async function run(env: Env): Promise<void> {
       excludedPairs: pathBHandledPairs,
     }, cronStart);
     const aiLoopMs = Date.now() - t3;
+    await insertSystemLog(env.DB, 'INFO', 'FLOW', 'PATH_A完了', JSON.stringify({
+      ms: aiLoopMs,
+      gemini: aiSummary.geminiOk,
+      gpt: aiSummary.gptOk,
+      claude: aiSummary.claudeOk,
+      fail: aiSummary.fail,
+    }));
     const totalMs = Date.now() - cronStart;
     const timings = { fetchMs, tpSlMs, newsMs, aiLoopMs, totalMs };
     await setCacheValue(env.DB, 'cron_phase_timings', JSON.stringify(timings));
