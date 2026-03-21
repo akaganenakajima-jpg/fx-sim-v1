@@ -1,5 +1,10 @@
 // 取引対象銘柄の定義
 
+/** 相関グループ（テスタ施策4） */
+export type CorrelationGroup =
+  | 'usd_strong' | 'risk_on' | 'precious'
+  | 'energy' | 'europe' | 'standalone';
+
 export interface InstrumentConfig {
   pair: string;
   /** ブローカー: 'oanda' = OANDA API経由、'paper' = D1記録のみ */
@@ -22,6 +27,8 @@ export interface InstrumentConfig {
   trailingActivation: number;
   /** トレイリングストップ: SLを現在値からこの幅で追従（レート単位） */
   trailingDistance: number;
+  /** 相関グループ（テスタ施策4: 同グループ同方向2件以上でブロック） */
+  correlationGroup: CorrelationGroup;
 }
 
 export const INSTRUMENTS: InstrumentConfig[] = [
@@ -37,6 +44,7 @@ export const INSTRUMENTS: InstrumentConfig[] = [
     pnlMultiplier: 100,
     trailingActivation: 0.2,   // 0.2円利益でトレイリング開始（旧0.3）
     trailingDistance: 0.12,    // 0.12円幅で追従（旧0.15）
+    correlationGroup: 'usd_strong',
   },
   {
     pair: 'Nikkei225',
@@ -50,6 +58,7 @@ export const INSTRUMENTS: InstrumentConfig[] = [
     pnlMultiplier: 1,
     trailingActivation: 100,   // 旧150
     trailingDistance: 60,      // 旧80
+    correlationGroup: 'risk_on',
   },
   {
     pair: 'S&P500',
@@ -63,6 +72,7 @@ export const INSTRUMENTS: InstrumentConfig[] = [
     pnlMultiplier: 10,
     trailingActivation: 8,     // 旧15 — RR最悪銘柄のため大幅引き下げ
     trailingDistance: 5,       // 旧8
+    correlationGroup: 'risk_on',
   },
   {
     pair: 'US10Y',
@@ -76,6 +86,7 @@ export const INSTRUMENTS: InstrumentConfig[] = [
     pnlMultiplier: 5000,
     trailingActivation: 0.05,  // 旧0.08
     trailingDistance: 0.03,    // 旧0.04
+    correlationGroup: 'usd_strong',
   },
   {
     pair: 'BTC/USD',
@@ -89,6 +100,7 @@ export const INSTRUMENTS: InstrumentConfig[] = [
     pnlMultiplier: 1,
     trailingActivation: 280,   // 旧400
     trailingDistance: 150,     // 旧200
+    correlationGroup: 'risk_on',
   },
   {
     pair: 'Gold',
@@ -102,6 +114,7 @@ export const INSTRUMENTS: InstrumentConfig[] = [
     pnlMultiplier: 10,
     trailingActivation: 7,     // 旧10 — RR=0.55の改善
     trailingDistance: 4,       // 旧5
+    correlationGroup: 'precious',
   },
   {
     pair: 'EUR/USD',
@@ -115,6 +128,7 @@ export const INSTRUMENTS: InstrumentConfig[] = [
     pnlMultiplier: 10000,
     trailingActivation: 0.003, // 旧0.004
     trailingDistance: 0.0015,  // 旧0.002
+    correlationGroup: 'europe',
   },
   {
     pair: 'ETH/USD',
@@ -128,6 +142,7 @@ export const INSTRUMENTS: InstrumentConfig[] = [
     pnlMultiplier: 1,
     trailingActivation: 20,    // 旧30
     trailingDistance: 12,      // 旧15
+    correlationGroup: 'standalone',
   },
   {
     pair: 'CrudeOil',
@@ -141,6 +156,7 @@ export const INSTRUMENTS: InstrumentConfig[] = [
     pnlMultiplier: 100,
     trailingActivation: 0.5,   // 旧0.8
     trailingDistance: 0.3,     // 旧0.4
+    correlationGroup: 'energy',
   },
   {
     pair: 'NatGas',
@@ -154,6 +170,7 @@ export const INSTRUMENTS: InstrumentConfig[] = [
     pnlMultiplier: 1000,
     trailingActivation: 0.05,  // 旧0.08
     trailingDistance: 0.03,    // 旧0.04
+    correlationGroup: 'energy',
   },
   {
     pair: 'Copper',
@@ -167,6 +184,7 @@ export const INSTRUMENTS: InstrumentConfig[] = [
     pnlMultiplier: 1000,
     trailingActivation: 0.035, // 旧0.05
     trailingDistance: 0.02,    // 旧0.025
+    correlationGroup: 'precious',
   },
   {
     pair: 'Silver',
@@ -180,6 +198,7 @@ export const INSTRUMENTS: InstrumentConfig[] = [
     pnlMultiplier: 100,
     trailingActivation: 0.28,  // 旧0.4
     trailingDistance: 0.15,    // 旧0.2
+    correlationGroup: 'precious',
   },
   {
     pair: 'GBP/USD',
@@ -193,6 +212,7 @@ export const INSTRUMENTS: InstrumentConfig[] = [
     pnlMultiplier: 10000,
     trailingActivation: 0.003, // 旧0.004
     trailingDistance: 0.0015,  // 旧0.002
+    correlationGroup: 'europe',
   },
   {
     pair: 'AUD/USD',
@@ -206,6 +226,7 @@ export const INSTRUMENTS: InstrumentConfig[] = [
     pnlMultiplier: 10000,
     trailingActivation: 0.003, // 旧0.004
     trailingDistance: 0.0015,  // 旧0.002
+    correlationGroup: 'risk_on',
   },
   {
     pair: 'SOL/USD',
@@ -219,6 +240,7 @@ export const INSTRUMENTS: InstrumentConfig[] = [
     pnlMultiplier: 10,
     trailingActivation: 2,     // 旧3
     trailingDistance: 1.2,     // 旧1.5
+    correlationGroup: 'standalone',
   },
   {
     pair: 'DAX',
@@ -232,6 +254,7 @@ export const INSTRUMENTS: InstrumentConfig[] = [
     pnlMultiplier: 1,
     trailingActivation: 55,    // 旧80
     trailingDistance: 30,      // 旧40
+    correlationGroup: 'europe',
   },
   {
     pair: 'NASDAQ',
@@ -245,5 +268,6 @@ export const INSTRUMENTS: InstrumentConfig[] = [
     pnlMultiplier: 1,
     trailingActivation: 55,    // 旧80
     trailingDistance: 30,      // 旧40
+    correlationGroup: 'risk_on',
   },
 ];

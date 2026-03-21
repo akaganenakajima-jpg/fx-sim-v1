@@ -92,6 +92,12 @@ export interface StatusResponse {
     killSwitchActive: boolean;
     todayLoss: number;
     maxDailyLoss: number;
+    weeklyLoss: number;
+    maxWeeklyLoss: number;
+    weeklyExceeded: boolean;
+    monthlyLoss: number;
+    maxMonthlyLoss: number;
+    monthlyExceeded: boolean;
     livePositions: number;
     maxPositions: number;
   } | null;

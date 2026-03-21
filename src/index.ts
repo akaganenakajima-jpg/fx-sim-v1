@@ -25,6 +25,10 @@ import { INSTRUMENTS, type InstrumentConfig } from './instruments';
 import { getBroker, withFallback, type BrokerEnv } from './broker';
 import { checkRisk, type RiskEnv } from './risk-guard';
 import { checkTpSlSanity } from './sanity';
+import {
+  getDrawdownLevel, updateHWM, getCurrentBalance,
+  applyDrawdownControl, checkCorrelationGuard,
+} from './risk-manager';
 import { runMigrations } from './migration';
 import { sendNotification, getWebhookUrl, buildDailySummaryMessage } from './notify';
 import { sampleBeta } from './thompson';
@@ -615,6 +619,7 @@ async function runAIDecisions(
           let finalTp = geminiResult.tp_rate;
           let finalSl = geminiResult.sl_rate;
           let sanityValid = true;
+          let rrLotMultiplier = 1.0;
           if ((geminiResult.decision === 'BUY' || geminiResult.decision === 'SELL') &&
               finalTp != null && finalSl != null) {
             const preSanity = checkTpSlSanity({
@@ -636,6 +641,11 @@ async function runAIDecisions(
               // 補正値があれば適用（差分値・比率値・ミラーを自動修正）
               if (preSanity.correctedTp != null) finalTp = preSanity.correctedTp;
               if (preSanity.correctedSl != null) finalSl = preSanity.correctedSl;
+              // テスタ施策3: RR REDUCED → ロット50%削減フラグ
+              if (preSanity.rrCategory === 'REDUCED') {
+                rrLotMultiplier = 0.5;
+                console.log(`[fx-sim] RR REDUCED (${preSanity.rrRatio?.toFixed(2)}): ${instrument.pair} lot×0.5`);
+              }
             }
           }
 
@@ -671,36 +681,59 @@ async function runAIDecisions(
               let source: 'paper' | 'oanda' = 'paper';
               let oandaTradeId: string | null = null;
 
-              if (isLive) {
-                const riskResult = await checkRisk({
-                  db: env.DB,
-                  env: env as RiskEnv,
-                  pair: instrument.pair,
-                  currentRate,
-                  prevRate: candidate.prevRate,
-                  requestedLot: 1,
-                });
-
-                if (!riskResult.allowed) {
-                  console.warn(`[fx-sim] RiskGuard blocked: ${instrument.pair} → ${riskResult.reason}`);
+              // テスタ施策2: HWMドローダウン制御
+              const ddResult = await getDrawdownLevel(env.DB);
+              const balance = await getCurrentBalance(env.DB);
+              await updateHWM(env.DB, balance);
+              if (ddResult.level === 'HALT' || ddResult.level === 'STOP') {
+                await applyDrawdownControl(env.DB, ddResult);
+                console.warn(`[fx-sim] DD ${ddResult.level}: ${instrument.pair} blocked (DD ${ddResult.ddPct.toFixed(1)}%)`);
+                await insertSystemLog(env.DB, 'WARN', 'RISK',
+                  `DD制御: ${instrument.pair} ${ddResult.level}`,
+                  `DD=${ddResult.ddPct.toFixed(1)}% HWM=${ddResult.hwm} Balance=${ddResult.balance}`);
+              } else {
+                // テスタ施策4: 相関リスクガード
+                const corrGuard = await checkCorrelationGuard(
+                  env.DB, instrument.pair, geminiResult.decision as 'BUY' | 'SELL', INSTRUMENTS);
+                if (!corrGuard.allowed) {
+                  console.warn(`[fx-sim] ${corrGuard.reason}`);
                   await insertSystemLog(env.DB, 'WARN', 'RISK',
-                    `実弾ブロック: ${instrument.pair} ${geminiResult.decision}`,
-                    riskResult.reason);
-                } else {
-                  const brokerResult = await withFallback(broker, () => broker.openPosition({
-                    pair: instrument.pair,
-                    oandaSymbol: instrument.oandaSymbol,
-                    direction: geminiResult!.decision as 'BUY' | 'SELL',
-                    entryRate: currentRate,
-                    tpRate: finalTp,
-                    slRate: finalSl,
-                    lot: riskResult.adjustedLot ?? 1,
-                  }), env.DB, `open ${instrument.pair} ${geminiResult.decision}`);
+                    `相関ガード: ${instrument.pair}`, corrGuard.reason);
+                } else if (isLive) {
+                  // DD CAUTION時のロット倍率を適用
+                  const ddLotMult = ddResult.lotMultiplier;
+                  const requestedLot = 1 * rrLotMultiplier * ddLotMult;
 
-                  if (brokerResult.success && !brokerResult.error?.startsWith('Fallback')) {
-                    source = 'oanda';
-                    oandaTradeId = brokerResult.oandaTradeId ?? null;
-                    console.log(`[fx-sim] 🔴 LIVE: ${instrument.pair} ${geminiResult.decision} tradeId=${oandaTradeId}`);
+                  const riskResult = await checkRisk({
+                    db: env.DB,
+                    env: env as RiskEnv,
+                    pair: instrument.pair,
+                    currentRate,
+                    prevRate: candidate.prevRate,
+                    requestedLot,
+                  });
+
+                  if (!riskResult.allowed) {
+                    console.warn(`[fx-sim] RiskGuard blocked: ${instrument.pair} → ${riskResult.reason}`);
+                    await insertSystemLog(env.DB, 'WARN', 'RISK',
+                      `実弾ブロック: ${instrument.pair} ${geminiResult.decision}`,
+                      riskResult.reason);
+                  } else {
+                    const brokerResult = await withFallback(broker, () => broker.openPosition({
+                      pair: instrument.pair,
+                      oandaSymbol: instrument.oandaSymbol,
+                      direction: geminiResult!.decision as 'BUY' | 'SELL',
+                      entryRate: currentRate,
+                      tpRate: finalTp,
+                      slRate: finalSl,
+                      lot: riskResult.adjustedLot ?? requestedLot,
+                    }), env.DB, `open ${instrument.pair} ${geminiResult.decision}`);
+
+                    if (brokerResult.success && !brokerResult.error?.startsWith('Fallback')) {
+                      source = 'oanda';
+                      oandaTradeId = brokerResult.oandaTradeId ?? null;
+                      console.log(`[fx-sim] 🔴 LIVE: ${instrument.pair} ${geminiResult.decision} tradeId=${oandaTradeId}`);
+                    }
                   }
                 }
               }
