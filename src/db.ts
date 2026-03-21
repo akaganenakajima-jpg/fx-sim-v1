@@ -14,6 +14,15 @@ export interface Position {
   close_reason: string | null;
   source: string | null;
   oanda_trade_id: string | null;
+  // テスタ施策7: 手法・環境タグ
+  strategy?: string | null;
+  regime?: string | null;
+  session?: string | null;
+  confidence?: number | null;
+  // テスタ施策10: 分割決済
+  partial_closed_lot?: number | null;
+  original_lot?: number | null;
+  tp1_hit?: number | null;
 }
 
 export interface DecisionRecord {
@@ -32,6 +41,8 @@ export interface DecisionRecord {
   created_at: string;
   news_sources?: string | null;  // カンマ区切りソース名
   prompt_version?: string | null; // AIプロンプトバージョン
+  strategy?: string | null; // テスタ施策7: 手法タグ
+  confidence?: number | null; // テスタ施策7: 確信度
 }
 
 export async function getOpenPositions(db: D1Database): Promise<Position[]> {
@@ -60,8 +71,9 @@ export async function insertDecision(
     .prepare(
       `INSERT INTO decisions
         (pair, rate, decision, tp_rate, sl_rate, reasoning, news_summary,
-         reddit_signal, vix, us10y, nikkei, sp500, created_at, news_sources, prompt_version)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+         reddit_signal, vix, us10y, nikkei, sp500, created_at, news_sources, prompt_version,
+         strategy, confidence)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     )
     .bind(
       record.pair,
@@ -78,7 +90,9 @@ export async function insertDecision(
       record.sp500,
       record.created_at,
       record.news_sources ?? null,
-      record.prompt_version ?? null
+      record.prompt_version ?? null,
+      record.strategy ?? null,
+      record.confidence ?? null
     )
     .run();
 }

@@ -148,6 +148,19 @@ export interface StatusResponse {
   todayDecisionCount: number;
   todayBuyCount: number;
   todaySellCount: number;
+  /** テスタ施策21: 戦略マップデータ */
+  strategyMap: {
+    strategyStats: Array<{
+      strategy: string | null;
+      regime: string | null;
+      count: number;
+      wins: number;
+      winRate: number;
+      avgPnl: number;
+      reliability: 'trusted' | 'tentative' | 'reference';
+    }>;
+    instrumentTiers: Array<{ pair: string; tier: string; multiplier: number }>;
+  } | null;
 }
 
 export async function getApiStatus(db: D1Database, tradingEnv?: { TRADING_ENABLED?: string; OANDA_LIVE?: string; RISK_MAX_DAILY_LOSS?: string; RISK_MAX_LIVE_POSITIONS?: string; RISK_MAX_LOT_SIZE?: string; RISK_ANOMALY_THRESHOLD?: string }): Promise<StatusResponse> {
@@ -499,7 +512,40 @@ export async function getApiStatus(db: D1Database, tradingEnv?: { TRADING_ENABLE
     todayDecisionCount: todayDecisionCountRow?.total ?? 0,
     todayBuyCount:      todayDecisionCountRow?.buyCount ?? 0,
     todaySellCount:     todayDecisionCountRow?.sellCount ?? 0,
+    strategyMap: await getStrategyMapData(db),
   };
+}
+
+async function getStrategyMapData(db: D1Database): Promise<StatusResponse['strategyMap']> {
+  try {
+    const rows = await db.prepare(
+      `SELECT strategy, regime, COUNT(*) as count,
+        SUM(CASE WHEN pnl > 0 THEN 1 ELSE 0 END) as wins,
+        AVG(pnl) as avgPnl
+       FROM trade_logs WHERE strategy IS NOT NULL
+       GROUP BY strategy, regime ORDER BY count DESC LIMIT 30`
+    ).all<{ strategy: string | null; regime: string | null; count: number; wins: number; avgPnl: number }>();
+
+    const strategyStats = (rows.results ?? []).map(r => ({
+      strategy: r.strategy,
+      regime: r.regime,
+      count: r.count,
+      wins: r.wins,
+      winRate: r.count > 0 ? r.wins / r.count : 0,
+      avgPnl: r.avgPnl ?? 0,
+      reliability: (r.count >= 200 ? 'trusted' : r.count >= 50 ? 'tentative' : 'reference') as 'trusted' | 'tentative' | 'reference',
+    }));
+
+    // 銘柄ティア一覧
+    const { INSTRUMENTS } = await import('./instruments');
+    const instrumentTiers = INSTRUMENTS.map(i => ({
+      pair: i.pair, tier: i.tier, multiplier: i.tierLotMultiplier,
+    }));
+
+    return { strategyStats, instrumentTiers };
+  } catch {
+    return null;
+  }
 }
 
 async function getNewsAnalysis(db: D1Database): Promise<{

@@ -22,6 +22,8 @@ export interface GeminiDecision {
   tp_rate: number | null;
   sl_rate: number | null;
   reasoning: string; // 日本語100文字以内
+  strategy?: string; // テスタ施策7: 手法タグ
+  confidence?: number; // テスタ施策7: 確信度 0-100
 }
 
 /** プロンプトバージョン: プロンプトを変更したらこの値を更新する */
@@ -47,8 +49,10 @@ function buildSystemInstruction(instrument: InstrumentConfig): string {
     `既にオープンポジションがある場合は原則 HOLD を返すこと。` +
     `TP/SL は${instrument.tpSlHint}の範囲で設定すること。` +
     `【重要】リスクリワード比（TP距離÷SL距離）は必ず1.5以上にすること。SLは狭く、TPは広く設定せよ。確信度が低い場合はHOLDを返すこと。` +
-    `必ず以下のフォーマットのみで返答してください:\n` +
-    `{"decision":"BUY"|"SELL"|"HOLD","tp_rate":number|null,"sl_rate":number|null,"reasoning":"日本語100文字以内"}`
+    `\n【手法分類】"strategy"フィールドで判断手法を分類せよ: trend_follow(トレンド順張り), mean_reversion(逆張り), breakout(ブレイクアウト), news_driven(ニュース起因), range_trade(レンジ売買)` +
+    `\n【確信度】"confidence"フィールドで確信度を0-100で示せ。40未満ならHOLDを推奨。` +
+    `\n必ず以下のフォーマットのみで返答してください:\n` +
+    `{"decision":"BUY"|"SELL"|"HOLD","tp_rate":number|null,"sl_rate":number|null,"reasoning":"日本語100文字以内","strategy":"trend_follow"|"mean_reversion"|"breakout"|"news_driven"|"range_trade","confidence":0-100}`
   );
 }
 
@@ -63,6 +67,8 @@ function buildUserMessage(params: {
   allPositionDirections?: string[];
   sparkRates?: number[];
   regime?: string;
+  technicalText?: string; // テスタ施策6: テクニカル環境認識テキスト
+  regimeProhibitions?: string; // テスタ施策20: レジーム別禁止行動
 }): string {
   const { instrument, rate, indicators, news, redditSignal, hasOpenPosition, recentTrades, allPositionDirections, sparkRates, regime } = params;
 
@@ -89,6 +95,8 @@ function buildUserMessage(params: {
     `直近ニュース（箇条書き5件）:`,
     newsText || '  (取得なし)',
     `オープンポジション: ${hasOpenPosition ? 'あり（原則HOLDを返すこと）' : 'なし'}`,
+    ...(params.technicalText ? [``, params.technicalText] : []),
+    ...(params.regimeProhibitions ? [params.regimeProhibitions] : []),
     ``,
     `【TP/SL設定指示】`,
     tpSlNote,
@@ -147,6 +155,8 @@ export async function getDecision(params: {
   allPositionDirections?: string[];
   sparkRates?: number[];
   regime?: string;
+  technicalText?: string;
+  regimeProhibitions?: string;
   apiKey: string;
 }): Promise<GeminiDecision> {
   const { apiKey, instrument, ...rest } = params;
@@ -319,6 +329,8 @@ export async function getDecisionWithHedge(params: {
   allPositionDirections?: string[];
   sparkRates?: number[];
   regime?: string;
+  technicalText?: string;
+  regimeProhibitions?: string;
   geminiApiKey: string;
   openaiApiKey?: string;
   openaiApiKey2?: string;

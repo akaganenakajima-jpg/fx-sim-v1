@@ -22,6 +22,8 @@ export interface MarketIndicators {
   solusd: number | null;
   dax: number | null;
   nasdaq: number | null;
+  uk100: number | null;
+  hk33: number | null;
 }
 
 interface YahooChartResult {
@@ -83,7 +85,7 @@ async function fetchFromTwelveData(apiKey: string): Promise<Partial<MarketIndica
 }
 
 export async function getMarketIndicators(twelveDataApiKey?: string): Promise<MarketIndicators> {
-  const [vix, nikkei, sp500, us10y, usdjpy, btcusd, gold, eurusd, ethusd, crudeoil, natgas, copper, silver, gbpusd, audusd, solusd, dax, nasdaq] = await Promise.all([
+  const [vix, nikkei, sp500, us10y, usdjpy, btcusd, gold, eurusd, ethusd, crudeoil, natgas, copper, silver, gbpusd, audusd, solusd, dax, nasdaq, uk100, hk33] = await Promise.all([
     fetchYahoo('^VIX'),
     fetchYahoo('^N225'),
     fetchYahoo('^GSPC'),
@@ -102,9 +104,11 @@ export async function getMarketIndicators(twelveDataApiKey?: string): Promise<Ma
     fetchYahoo('SOL-USD'),
     fetchYahoo('^GDAXI'),     // DAX
     fetchYahoo('^IXIC'),      // NASDAQ
+    fetchYahoo('^FTSE'),      // UK100 (FTSE 100)
+    fetchYahoo('^HSI'),       // HK33 (ハンセン指数)
   ]);
 
-  const result: MarketIndicators = { vix, us10y, nikkei, sp500, usdjpy, btcusd, gold, eurusd, ethusd, crudeoil, natgas, copper, silver, gbpusd, audusd, solusd, dax, nasdaq };
+  const result: MarketIndicators = { vix, us10y, nikkei, sp500, usdjpy, btcusd, gold, eurusd, ethusd, crudeoil, natgas, copper, silver, gbpusd, audusd, solusd, dax, nasdaq, uk100, hk33 };
 
   // Yahoo Finance 結果の null 数をカウント
   const nullCount = [result.usdjpy, result.gold, result.btcusd, result.eurusd, result.nikkei, result.sp500]

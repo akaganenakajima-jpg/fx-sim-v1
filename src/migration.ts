@@ -85,6 +85,66 @@ const MIGRATIONS: Array<{ version: number; description: string; sql: string }> =
       updated_at TEXT NOT NULL
     )`,
   },
+  // Phase 2: テクニカル基盤
+  {
+    version: 201,
+    description: 'decisions に strategy カラム追加',
+    sql: 'ALTER TABLE decisions ADD COLUMN strategy TEXT',
+  },
+  {
+    version: 202,
+    description: 'decisions に confidence カラム追加',
+    sql: 'ALTER TABLE decisions ADD COLUMN confidence INTEGER',
+  },
+  {
+    version: 203,
+    description: 'positions に strategy/regime/session/confidence 追加（4カラム）',
+    sql: `CREATE TABLE IF NOT EXISTS _dummy_v203 (id INTEGER PRIMARY KEY)`,
+  },
+  // Phase 3: ポジション管理
+  {
+    version: 204,
+    description: 'positions に partial_closed_lot/original_lot/tp1_hit 追加',
+    sql: `CREATE TABLE IF NOT EXISTS _dummy_v204 (id INTEGER PRIMARY KEY)`,
+  },
+  // Phase 5: PDCA自動化
+  {
+    version: 205,
+    description: 'trade_logs テーブル新設 + インデックス',
+    sql: `CREATE TABLE IF NOT EXISTS trade_logs (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      position_id INTEGER NOT NULL,
+      pair TEXT NOT NULL,
+      direction TEXT NOT NULL,
+      strategy TEXT,
+      regime TEXT,
+      session TEXT,
+      confidence INTEGER,
+      entry_rate REAL NOT NULL,
+      close_rate REAL,
+      tp_rate REAL, sl_rate REAL,
+      lot REAL,
+      pnl REAL,
+      rr_ratio REAL,
+      entry_at TEXT NOT NULL,
+      closed_at TEXT,
+      close_reason TEXT,
+      vix_at_entry REAL,
+      atr_at_entry REAL,
+      reasoning TEXT,
+      created_at TEXT NOT NULL
+    )`,
+  },
+  {
+    version: 206,
+    description: 'trade_logs インデックス追加',
+    sql: `CREATE INDEX IF NOT EXISTS idx_trade_logs_strategy ON trade_logs(strategy, regime)`,
+  },
+  {
+    version: 207,
+    description: 'trade_logs pair インデックス追加',
+    sql: `CREATE INDEX IF NOT EXISTS idx_trade_logs_pair ON trade_logs(pair, closed_at DESC)`,
+  },
 ];
 
 export async function runMigrations(db: D1Database): Promise<void> {
@@ -172,6 +232,53 @@ export async function runMigrations(db: D1Database): Promise<void> {
         await db.prepare(`ALTER TABLE instrument_scores ADD COLUMN thompson_beta REAL NOT NULL DEFAULT 1`).run();
       } catch {
         // カラムが既に存在する場合は無視
+      }
+      await db.prepare(
+        'INSERT OR IGNORE INTO schema_version (version, description, applied_at) VALUES (?, ?, ?)'
+      ).bind(m.version, m.description, new Date().toISOString()).run();
+      console.log(`[migration] Applied v${m.version}: ${m.description}`);
+      continue;
+    }
+
+    // version 201/202 は ALTER TABLE（カラムが既存でも無視）
+    if (m.version === 201 || m.version === 202) {
+      try {
+        await db.prepare(m.sql).run();
+      } catch {
+        // カラムが既に存在する場合は無視
+      }
+      await db.prepare(
+        'INSERT OR IGNORE INTO schema_version (version, description, applied_at) VALUES (?, ?, ?)'
+      ).bind(m.version, m.description, new Date().toISOString()).run();
+      console.log(`[migration] Applied v${m.version}: ${m.description}`);
+      continue;
+    }
+
+    // version 203: positions に4カラム追加
+    if (m.version === 203) {
+      for (const col of [
+        'ALTER TABLE positions ADD COLUMN strategy TEXT',
+        'ALTER TABLE positions ADD COLUMN regime TEXT',
+        'ALTER TABLE positions ADD COLUMN session TEXT',
+        'ALTER TABLE positions ADD COLUMN confidence INTEGER',
+      ]) {
+        try { await db.prepare(col).run(); } catch {}
+      }
+      await db.prepare(
+        'INSERT OR IGNORE INTO schema_version (version, description, applied_at) VALUES (?, ?, ?)'
+      ).bind(m.version, m.description, new Date().toISOString()).run();
+      console.log(`[migration] Applied v${m.version}: ${m.description}`);
+      continue;
+    }
+
+    // version 204: positions に分割決済用3カラム追加
+    if (m.version === 204) {
+      for (const col of [
+        'ALTER TABLE positions ADD COLUMN partial_closed_lot REAL DEFAULT 0',
+        'ALTER TABLE positions ADD COLUMN original_lot REAL',
+        'ALTER TABLE positions ADD COLUMN tp1_hit INTEGER DEFAULT 0',
+      ]) {
+        try { await db.prepare(col).run(); } catch {}
       }
       await db.prepare(
         'INSERT OR IGNORE INTO schema_version (version, description, applied_at) VALUES (?, ?, ?)'

@@ -33,6 +33,15 @@ import { runMigrations } from './migration';
 import { sendNotification, getWebhookUrl, buildDailySummaryMessage } from './notify';
 import { sampleBeta } from './thompson';
 import { kalmanFilter, type KalmanState } from './kalman';
+// テスタ施策 Phase 2-7
+import { getTechnicalIndicators, updateAllCandles } from './candles';
+import { determineRegime, formatRegimeForPrompt, getRegimeProhibitions } from './regime';
+import { getCurrentSession, getSessionLotMultiplier, getSessionInstrumentMultiplier, isNakaneWindow } from './session';
+import { fetchEconomicCalendar, getUpcomingHighImpactEvents } from './calendar';
+import { generateWeeklyReview, generateMonthlyReview } from './trade-journal';
+// detectBreakout は candle データがキャッシュに保存されるPhase 7以降で統合予定
+// import { detectBreakout } from './breakout';
+import { isValidStrategy } from './strategy-tag';
 
 interface Env {
   DB: D1Database;
@@ -60,6 +69,11 @@ interface Env {
   TWELVE_DATA_API_KEY?: string;
   SLACK_WEBHOOK_URL?: string;
   DISCORD_WEBHOOK_URL?: string;
+  // テスタ施策: 多層リスク
+  RISK_MAX_WEEKLY_LOSS?: string;
+  RISK_MAX_MONTHLY_LOSS?: string;
+  // テスタ施策12: 経済指標カレンダー
+  FINNHUB_API_KEY?: string;
 }
 
 // ── キー別クールダウン管理 ──
@@ -267,7 +281,7 @@ async function fetchMarketData(env: Env, now: Date): Promise<MarketData | null> 
   const news = newsData.items;
   const activeNewsSources = [...new Set(news.map(n => n.source))].join(',');
   const redditSignal = redditResult.status === 'fulfilled' ? redditResult.value : { hasSignal: false, keywords: [], topPosts: [] };
-  const indicators = indicatorsResult.status === 'fulfilled' ? indicatorsResult.value : { vix: null, us10y: null, nikkei: null, sp500: null, usdjpy: null, btcusd: null, gold: null, eurusd: null, ethusd: null, crudeoil: null, natgas: null, copper: null, silver: null, gbpusd: null, audusd: null, solusd: null, dax: null, nasdaq: null };
+  const indicators = indicatorsResult.status === 'fulfilled' ? indicatorsResult.value : { vix: null, us10y: null, nikkei: null, sp500: null, usdjpy: null, btcusd: null, gold: null, eurusd: null, ethusd: null, crudeoil: null, natgas: null, copper: null, silver: null, gbpusd: null, audusd: null, solusd: null, dax: null, nasdaq: null, uk100: null, hk33: null };
   const frankfurterRate = frankfurterResult.status === 'fulfilled' ? frankfurterResult.value : null;
 
   const usdJpyRate = indicators.usdjpy ?? frankfurterRate;
@@ -295,6 +309,8 @@ async function fetchMarketData(env: Env, now: Date): Promise<MarketData | null> 
     ['SOL/USD',   indicators.solusd],
     ['DAX',       indicators.dax],
     ['NASDAQ',    indicators.nasdaq],
+    ['UK100',     indicators.uk100],
+    ['HK33',      indicators.hk33],
   ];
 
   const fallbackPairs: string[] = [];
@@ -341,6 +357,8 @@ interface AIRunContext {
   prevElapsed: number;
   /** Path B が処理した銘柄（Path A/C でスキップする） */
   excludedPairs?: Set<string>;
+  /** テスタ施策12: 経済イベントガード */
+  economicEventGuard?: { highImpactNearby: boolean; mediumImpactNearby: boolean };
 }
 
 // ── v2: 3Path並列 型定義 ──
@@ -375,7 +393,7 @@ async function runAIDecisions(
 ): Promise<AIDecisionSummary> {
   const {
     indicators, news, redditSignal, newsSummary, activeNewsSources,
-    brokerEnv, now, prices, prevElapsed, excludedPairs,
+    brokerEnv, now, prices, prevElapsed, excludedPairs, economicEventGuard,
   } = context;
 
   // 429クールダウン: キー別管理 + サーキットブレーカーで制御
@@ -408,8 +426,8 @@ async function runAIDecisions(
   const isNYSession = jstH >= 22 || jstH < 7;
 
   const SESSION_MAP: Record<string, string[]> = {
-    tokyo:  ['USD/JPY', 'Nikkei225', 'AUD/USD'],
-    london: ['EUR/USD', 'GBP/USD', 'DAX', 'Gold', 'Silver', 'Copper'],
+    tokyo:  ['USD/JPY', 'Nikkei225', 'AUD/USD', 'HK33'],
+    london: ['EUR/USD', 'GBP/USD', 'DAX', 'Gold', 'Silver', 'Copper', 'UK100'],
     ny:     ['S&P500', 'NASDAQ', 'US10Y', 'CrudeOil', 'NatGas', 'BTC/USD', 'ETH/USD', 'SOL/USD'],
   };
 
@@ -589,6 +607,22 @@ async function runAIDecisions(
         const recentTrades = recentTradesMap.get(instrument.pair) ?? [];
         const sparkRates = sparkMap.get(instrument.pair) ?? [];
 
+        // テスタ施策: テクニカル環境認識 + セッション制御
+        let technicalText: string | undefined;
+        let regimeProhibitions: string | undefined;
+        let regimeName: string | undefined = regimeMap.get(instrument.pair);
+        if (instrument.oandaSymbol && env.OANDA_API_TOKEN && env.OANDA_ACCOUNT_ID) {
+          try {
+            const tech = await getTechnicalIndicators(
+              env.DB, env.OANDA_API_TOKEN, env.OANDA_ACCOUNT_ID,
+              env.OANDA_LIVE === 'true', instrument.oandaSymbol);
+            const regimeResult = determineRegime(tech.h1);
+            regimeName = regimeResult.regime;
+            technicalText = formatRegimeForPrompt(regimeResult, tech.h1);
+            regimeProhibitions = getRegimeProhibitions(regimeResult.regime);
+          } catch { /* テクニカル取得失敗は無視 */ }
+        }
+
         let geminiResult;
         try {
           const hedgeResult = await getDecisionWithHedge({
@@ -601,7 +635,9 @@ async function runAIDecisions(
             recentTrades,
             allPositionDirections,
             sparkRates,
-            regime: regimeMap.get(instrument.pair),
+            regime: regimeName,
+            technicalText,
+            regimeProhibitions,
             geminiApiKey: getApiKey(env),
             openaiApiKey: env.OPENAI_API_KEY,
             openaiApiKey2: env.OPENAI_API_KEY_2,
@@ -650,6 +686,12 @@ async function runAIDecisions(
           }
 
           // 補正済み TP/SL で decisions テーブルに記録（生の異常値は保存しない）
+          // テスタ施策7: strategy/confidenceをバリデーション付きで記録
+          const validStrategy = geminiResult.strategy && isValidStrategy(geminiResult.strategy)
+            ? geminiResult.strategy : null;
+          const validConfidence = typeof geminiResult.confidence === 'number'
+            ? Math.max(0, Math.min(100, geminiResult.confidence)) : null;
+
           await insertDecision(env.DB, {
             pair: instrument.pair,
             rate: currentRate,
@@ -665,6 +707,8 @@ async function runAIDecisions(
             sp500: indicators.sp500,
             created_at: now.toISOString(),
             news_sources: activeNewsSources || null,
+            strategy: validStrategy,
+            confidence: validConfidence,
           });
 
           await setCacheValue(env.DB, `last_ai_call_${instrument.pair}`, now.toISOString());
@@ -681,6 +725,37 @@ async function runAIDecisions(
               let source: 'paper' | 'oanda' = 'paper';
               let oandaTradeId: string | null = null;
 
+              // テスタ施策11: セッション制御
+              const currentSession = getCurrentSession(now);
+              const sessionMult = getSessionLotMultiplier(currentSession);
+              const matrixMult = getSessionInstrumentMultiplier(currentSession, instrument.pair);
+              if (sessionMult === 0 || matrixMult === 0) {
+                console.log(`[fx-sim] Session blocked: ${instrument.pair} session=${currentSession}`);
+              }
+
+              // テスタ施策18: 確信度ベースロット
+              let confidenceMult = 1.0;
+              if (validConfidence != null) {
+                if (validConfidence >= 80) confidenceMult = 1.5;
+                else if (validConfidence >= 60) confidenceMult = 1.0;
+                else if (validConfidence >= 40) confidenceMult = 0.5;
+                else { confidenceMult = 0; } // <40 → HOLD強制
+              }
+
+              // テスタ施策19: 仲値バイアス
+              if (isNakaneWindow(now) && instrument.pair === 'USD/JPY' &&
+                  geminiResult.decision === 'BUY' && validConfidence != null) {
+                confidenceMult = Math.min(confidenceMult * 1.1, 1.5);
+              }
+
+              // テスタ施策12: S級イベント接近→強制HOLD / A級→ロット50%
+              let calendarMult = 1.0;
+              if (economicEventGuard?.highImpactNearby) calendarMult = 0;
+              else if (economicEventGuard?.mediumImpactNearby) calendarMult = 0.5;
+
+              if (sessionMult === 0 || matrixMult === 0 || confidenceMult === 0 || calendarMult === 0) {
+                // セッション禁止 or 確信度不足 or S級イベント接近 → ポジション開かない
+              } else {
               // テスタ施策2: HWMドローダウン制御
               const ddResult = await getDrawdownLevel(env.DB);
               const balance = await getCurrentBalance(env.DB);
@@ -700,9 +775,10 @@ async function runAIDecisions(
                   await insertSystemLog(env.DB, 'WARN', 'RISK',
                     `相関ガード: ${instrument.pair}`, corrGuard.reason);
                 } else if (isLive) {
-                  // DD CAUTION時のロット倍率を適用
+                  // 全施策のロット倍率を統合
                   const ddLotMult = ddResult.lotMultiplier;
-                  const requestedLot = 1 * rrLotMultiplier * ddLotMult;
+                  const tierMult = instrument.tierLotMultiplier;
+                  const requestedLot = 1 * rrLotMultiplier * ddLotMult * sessionMult * matrixMult * confidenceMult * calendarMult * tierMult;
 
                   const riskResult = await checkRisk({
                     db: env.DB,
@@ -748,12 +824,14 @@ async function runAIDecisions(
                 source,
                 oandaTradeId,
                 getWebhookUrl(env),
+                { strategy: validStrategy, regime: regimeName, session: currentSession, confidence: validConfidence },
               );
               await insertSystemLog(
                 env.DB, 'INFO', 'POSITION',
                 `ポジション開設: ${instrument.pair} ${geminiResult.decision} @ ${currentRate} [${source}]`,
                 JSON.stringify({ tp: finalTp, sl: finalSl, source, oandaTradeId, reasoning: geminiResult.reasoning?.slice(0, 100) })
               );
+            } // end session/confidence gate
             }
           } else if (geminiResult.decision !== 'HOLD') {
             await insertSystemLog(env.DB, 'INFO', 'GEMINI', `${instrument.pair} ${geminiResult.decision} シグナル（既存ポジあり）`);
@@ -1021,6 +1099,21 @@ async function run(env: Env): Promise<void> {
       TRADING_ENABLED: env.TRADING_ENABLED,
     };
 
+    // テスタ施策12: 経済指標カレンダーチェック
+    let economicEventGuard = { highImpactNearby: false, mediumImpactNearby: false, events: [] as import('./calendar').EconomicEvent[] };
+    try {
+      const calendarEvents = await fetchEconomicCalendar(env.DB, env.FINNHUB_API_KEY);
+      if (calendarEvents.length > 0) {
+        economicEventGuard = getUpcomingHighImpactEvents(calendarEvents, now);
+        if (economicEventGuard.highImpactNearby) {
+          console.log(`[fx-sim] 📅 S級イベント接近 — 新規エントリー強制HOLD`);
+          await insertSystemLog(env.DB, 'INFO', 'CALENDAR',
+            'S級イベント接近: 新規エントリー停止',
+            JSON.stringify(economicEventGuard.events.slice(0, 3).map(e => e.event)));
+        }
+      }
+    } catch { /* カレンダー失敗は無視 */ }
+
     // 2. 全銘柄のTP/SLを一括チェック（OANDA実弾ポジションはブローカー経由でクローズ）
     const t1 = Date.now();
     await checkAndCloseAllPositions(env.DB, prices, INSTRUMENTS, brokerEnv, getWebhookUrl(env));
@@ -1223,6 +1316,7 @@ async function run(env: Env): Promise<void> {
       indicators, news, redditSignal, newsSummary, activeNewsSources,
       brokerEnv, now, prices, prevElapsed,
       excludedPairs: pathBHandledPairs,
+      economicEventGuard,
     }, cronStart);
     const aiLoopMs = Date.now() - t3;
     await insertSystemLog(env.DB, 'INFO', 'FLOW', 'PATH_A完了', JSON.stringify({
@@ -1373,6 +1467,41 @@ async function runDailyTasks(env: Env, _now: Date): Promise<void> {
     }
   } catch (e) {
     console.warn('[fx-sim] daily summary notification failed:', e);
+  }
+
+  // テスタ施策5: テクニカルキャンドル日次バッチ更新
+  if (env.OANDA_API_TOKEN && env.OANDA_ACCOUNT_ID) {
+    try {
+      await updateAllCandles(
+        env.DB, env.OANDA_API_TOKEN, env.OANDA_ACCOUNT_ID,
+        env.OANDA_LIVE === 'true', INSTRUMENTS);
+      console.log('[daily] Candles batch update complete');
+    } catch (e) {
+      console.warn('[daily] Candles batch update failed:', e);
+    }
+  }
+
+  // テスタ施策12: 経済指標カレンダー日次更新
+  try {
+    await fetchEconomicCalendar(env.DB, env.FINNHUB_API_KEY);
+  } catch {}
+
+  // テスタ施策15: 週次/月次レビュー
+  const dayOfWeek = _now.getUTCDay();
+  const dayOfMonth = _now.getUTCDate();
+  try {
+    if (dayOfWeek === 1) { // 月曜日
+      const review = await generateWeeklyReview(env.DB);
+      await sendNotification(getWebhookUrl(env), review);
+      console.log('[daily] Weekly review sent');
+    }
+    if (dayOfMonth === 1) { // 月初
+      const review = await generateMonthlyReview(env.DB);
+      await sendNotification(getWebhookUrl(env), review);
+      console.log('[daily] Monthly review sent');
+    }
+  } catch (e) {
+    console.warn('[daily] Review generation failed:', e);
   }
 }
 
