@@ -29,6 +29,10 @@ export interface InstrumentConfig {
   trailingDistance: number;
   /** 相関グループ（テスタ施策4: 同グループ同方向2件以上でブロック） */
   correlationGroup: CorrelationGroup;
+  /** テスタ施策23: 銘柄ティア（A=主力 / B=準主力 / C=サブ / D=実験） */
+  tier: 'A' | 'B' | 'C' | 'D';
+  /** テスタ施策23: ティア別ロット倍率 */
+  tierLotMultiplier: number;
 }
 
 export const INSTRUMENTS: InstrumentConfig[] = [
@@ -45,6 +49,7 @@ export const INSTRUMENTS: InstrumentConfig[] = [
     trailingActivation: 0.2,   // 0.2円利益でトレイリング開始（旧0.3）
     trailingDistance: 0.12,    // 0.12円幅で追従（旧0.15）
     correlationGroup: 'usd_strong',
+    tier: 'A', tierLotMultiplier: 1.0,
   },
   {
     pair: 'Nikkei225',
@@ -59,6 +64,7 @@ export const INSTRUMENTS: InstrumentConfig[] = [
     trailingActivation: 100,   // 旧150
     trailingDistance: 60,      // 旧80
     correlationGroup: 'risk_on',
+    tier: 'B', tierLotMultiplier: 0.7,
   },
   {
     pair: 'S&P500',
@@ -73,6 +79,7 @@ export const INSTRUMENTS: InstrumentConfig[] = [
     trailingActivation: 8,     // 旧15 — RR最悪銘柄のため大幅引き下げ
     trailingDistance: 5,       // 旧8
     correlationGroup: 'risk_on',
+    tier: 'B', tierLotMultiplier: 0.7,
   },
   {
     pair: 'US10Y',
@@ -87,6 +94,7 @@ export const INSTRUMENTS: InstrumentConfig[] = [
     trailingActivation: 0.05,  // 旧0.08
     trailingDistance: 0.03,    // 旧0.04
     correlationGroup: 'usd_strong',
+    tier: 'C', tierLotMultiplier: 0.5,
   },
   {
     pair: 'BTC/USD',
@@ -101,6 +109,7 @@ export const INSTRUMENTS: InstrumentConfig[] = [
     trailingActivation: 280,   // 旧400
     trailingDistance: 150,     // 旧200
     correlationGroup: 'risk_on',
+    tier: 'D', tierLotMultiplier: 0.3,
   },
   {
     pair: 'Gold',
@@ -115,6 +124,7 @@ export const INSTRUMENTS: InstrumentConfig[] = [
     trailingActivation: 7,     // 旧10 — RR=0.55の改善
     trailingDistance: 4,       // 旧5
     correlationGroup: 'precious',
+    tier: 'A', tierLotMultiplier: 1.0,
   },
   {
     pair: 'EUR/USD',
@@ -129,6 +139,7 @@ export const INSTRUMENTS: InstrumentConfig[] = [
     trailingActivation: 0.003, // 旧0.004
     trailingDistance: 0.0015,  // 旧0.002
     correlationGroup: 'europe',
+    tier: 'A', tierLotMultiplier: 1.0,
   },
   {
     pair: 'ETH/USD',
@@ -143,6 +154,7 @@ export const INSTRUMENTS: InstrumentConfig[] = [
     trailingActivation: 20,    // 旧30
     trailingDistance: 12,      // 旧15
     correlationGroup: 'standalone',
+    tier: 'D', tierLotMultiplier: 0.3,
   },
   {
     pair: 'CrudeOil',
@@ -157,6 +169,7 @@ export const INSTRUMENTS: InstrumentConfig[] = [
     trailingActivation: 0.5,   // 旧0.8
     trailingDistance: 0.3,     // 旧0.4
     correlationGroup: 'energy',
+    tier: 'C', tierLotMultiplier: 0.5,
   },
   {
     pair: 'NatGas',
@@ -171,6 +184,7 @@ export const INSTRUMENTS: InstrumentConfig[] = [
     trailingActivation: 0.05,  // 旧0.08
     trailingDistance: 0.03,    // 旧0.04
     correlationGroup: 'energy',
+    tier: 'C', tierLotMultiplier: 0.5,
   },
   {
     pair: 'Copper',
@@ -185,6 +199,7 @@ export const INSTRUMENTS: InstrumentConfig[] = [
     trailingActivation: 0.035, // 旧0.05
     trailingDistance: 0.02,    // 旧0.025
     correlationGroup: 'precious',
+    tier: 'C', tierLotMultiplier: 0.5,
   },
   {
     pair: 'Silver',
@@ -199,6 +214,7 @@ export const INSTRUMENTS: InstrumentConfig[] = [
     trailingActivation: 0.28,  // 旧0.4
     trailingDistance: 0.15,    // 旧0.2
     correlationGroup: 'precious',
+    tier: 'C', tierLotMultiplier: 0.5,
   },
   {
     pair: 'GBP/USD',
@@ -206,13 +222,14 @@ export const INSTRUMENTS: InstrumentConfig[] = [
     oandaSymbol: 'GBP_USD',
     rateChangeTh: 0.001,
     tpSlHint: '現在レートから±0.005〜0.015（TPはSLの1.5倍以上）',
-    tpSlMin: 0.002,  // 0.002未満は拒否
-    tpSlMax: 0.025,  // 0.025超過は拒否
+    tpSlMin: 0.002,
+    tpSlMax: 0.025,
     pnlUnit: '円',
     pnlMultiplier: 10000,
-    trailingActivation: 0.003, // 旧0.004
-    trailingDistance: 0.0015,  // 旧0.002
+    trailingActivation: 0.003,
+    trailingDistance: 0.0015,
     correlationGroup: 'europe',
+    tier: 'B', tierLotMultiplier: 0.7,
   },
   {
     pair: 'AUD/USD',
@@ -220,13 +237,14 @@ export const INSTRUMENTS: InstrumentConfig[] = [
     oandaSymbol: 'AUD_USD',
     rateChangeTh: 0.001,
     tpSlHint: '現在レートから±0.005〜0.015（TPはSLの1.5倍以上）',
-    tpSlMin: 0.002,  // 0.002未満は拒否
-    tpSlMax: 0.025,  // 0.025超過は拒否
+    tpSlMin: 0.002,
+    tpSlMax: 0.025,
     pnlUnit: '円',
     pnlMultiplier: 10000,
-    trailingActivation: 0.003, // 旧0.004
-    trailingDistance: 0.0015,  // 旧0.002
+    trailingActivation: 0.003,
+    trailingDistance: 0.0015,
     correlationGroup: 'risk_on',
+    tier: 'B', tierLotMultiplier: 0.7,
   },
   {
     pair: 'SOL/USD',
@@ -234,13 +252,14 @@ export const INSTRUMENTS: InstrumentConfig[] = [
     oandaSymbol: null,
     rateChangeTh: 0.5,
     tpSlHint: '現在価格から±$2〜$8（TPはSLの1.5倍以上）',
-    tpSlMin: 1.0,    // $1未満は拒否
-    tpSlMax: 15.0,   // $15超過は拒否
+    tpSlMin: 1.0,
+    tpSlMax: 15.0,
     pnlUnit: '円',
     pnlMultiplier: 10,
-    trailingActivation: 2,     // 旧3
-    trailingDistance: 1.2,     // 旧1.5
+    trailingActivation: 2,
+    trailingDistance: 1.2,
     correlationGroup: 'standalone',
+    tier: 'D', tierLotMultiplier: 0.3,
   },
   {
     pair: 'DAX',
@@ -248,13 +267,14 @@ export const INSTRUMENTS: InstrumentConfig[] = [
     oandaSymbol: 'DE30_EUR',
     rateChangeTh: 15,
     tpSlHint: '現在値から±50〜200ポイント（TPはSLの1.5倍以上）',
-    tpSlMin: 25,     // 25pt未満は拒否
-    tpSlMax: 350,    // 350pt超過は拒否
+    tpSlMin: 25,
+    tpSlMax: 350,
     pnlUnit: '円',
     pnlMultiplier: 1,
-    trailingActivation: 55,    // 旧80
-    trailingDistance: 30,      // 旧40
+    trailingActivation: 55,
+    trailingDistance: 30,
     correlationGroup: 'europe',
+    tier: 'C', tierLotMultiplier: 0.5,
   },
   {
     pair: 'NASDAQ',
@@ -262,12 +282,45 @@ export const INSTRUMENTS: InstrumentConfig[] = [
     oandaSymbol: 'NAS100_USD',
     rateChangeTh: 15,
     tpSlHint: '現在値から±50〜200ポイント（TPはSLの1.5倍以上）',
-    tpSlMin: 25,     // 25pt未満は拒否
-    tpSlMax: 350,    // 350pt超過は拒否
+    tpSlMin: 25,
+    tpSlMax: 350,
     pnlUnit: '円',
     pnlMultiplier: 1,
-    trailingActivation: 55,    // 旧80
-    trailingDistance: 30,      // 旧40
+    trailingActivation: 55,
+    trailingDistance: 30,
     correlationGroup: 'risk_on',
+    tier: 'C', tierLotMultiplier: 0.5,
+  },
+  // テスタ施策24: UK100
+  {
+    pair: 'UK100',
+    broker: 'oanda',
+    oandaSymbol: 'UK100_GBP',
+    rateChangeTh: 10,
+    tpSlHint: '現在値から±30〜150ポイント（TPはSLの1.5倍以上）',
+    tpSlMin: 15,
+    tpSlMax: 250,
+    pnlUnit: '円',
+    pnlMultiplier: 1,
+    trailingActivation: 40,
+    trailingDistance: 22,
+    correlationGroup: 'europe',
+    tier: 'B', tierLotMultiplier: 0.7,
+  },
+  // テスタ施策25: HK33
+  {
+    pair: 'HK33',
+    broker: 'oanda',
+    oandaSymbol: 'HK33_HKD',
+    rateChangeTh: 30,
+    tpSlHint: '現在値から±80〜400ポイント（TPはSLの1.5倍以上）',
+    tpSlMin: 50,
+    tpSlMax: 600,
+    pnlUnit: '円',
+    pnlMultiplier: 0.5,
+    trailingActivation: 80,
+    trailingDistance: 45,
+    correlationGroup: 'risk_on',
+    tier: 'C', tierLotMultiplier: 0.5,
   },
 ];

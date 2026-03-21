@@ -243,6 +243,7 @@ export const JS = `
       case '2': switchTab('tab-ai'); break;
       case '3': switchTab('tab-stats'); break;
       case '4': switchTab('tab-log'); break;
+      case '5': switchTab('tab-strategy'); break;
       case 'r': case 'R':
         document.getElementById('refresh-btn')?.click();
         break;
@@ -1988,6 +1989,67 @@ export const JS = `
   }
 
   // ── メインレンダリング ──
+  // ── 戦略タブ ──
+  function renderStrategy(data) {
+    if (!data.strategyMap) return;
+    var sm = data.strategyMap;
+
+    // 銘柄ティア一覧
+    var tiersEl = el('strategy-tiers');
+    if (tiersEl && sm.instrumentTiers) {
+      var tierGroups = { A: [], B: [], C: [], D: [] };
+      sm.instrumentTiers.forEach(function(t) {
+        if (tierGroups[t.tier]) tierGroups[t.tier].push(t);
+      });
+      var html = '';
+      ['A', 'B', 'C', 'D'].forEach(function(tier) {
+        var items = tierGroups[tier] || [];
+        if (items.length === 0) return;
+        var colors = { A: '#34c759', B: '#007aff', C: '#ff9500', D: '#8e8e93' };
+        var labels = { A: 'x1.0', B: 'x0.7', C: 'x0.5', D: 'x0.3' };
+        html += '<div class="stat-card" style="border-left:3px solid ' + colors[tier] + '">' +
+          '<div class="stat-label">Tier ' + tier + ' <span style="color:' + colors[tier] + '">' + labels[tier] + '</span></div>' +
+          '<div class="stat-value" style="font-size:12px;font-weight:400">' +
+          items.map(function(i) { return i.pair; }).join(', ') +
+          '</div></div>';
+      });
+      tiersEl.innerHTML = html;
+    }
+
+    // 手法×環境マトリクス
+    var matrixEl = el('strategy-matrix');
+    if (matrixEl && sm.strategyStats && sm.strategyStats.length > 0) {
+      var rows = sm.strategyStats.map(function(s) {
+        var reliabilityBadge = s.reliability === 'trusted'
+          ? '<span style="color:#34c759">●</span>'
+          : s.reliability === 'tentative'
+            ? '<span style="color:#ff9500">●</span>'
+            : '<span style="color:#8e8e93">●</span>';
+        var wrColor = s.winRate >= 0.55 ? '#34c759' : s.winRate >= 0.45 ? '#ff9500' : '#ff3b30';
+        return '<tr>' +
+          '<td>' + (s.strategy || '—') + '</td>' +
+          '<td>' + (s.regime || '—') + '</td>' +
+          '<td style="text-align:right">' + s.count + '</td>' +
+          '<td style="text-align:right;color:' + wrColor + '">' + (s.winRate * 100).toFixed(0) + '%</td>' +
+          '<td style="text-align:right">' + (s.avgPnl >= 0 ? '+' : '') + s.avgPnl.toFixed(1) + '</td>' +
+          '<td style="text-align:center">' + reliabilityBadge + '</td>' +
+          '</tr>';
+      }).join('');
+      matrixEl.innerHTML =
+        '<table style="width:100%;font-size:11px;border-collapse:collapse">' +
+        '<thead><tr style="color:var(--text2);border-bottom:1px solid var(--border)">' +
+        '<th style="text-align:left;padding:4px">手法</th>' +
+        '<th style="text-align:left;padding:4px">環境</th>' +
+        '<th style="text-align:right;padding:4px">N</th>' +
+        '<th style="text-align:right;padding:4px">勝率</th>' +
+        '<th style="text-align:right;padding:4px">期待値</th>' +
+        '<th style="text-align:center;padding:4px">信頼</th>' +
+        '</tr></thead><tbody>' + rows + '</tbody></table>';
+    } else if (matrixEl) {
+      matrixEl.innerHTML = '<p style="color:var(--text2);font-size:12px">データ蓄積中...</p>';
+    }
+  }
+
   function render(data) {
     var prev = lastData;
     lastData = data;
@@ -2139,6 +2201,9 @@ export const JS = `
 
     // ログタブ
     renderLog(data);
+
+    // 戦略タブ
+    renderStrategy(data);
 
     // タブバッジ更新（Zeigarnik効果）
     updateTabBadges(data);

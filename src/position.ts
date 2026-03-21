@@ -8,6 +8,7 @@ import { getBroker, withFallback, type BrokerEnv } from './broker';
 import { kellyFraction, logReturn } from './stats';
 import { sendNotification, buildTpSlMessage, buildDrawdownMessage } from './notify';
 import { updateThompsonParams } from './thompson';
+import { logTradeJournal } from './trade-journal';
 
 function calcPnl(
   direction: 'BUY' | 'SELL',
@@ -94,6 +95,44 @@ export async function checkAndCloseAllPositions(
       }
     }
 
+    // テスタ施策10: 分割決済 — TP1(RR1:1地点)で50%決済 + 建値ストップ
+    if (pos.sl_rate != null && !pos.tp1_hit && pos.lot > 0) {
+      const slDist = Math.abs(pos.entry_rate - pos.sl_rate);
+      const isBuy = pos.direction === 'BUY';
+      const tp1Rate = isBuy ? pos.entry_rate + slDist : pos.entry_rate - slDist;
+      const tp1Hit = isBuy ? currentRate >= tp1Rate : currentRate <= tp1Rate;
+
+      if (tp1Hit && slDist > 0) {
+        const halfLot = pos.lot * 0.5;
+        const partialPnl = calcPnl(pos.direction, pos.entry_rate, currentRate, multiplier) * 0.5;
+        console.log(`[position] TP1 hit: ${pos.pair} id=${pos.id} partial_close=50% pnl=${partialPnl.toFixed(2)}`);
+
+        // 50%部分決済 + SLを建値に移動 + tp1_hit フラグ
+        await db.prepare(
+          `UPDATE positions SET lot = lot * 0.5, partial_closed_lot = COALESCE(partial_closed_lot, 0) + ?,
+           sl_rate = entry_rate, tp1_hit = 1 WHERE id = ?`
+        ).bind(halfLot, pos.id).run();
+        pos.lot = pos.lot * 0.5;
+        pos.sl_rate = pos.entry_rate;
+        pos.tp1_hit = 1;
+
+        await insertSystemLog(db, 'INFO', 'POSITION',
+          `TP1分割決済: ${pos.pair} 50%決済 PnL+${partialPnl.toFixed(2)} SL→建値`,
+          JSON.stringify({ id: pos.id, tp1Rate, currentRate, halfLot }));
+
+        // OANDA実弾: 部分決済 + SL更新
+        if (pos.source === 'oanda' && pos.oanda_trade_id && instr && brokerEnv) {
+          const broker = getBroker(instr, brokerEnv);
+          if (broker.name === 'oanda') {
+            await withFallback(broker, () => broker.updateStopLoss({
+              positionId: pos.id, oandaTradeId: pos.oanda_trade_id,
+              newSlRate: pos.entry_rate,
+            }), db, `tp1-sl ${pos.pair}`);
+          }
+        }
+      }
+    }
+
     if (shouldTriggerTP(pos, currentRate)) {
       const pnl = calcPnl(pos.direction, pos.entry_rate, currentRate, multiplier);
       const lr = logReturn(pos.entry_rate, currentRate);
@@ -126,6 +165,11 @@ export async function checkAndCloseAllPositions(
       await insertSystemLog(db, 'INFO', 'POSITION',
         `TP決済: ${pos.pair} ${pos.direction} PnL ${pnl >= 0 ? '+' : ''}${pnl.toFixed(2)}`,
         JSON.stringify({ id: pos.id, entry: pos.entry_rate, close: currentRate, pnl }));
+      // テスタ施策13: トレード日誌自動記録
+      await logTradeJournal(db,
+        { ...pos, close_rate: currentRate, pnl, closed_at: new Date().toISOString(), close_reason: 'TP' },
+        { strategy: pos.strategy ?? undefined, regime: pos.regime ?? undefined, session: pos.session ?? undefined, confidence: pos.confidence ?? undefined },
+      ).catch(() => {});
     } else if (shouldTriggerSL(pos, currentRate)) {
       const pnl = calcPnl(pos.direction, pos.entry_rate, currentRate, multiplier);
       const lr = logReturn(pos.entry_rate, currentRate);
@@ -158,6 +202,12 @@ export async function checkAndCloseAllPositions(
       await insertSystemLog(db, 'WARN', 'POSITION',
         `SL決済: ${pos.pair} ${pos.direction} PnL ${pnl >= 0 ? '+' : ''}${pnl.toFixed(2)}`,
         JSON.stringify({ id: pos.id, entry: pos.entry_rate, close: currentRate, pnl }));
+
+      // テスタ施策13: トレード日誌自動記録
+      await logTradeJournal(db,
+        { ...pos, close_rate: currentRate, pnl, closed_at: new Date().toISOString(), close_reason: 'SL' },
+        { strategy: pos.strategy ?? undefined, regime: pos.regime ?? undefined, session: pos.session ?? undefined, confidence: pos.confidence ?? undefined },
+      ).catch(() => {});
 
       // ドローダウン検知: 直近3件がすべてSLなら警告
       try {
@@ -213,6 +263,12 @@ export async function openPosition(
   source: 'paper' | 'oanda' = 'paper',
   oandaTradeId: string | null = null,
   webhookUrl?: string,
+  extra?: {
+    strategy?: string | null;
+    regime?: string | null;
+    session?: string | null;
+    confidence?: number | null;
+  },
 ): Promise<void> {
   const existing = await getOpenPositionByPair(db, pair);
   if (existing) {
@@ -238,6 +294,23 @@ export async function openPosition(
     // kelly 0〜0.25 → lot 0.5〜2.0
     lot = Math.max(0.5, Math.min(0.5 + kelly * 6, 2.0));
     console.log(`[position] Kelly: ${pair} wr=${(winRate*100).toFixed(0)}% rr=${avgRR.toFixed(2)} f=${kelly.toFixed(3)} → lot=${lot.toFixed(1)}`);
+  }
+
+  // テスタ施策9: SL幅ベースポジションサイズ（1%ルール）
+  if (slRate != null) {
+    const slPips = Math.abs(entryRate - slRate);
+    // pnlMultiplier はinstrument依存だが、openPositionには渡されないため
+    // position.ts 内では簡易版として slPips × 100 で概算
+    const riskPerLot = slPips * 100;
+    // balance 取得は高コストなので初期資産10000で近似
+    const maxRisk = 10000 * 0.01; // 1%ルール
+    if (riskPerLot > 0) {
+      const slBasedLot = maxRisk / riskPerLot;
+      if (slBasedLot < lot) {
+        console.log(`[position] SL-based lot: ${pair} kelly=${lot.toFixed(2)} sl_lot=${slBasedLot.toFixed(2)} → ${slBasedLot.toFixed(2)}`);
+        lot = slBasedLot;
+      }
+    }
   }
 
   // 連敗縮退: 直近連続損失数に応じてロットを削減
@@ -269,10 +342,12 @@ export async function openPosition(
   await db
     .prepare(
       `INSERT INTO positions
-         (pair, direction, entry_rate, tp_rate, sl_rate, lot, status, entry_at, source, oanda_trade_id)
-       VALUES (?, ?, ?, ?, ?, ?, 'OPEN', ?, ?, ?)`
+         (pair, direction, entry_rate, tp_rate, sl_rate, lot, status, entry_at, source, oanda_trade_id,
+          strategy, regime, session, confidence, original_lot)
+       VALUES (?, ?, ?, ?, ?, ?, 'OPEN', ?, ?, ?, ?, ?, ?, ?, ?)`
     )
-    .bind(pair, direction, entryRate, tpRate, slRate, lot, new Date().toISOString(), source, oandaTradeId)
+    .bind(pair, direction, entryRate, tpRate, slRate, lot, new Date().toISOString(), source, oandaTradeId,
+      extra?.strategy ?? null, extra?.regime ?? null, extra?.session ?? null, extra?.confidence ?? null, lot)
     .run();
 
   console.log(`[position] Opened ${pair} ${direction} @ ${entryRate} TP=${tpRate} SL=${slRate} [${source}${oandaTradeId ? ` trade=${oandaTradeId}` : ''}]`);

@@ -173,3 +173,40 @@ export function checkTpSlSanity(params: {
 
   return { valid: true, rrRatio: rr, rrCategory };
 }
+
+// ── 施策8: ATRベース動的TP/SL ──
+
+type RegimeForAtr = 'strong_trend' | 'weak_trend' | 'ranging' | 'volatile' | 'uncertain';
+
+const ATR_MULTIPLIERS: Record<RegimeForAtr, { sl: number; tp: number }> = {
+  strong_trend: { sl: 2.0, tp: 3.0 },   // RR=1.5
+  weak_trend:   { sl: 1.5, tp: 2.5 },   // RR=1.67
+  ranging:      { sl: 1.0, tp: 1.5 },   // RR=1.5
+  volatile:     { sl: 2.5, tp: 4.0 },   // RR=1.6
+  uncertain:    { sl: 1.5, tp: 2.5 },   // RR=1.67
+};
+
+/** ATRベースのTP/SL推奨値を算出（Geminiプロンプトの参考値として使用） */
+export function calcAtrBasedTpSl(params: {
+  direction: 'BUY' | 'SELL';
+  rate: number;
+  atr: number;
+  regime: string;
+  instrument: InstrumentConfig;
+}): { tp: number; sl: number; tpDist: number; slDist: number } {
+  const { direction, rate, atr, regime, instrument } = params;
+  const mult = ATR_MULTIPLIERS[regime as RegimeForAtr] ?? ATR_MULTIPLIERS.uncertain;
+
+  let slDist = atr * mult.sl;
+  let tpDist = atr * mult.tp;
+
+  // instrument の tpSlMin/tpSlMax でクランプ
+  slDist = Math.max(instrument.tpSlMin, Math.min(slDist, instrument.tpSlMax));
+  tpDist = Math.max(instrument.tpSlMin, Math.min(tpDist, instrument.tpSlMax));
+
+  const isBuy = direction === 'BUY';
+  const tp = isBuy ? rate + tpDist : rate - tpDist;
+  const sl = isBuy ? rate - slDist : rate + slDist;
+
+  return { tp, sl, tpDist, slDist };
+}
