@@ -324,6 +324,8 @@ export async function getApiStatus(db: D1Database, tradingEnv?: { TRADING_ENABLE
 
   // latest_news キャッシュで日本語化＋補完
   // cron側のfilterAndTranslateWithHaikuで付与済みのtitle_ja/desc_jaを反映
+  // knownTitles: 英語原題+日本語タイトル両方を保持（後段のnews_analysisマージで重複防止）
+  const knownTitles = new Set<string>();
   try {
     const cachedRaw = await db.prepare("SELECT value FROM market_cache WHERE key = 'latest_news'").first<{ value: string }>();
     if (cachedRaw?.value) {
@@ -333,24 +335,26 @@ export async function getApiStatus(db: D1Database, tradingEnv?: { TRADING_ENABLE
 
       // 既存のRSS記事にtitle_ja/desc_jaを上書き
       for (const item of latestNews) {
+        knownTitles.add(item.title); // 英語原題を記録
         const cached = cacheMap.get(item.title);
         if (cached) {
           if (cached.title_ja) item.title = cached.title_ja;
           if (cached.desc_ja) item.description = cached.desc_ja;
-          cacheMap.delete(item.title);
+          knownTitles.add(item.title); // 日本語タイトルも記録
+          cacheMap.delete(cached.title);
         }
       }
 
       // キャッシュにしかない記事を追加
-      const existingTitles = new Set(latestNews.map(n => n.title));
       for (const [, item] of cacheMap) {
-        if (item.title && !existingTitles.has(item.title) && !existingTitles.has(item.title_ja || '')) {
+        if (item.title && !knownTitles.has(item.title) && !knownTitles.has(item.title_ja || '')) {
           latestNews.push({
             ...item,
             title: item.title_ja || item.title,
             description: item.desc_ja || item.description,
           });
-          existingTitles.add(item.title_ja || item.title);
+          knownTitles.add(item.title);
+          if (item.title_ja) knownTitles.add(item.title_ja);
         }
       }
     }
@@ -470,16 +474,17 @@ export async function getApiStatus(db: D1Database, tradingEnv?: { TRADING_ENABLE
   }
 
   // 分析データ取得 → ニュースリストとマージ（分析のtitleがlatestNewsに存在しなければ先頭に挿入）
+  // knownTitlesには英語原題+日本語タイトル両方が入っているため、翻訳済み記事の重複挿入を防止
   const { items: newsAnalysis, updatedAt: analysisUpdatedAt } = await getNewsAnalysis(db);
-  const existingTitles = new Set(latestNews.map(n => n.title));
   for (const a of newsAnalysis) {
-    if (a.title && !existingTitles.has(a.title) && a.attention) {
-      // 注目ニュースのみマージ（impact情報があるため詳細表示に価値がある）
+    const title = a.title_ja || a.title;
+    if (title && !knownTitles.has(a.title || '') && !knownTitles.has(title) && a.attention) {
       const pubDate = a.pubDate || (a as any).pubDate || analysisUpdatedAt || '';
       const desc = (a as any).description || a.impact || '';
       const source = (a as any).source || undefined;
-      latestNews.unshift({ title: a.title, pubDate, description: desc, source });
-      existingTitles.add(a.title);
+      latestNews.unshift({ title, pubDate, description: desc, source });
+      knownTitles.add(title);
+      if (a.title) knownTitles.add(a.title);
     }
   }
   // 新しい順にソートしてから30件に制限
