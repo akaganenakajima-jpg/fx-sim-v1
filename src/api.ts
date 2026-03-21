@@ -138,10 +138,14 @@ export interface StatusResponse {
     aiLoopMs: number;
     totalMs: number;
   } | null;
+  /** IPA品質修正: LIMITに依存しない今日の判断件数（UTC基準） */
+  todayDecisionCount: number;
+  todayBuyCount: number;
+  todaySellCount: number;
 }
 
 export async function getApiStatus(db: D1Database, tradingEnv?: { TRADING_ENABLED?: string; OANDA_LIVE?: string; RISK_MAX_DAILY_LOSS?: string; RISK_MAX_LIVE_POSITIONS?: string; RISK_MAX_LOT_SIZE?: string; RISK_ANOMALY_THRESHOLD?: string }): Promise<StatusResponse> {
-  const [rateRow, openPositions, perf, latest, recent, sysRow, sparkRaw, perfByPairRaw, recentClosesRaw, newsRaw, sysLogsRaw, logStatsRaw, instrScoresRaw, slPatternsRow, cronTimingsRow] =
+  const [rateRow, openPositions, perf, latest, recent, sysRow, sparkRaw, perfByPairRaw, recentClosesRaw, newsRaw, sysLogsRaw, logStatsRaw, instrScoresRaw, slPatternsRow, cronTimingsRow, todayDecisionCountRow] =
     await Promise.all([
       db
         .prepare("SELECT value FROM market_cache WHERE key = 'prev_rate_USD/JPY'")
@@ -242,6 +246,19 @@ export async function getApiStatus(db: D1Database, tradingEnv?: { TRADING_ENABLE
       db
         .prepare("SELECT value FROM market_cache WHERE key = 'cron_phase_timings'")
         .first<{ value: string }>(),
+
+      // ── IPA品質修正: 今日の判断数を専用COUNTクエリで取得（LIMIT 20 と独立） ──
+      // recentDecisions は LIMIT 20 のため今日の全件数を正確に反映できない
+      // UTC基準（DB date('now') と合わせる）
+      db
+        .prepare(
+          `SELECT
+             COUNT(*) AS total,
+             COALESCE(SUM(CASE WHEN decision = 'BUY'  THEN 1 ELSE 0 END), 0) AS buyCount,
+             COALESCE(SUM(CASE WHEN decision = 'SELL' THEN 1 ELSE 0 END), 0) AS sellCount
+           FROM decisions WHERE decision != 'HOLD' AND date(created_at) = date('now')`
+        )
+        .first<{ total: number; buyCount: number; sellCount: number }>(),
     ]);
 
   const rate = rateRow ? parseFloat(rateRow.value) : null;
@@ -473,6 +490,9 @@ export async function getApiStatus(db: D1Database, tradingEnv?: { TRADING_ENABLE
       try { return slPatternsRow ? JSON.parse(slPatternsRow.value) : []; } catch { return []; }
     })(),
     cronTimings,
+    todayDecisionCount: todayDecisionCountRow?.total ?? 0,
+    todayBuyCount:      todayDecisionCountRow?.buyCount ?? 0,
+    todaySellCount:     todayDecisionCountRow?.sellCount ?? 0,
   };
 }
 
