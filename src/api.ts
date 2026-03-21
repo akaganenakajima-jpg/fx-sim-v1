@@ -28,6 +28,8 @@ export interface RecentDecision {
   reddit_signal: string | null;
   vix: number | null;
   us10y: number | null;
+  tp_rate: number | null;
+  sl_rate: number | null;
   created_at: string;
 }
 
@@ -69,6 +71,8 @@ export interface StatusResponse {
     winRate: number;
     totalClosed: number;
     wins: number;
+    todayWins: number;
+    todayLosses: number;
   };
   latestDecision: LatestDecision | null;
   recentDecisions: RecentDecision[];
@@ -150,13 +154,15 @@ export async function getApiStatus(db: D1Database, tradingEnv?: { TRADING_ENABLE
       db
         .prepare(
           `SELECT
-             COALESCE(SUM(pnl), 0)                                                         AS totalPnl,
-             COALESCE(SUM(CASE WHEN date(closed_at) = date('now') THEN pnl ELSE 0 END), 0) AS todayPnl,
-             COUNT(*)                                                                        AS totalClosed,
-             COALESCE(SUM(CASE WHEN pnl > 0 THEN 1 ELSE 0 END), 0)                         AS wins
+             COALESCE(SUM(pnl), 0)                                                                          AS totalPnl,
+             COALESCE(SUM(CASE WHEN date(closed_at) = date('now') THEN pnl ELSE 0 END), 0)                 AS todayPnl,
+             COUNT(*)                                                                                        AS totalClosed,
+             COALESCE(SUM(CASE WHEN pnl > 0 THEN 1 ELSE 0 END), 0)                                        AS wins,
+             COALESCE(SUM(CASE WHEN date(closed_at) = date('now') AND pnl > 0 THEN 1 ELSE 0 END), 0)      AS todayWins,
+             COALESCE(SUM(CASE WHEN date(closed_at) = date('now') AND pnl <= 0 THEN 1 ELSE 0 END), 0)     AS todayLosses
            FROM positions WHERE status = 'CLOSED'`
         )
-        .first<{ totalPnl: number; todayPnl: number; totalClosed: number; wins: number }>(),
+        .first<{ totalPnl: number; todayPnl: number; totalClosed: number; wins: number; todayWins: number; todayLosses: number }>(),
 
       // 最新判断（マーケット概況用にnikkei/sp500含む）
       db
@@ -169,7 +175,7 @@ export async function getApiStatus(db: D1Database, tradingEnv?: { TRADING_ENABLE
       // 判定履歴（BUY/SELLのみ直近20件）
       db
         .prepare(
-          `SELECT id, pair, decision, rate, reasoning, news_summary, reddit_signal, vix, us10y, created_at
+          `SELECT id, pair, decision, rate, reasoning, news_summary, reddit_signal, vix, us10y, tp_rate, sl_rate, created_at
            FROM decisions WHERE decision != 'HOLD' ORDER BY id DESC LIMIT 20`
         )
         .all<RecentDecision>(),
@@ -279,6 +285,21 @@ export async function getApiStatus(db: D1Database, tradingEnv?: { TRADING_ENABLE
       } catch {}
     }
   }
+
+  // latest_news キャッシュで補完（RSSで取得できなかった記事を追加、title_ja があれば和訳タイトルを使用）
+  try {
+    const cachedRaw = await db.prepare("SELECT value FROM market_cache WHERE key = 'latest_news'").first<{ value: string }>();
+    if (cachedRaw?.value) {
+      const cached: Array<{ title: string; title_ja?: string | null; pubDate: string; description: string; source?: string }> = JSON.parse(cachedRaw.value);
+      const existingTitles = new Set(latestNews.map(n => n.title));
+      for (const item of cached) {
+        if (item.title && !existingTitles.has(item.title)) {
+          latestNews.push({ ...item, title: item.title_ja || item.title });
+          existingTitles.add(item.title);
+        }
+      }
+    }
+  } catch {}
 
   // トレーディングモード判定
   const tradingMode: 'paper' | 'demo' | 'live' =
@@ -406,8 +427,11 @@ export async function getApiStatus(db: D1Database, tradingEnv?: { TRADING_ENABLE
       existingTitles.add(a.title);
     }
   }
-  // 30件に制限（分析マッチ済みニュースが先頭にあるため切り捨ては末尾から）
+  // 新しい順にソートしてから30件に制限
+  latestNews.sort((a, b) => (new Date(b.pubDate).getTime() || 0) - (new Date(a.pubDate).getTime() || 0));
   if (latestNews.length > 30) latestNews.length = 30;
+
+  // title_ja はcron側で翻訳済み（latest_newsキャッシュ内に含まれる）
 
   return {
     rate,
@@ -419,6 +443,8 @@ export async function getApiStatus(db: D1Database, tradingEnv?: { TRADING_ENABLE
       winRate: totalClosed > 0 ? (wins / totalClosed) * 100 : 0,
       totalClosed,
       wins,
+      todayWins: perf?.todayWins ?? 0,
+      todayLosses: perf?.todayLosses ?? 0,
     },
     latestDecision: latest ?? null,
     recentDecisions: recent.results ?? [],

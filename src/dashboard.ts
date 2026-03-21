@@ -188,27 +188,74 @@ export function getDashboardHtml(): string {
     </main>
 
     <!-- ─── AI判断 タブ ─── -->
-    <div id="tab-ai" class="content tab-panel" role="region" aria-label="AI判断履歴">
+    <div id="tab-ai" class="content tab-panel" role="region" aria-label="AI判断">
 
-      <!-- AI詳細（最新） -->
-      <section class="card card-ai" aria-label="AI最新判断詳細" aria-live="polite">
-        <div class="section-header">
-          <span class="section-title">最新判断</span>
-          <span id="ai-time2" class="ai-time">—</span>
-        </div>
-        <div class="ai-body" style="margin-bottom:12px">
-          <span id="ai-badge2" class="badge badge-hold ai-badge">HOLD</span>
-          <div id="ai-reasoning2" class="ai-reasoning secondary-text">読み込み中…</div>
-        </div>
-      </section>
+      <div class="scroll" style="padding: 16px 16px 24px">
 
-      <!-- 判定履歴 -->
-      <div class="list-header-row">
-        <span class="list-header">判定履歴</span>
-        <button id="toggle-history" class="link-btn" aria-expanded="false">すべて見る</button>
+        <!-- KPIグリッド (2×2) -->
+        <div class="ai-kpi-grid" role="group" aria-label="今日のサマリー">
+          <!-- 今日の判断 -->
+          <div class="kpi-card">
+            <div class="kpi-label">今日の判断</div>
+            <div class="kpi-val" id="ai-kpi-today-val">—</div>
+            <div class="kpi-sub" id="ai-kpi-today-sub">BUY — · SELL —</div>
+          </div>
+          <!-- AI的中率 -->
+          <div class="kpi-card">
+            <div class="kpi-label">AI的中率</div>
+            <div class="kpi-val" style="color:var(--orange)" id="ai-kpi-acc-val">—</div>
+            <div class="kpi-sub" id="ai-kpi-acc-sub">n=— · Brier —</div>
+          </div>
+          <!-- 今日の損益 -->
+          <div class="kpi-card">
+            <div class="kpi-label">今日の損益</div>
+            <div class="kpi-val" id="ai-kpi-pnl-val">—</div>
+            <div class="kpi-sub" id="ai-kpi-pnl-sub">— 勝 — 敗</div>
+          </div>
+          <!-- 最新判断 -->
+          <div class="kpi-card">
+            <div class="kpi-label">最新判断</div>
+            <div class="kpi-latest-body">
+              <span class="dir-badge" id="ai-kpi-latest-badge">—</span>
+              <span class="kpi-sub" id="ai-kpi-latest-pair">—</span>
+            </div>
+            <div class="kpi-sub" id="ai-kpi-latest-time">—</div>
+          </div>
+        </div>
+
+        <!-- トリガーカウントグリッド (3列) -->
+        <div class="trigger-grid" role="group" aria-label="今日のトリガー内訳">
+          <div class="trigger-cell news">
+            <div class="trigger-count" id="ai-trigger-news">—</div>
+            <div class="trigger-label">ニュース起動</div>
+          </div>
+          <div class="trigger-cell rate">
+            <div class="trigger-count" id="ai-trigger-rate">—</div>
+            <div class="trigger-label">レート変動</div>
+          </div>
+          <div class="trigger-cell cron">
+            <div class="trigger-count" id="ai-trigger-cron">—</div>
+            <div class="trigger-label">定期 30m</div>
+          </div>
+        </div>
+
+        <!-- タイムラインセクション -->
+        <div class="ai-sec-header">
+          <span class="ai-sec-title">判断タイムライン</span>
+          <span class="ai-sec-filter" aria-label="BUY/SELLのみ表示中">BUY/SELL のみ ›</span>
+        </div>
+
+        <!-- タイムラインリスト（JSが書き込む） -->
+        <div id="ai-timeline-list" class="tl-list" role="list"></div>
+
+        <!-- HOLDセパレーター（静的） -->
+        <div class="hold-sep" aria-hidden="true">
+          <div class="hold-sep-line"></div>
+          <div class="hold-sep-label">HOLD · 統計タブで確認</div>
+          <div class="hold-sep-line"></div>
+        </div>
+
       </div>
-      <div id="decisions-list" class="decisions-list" role="list"></div>
-
     </div>
 
     <!-- ─── 統計 タブ ─── -->

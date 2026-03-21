@@ -145,15 +145,12 @@ interface NewsStage2Result {
 
 ## 6. gemini.ts 追加関数仕様
 
-### `fetchOgDescription(url: string): Promise<string | null>`
+### `fetchOgDescription(url: string, sourceName?: string): Promise<string | null>`
 
 - タイムアウト: 3秒（wall-clock）
-- **英語4ソースは呼ばない**（RSSのdescriptionを使用）
-  - 除外ドメイン（`new URL(url).hostname` で判定）:
-    - `search.cnbc.com`, `www.cnbc.com`
-    - `feeds.bloomberg.com`, `www.bloomberg.com`
-    - `www.fxstreet.com`
-    - `www.coindesk.com`
+- **全ソース対象**（除外リスト廃止済み 2026-03-21）
+  - CNBC/Bloomberg/FXStreet/CoinDesk を含む全ソースの `og:description` を取得試行
+  - `og:description` は HTML `<head>` 内のメタタグでペイウォールの影響を受けない
 - `<meta property="og:description" content="...">` を正規表現で抽出
 - 失敗（404/タイムアウト/パースエラー）時は `null` を返す（例外を投げない）
 - **呼び出し上限**: attention:true ニュース上位5件のみ対象（`slice(0, 5)`で制限）
@@ -165,6 +162,10 @@ interface NewsStage2Result {
 - 入力: ニュースタイトル一覧 + 市場状況 + Redditシグナル + 銘柄一覧（OPありは除外マーク）
 - responseMimeType: `application/json`
 - 失敗時: 例外を投げる（呼び出し元でcatchしてPath Bをスキップ）
+- **`title_ja` 出力ルール**（2026-03-21追加）:
+  - `attention:true` / `attention:false` に関わらず、**全ニュースに `title_ja`（日本語タイトル）を返す**
+  - ダッシュボードのニュース一覧で和訳表示に使用される
+  - 翻訳はB1の既存Gemini呼び出しに相乗りさせる（APIハンドラ側でのGemini呼び出しは429問題のため禁止）
 
 ### `newsStage2(params): Promise<NewsStage2Result>`
 
@@ -290,3 +291,41 @@ HOLD・スキップのdecisions:
 | D1 HOLD decisions一括書き込み失敗 | 握りつぶし。次cronで再試行（ポジション操作と分離済みのため整合性に影響なし） |
 | 3Path並列でGemini 429エラー | 既存の`gemini_cooldown_until`キャッシュで対応済み |
 | Path B発火なし（土日・市場休場） | Path A/Cは独立して動作するため売買に影響なし |
+| APIハンドラからGemini呼び出しで429 | **APIハンドラ内でのGemini呼び出し禁止**。翻訳等はcron側（B1相乗り）で処理しキャッシュ経由で提供 |
+
+---
+
+## 13. ダッシュボード連携仕様（2026-03-21追加）
+
+### `latest_news` キャッシュ
+
+Path B実行時に `market_cache` テーブルの `latest_news` キーに以下の形式で保存:
+
+```typescript
+// latest_news キャッシュ構造
+Array<{
+  title: string;         // 元の英語タイトル
+  title_ja: string | null; // B1が返した日本語翻訳（全ニュース対象）
+  pubDate: string;
+  description: string;
+  source?: string;       // RSSソース名
+}>
+```
+
+- Path B が発火した場合のみ更新（ニュースハッシュ変化時）
+- `pathBResult.newsAnalysis` が空の場合は上書きしない（前回値を維持）
+- B1の `title_ja` を `index` でマッピングして付与
+
+### api.ts ニュース表示ロジック
+
+1. RSSから直接取得したニュース一覧を基本とする
+2. `latest_news` キャッシュで補完（RSSで取得できなかった記事を追加）
+3. キャッシュに `title_ja` があれば和訳タイトルを優先表示（`title_ja || title`）
+4. `pubDate` 降順ソート（新しい記事が先頭）
+5. 上限30件
+
+### 制約事項
+
+- **APIハンドラ内でGeminiを呼ばない**（cron側のPath A/B/Cと429競合するため）
+- 翻訳はB1の既存Gemini呼び出しに相乗りさせる
+- 翻訳反映タイミング: 次回ニュースハッシュ変化時にB1が全記事翻訳
