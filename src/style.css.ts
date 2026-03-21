@@ -2153,16 +2153,67 @@ body.sheet-open .tab-bar {
 
 /* 詳細パネル */
 .detail-panel { max-height: 0; overflow: hidden; opacity: 0; transition: max-height 0.3s cubic-bezier(0.4,0,0.2,1), opacity 0.25s ease, padding 0.3s cubic-bezier(0.4,0,0.2,1); border-top: 0px solid var(--separator); }
-.detail-panel.open { max-height: 600px; opacity: 1; padding: 14px 16px 16px 15px; border-top: 1px solid var(--separator); }
-.detail-trigger-row { display: flex; align-items: center; gap: 8px; margin-bottom: 12px; }
-.detail-trigger-desc { font-size: 12px; color: var(--label-secondary); }
-.detail-4pt { display: grid; grid-template-columns: 1fr 1.3fr; gap: 4px 8px; margin-bottom: 12px; }
-.detail-label { font-size: 11px; color: var(--label-tertiary); margin-bottom: 2px; }
-.detail-value { font-size: 12px; font-weight: 600; color: var(--label); line-height: 1.4; }
-.detail-value.buy  { color: var(--green); }
-.detail-value.sell { color: var(--red); }
-.detail-reasoning { padding: 10px 0 10px 10px; border-left: 2px solid rgba(255,255,255,0.12); margin-bottom: 12px; }
-.detail-reasoning-text { font-size: 12px; color: var(--label-secondary); line-height: 1.6; }
+.detail-panel.open { max-height: 800px; opacity: 1; padding: 14px 16px 16px 15px; border-top: 1px solid var(--separator); }
+
+/* セクション共通 */
+.detail-section-label { font-size: 10px; font-weight: 600; color: var(--label-tertiary); letter-spacing: 0.06em; text-transform: uppercase; margin-bottom: 8px; }
+
+/* TP/SL ゲージセクション */
+.detail-tpsl-section { margin-bottom: 16px; }
+.detail-tpsl-gauge { margin-bottom: 6px; }
+.tpsl-bar { display: flex; height: 6px; border-radius: 3px; overflow: hidden; background: var(--bg-tertiary); }
+.tpsl-sl-zone { background: linear-gradient(90deg, var(--red), rgba(255,69,58,0.4)); border-radius: 3px 0 0 3px; }
+.tpsl-tp-zone { background: linear-gradient(90deg, rgba(48,209,88,0.4), var(--green)); border-radius: 0 3px 3px 0; }
+.tpsl-entry-mark { width: 2px; background: var(--label); flex-shrink: 0; position: relative; z-index: 1; }
+.tpsl-labels { display: flex; justify-content: space-between; margin-top: 4px; }
+.tpsl-label { font-size: 11px; font-weight: 500; }
+.tpsl-label.sl { color: var(--red); }
+.tpsl-label.entry { color: var(--label-secondary); font-size: 10px; }
+.tpsl-label.tp { color: var(--green); }
+.tpsl-meta { display: flex; align-items: center; gap: 12px; }
+.tpsl-rr { font-size: 12px; font-weight: 700; color: var(--label); background: rgba(255,255,255,0.06); padding: 2px 8px; border-radius: 6px; }
+.tpsl-pips { font-size: 11px; color: var(--label-tertiary); }
+
+/* AI判断理由セクション */
+.detail-reason-section { margin-bottom: 16px; }
+.detail-reason-body { font-size: 13px; line-height: 1.7; color: var(--label); padding: 10px 12px; background: rgba(255,255,255,0.04); border-radius: 10px; border-left: 3px solid var(--blue); }
+
+/* 市場コンテキストセクション */
+.detail-context-section { margin-bottom: 12px; }
+.detail-indicator-bar { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 10px; }
+.detail-ind { display: flex; flex-direction: column; align-items: center; background: rgba(255,255,255,0.05); border-radius: 8px; padding: 6px 10px; min-width: 56px; }
+.detail-ind-label { font-size: 9px; color: var(--label-tertiary); margin-bottom: 2px; letter-spacing: 0.04em; }
+.detail-ind-val { font-size: 13px; font-weight: 600; color: var(--label); }
+.detail-ind-val.warn { color: var(--orange); }
+
+/* ニュース一覧 */
+.detail-news-list { display: flex; flex-direction: column; gap: 6px; margin-bottom: 8px; }
+.detail-news-item { display: flex; align-items: flex-start; gap: 8px; }
+.detail-news-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--label-tertiary); margin-top: 5px; flex-shrink: 0; }
+.detail-news-dot.high { background: var(--red); }
+.detail-news-dot.med { background: var(--orange); }
+.detail-news-title { font-size: 12px; color: var(--label-secondary); line-height: 1.5; }
+
+/* Path B ニュース（判断根拠）— 強調表示 */
+.detail-news-list.pathb .detail-news-item { padding: 6px 0; }
+.detail-news-list.pathb .detail-news-title { font-size: 13px; color: var(--label); font-weight: 500; }
+.detail-news-impact { font-size: 11px; color: var(--label-secondary); margin-left: 14px; margin-top: 2px; line-height: 1.5; }
+
+/* Path A ニュース（参考情報）— 控えめ表示 */
+.detail-news-ref { margin-top: 8px; padding: 8px 10px; background: rgba(255,255,255,0.03); border-radius: 8px; border: 1px dashed rgba(255,255,255,0.08); }
+.detail-news-ref-label { font-size: 10px; color: var(--label-tertiary); display: block; margin-bottom: 6px; }
+.detail-news-ref-item { font-size: 11px; color: var(--label-tertiary); line-height: 1.5; padding: 2px 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* Reddit */
+.detail-reddit { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--label-secondary); margin-top: 6px; }
+.detail-reddit-icon { font-size: 10px; font-weight: 700; color: #FF4500; background: rgba(255,69,0,0.15); padding: 1px 5px; border-radius: 4px; }
+
+/* フッター */
+.detail-footer { display: flex; align-items: center; justify-content: space-between; padding-top: 10px; border-top: 1px solid var(--separator); }
+.detail-footer-left { display: flex; align-items: center; gap: 8px; }
+.detail-footer-time { font-size: 11px; color: var(--label-tertiary); }
+
+/* 旧互換（未使用だが安全に残す） */
 .detail-chips { display: flex; gap: 6px; flex-wrap: wrap; }
 .detail-chip { font-size: 11px; padding: 2px 7px; border-radius: 6px; background: rgba(255,255,255,0.06); color: var(--label-secondary); }
 
