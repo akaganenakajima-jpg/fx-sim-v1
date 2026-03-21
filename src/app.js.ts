@@ -135,11 +135,12 @@ export const JS = `
   }
 
   // RecentDecision からトリガー種別を推定
+  // PATH_B（ニュースドリブン2段階AI）→ reasoning が [PATH_B] で始まる
   function inferTrigger(d) {
-    var r = (d.reasoning  || '').toLowerCase();
-    var n = (d.news_summary || '');
-    if (n.length > 10 || r.indexOf('ニュース') !== -1 || r.indexOf('news') !== -1) return 'news';
-    if (r.indexOf('レート') !== -1 || r.indexOf('rate') !== -1 || r.indexOf('変動') !== -1) return 'rate';
+    var r = (d.reasoning || '');
+    if (r.indexOf('[PATH_B]') !== -1) return 'news';
+    var rl = r.toLowerCase();
+    if (rl.indexOf('レート') !== -1 || rl.indexOf('rate') !== -1 || rl.indexOf('変動') !== -1) return 'rate';
     return 'cron';
   }
 
