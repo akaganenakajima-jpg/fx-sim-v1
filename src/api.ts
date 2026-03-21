@@ -322,20 +322,35 @@ export async function getApiStatus(db: D1Database, tradingEnv?: { TRADING_ENABLE
     }
   }
 
-  // latest_news キャッシュで補完（RSSで取得できなかった記事を追加、title_ja があれば和訳タイトルを使用）
+  // latest_news キャッシュで日本語化＋補完
+  // cron側のfilterAndTranslateWithHaikuで付与済みのtitle_ja/desc_jaを反映
   try {
     const cachedRaw = await db.prepare("SELECT value FROM market_cache WHERE key = 'latest_news'").first<{ value: string }>();
     if (cachedRaw?.value) {
       const cached: Array<{ title: string; title_ja?: string | null; desc_ja?: string | null; pubDate: string; description: string; source?: string }> = JSON.parse(cachedRaw.value);
+      // キャッシュをtitleでルックアップ用マップに変換
+      const cacheMap = new Map(cached.filter(c => c.title).map(c => [c.title, c]));
+
+      // 既存のRSS記事にtitle_ja/desc_jaを上書き
+      for (const item of latestNews) {
+        const cached = cacheMap.get(item.title);
+        if (cached) {
+          if (cached.title_ja) item.title = cached.title_ja;
+          if (cached.desc_ja) item.description = cached.desc_ja;
+          cacheMap.delete(item.title);
+        }
+      }
+
+      // キャッシュにしかない記事を追加
       const existingTitles = new Set(latestNews.map(n => n.title));
-      for (const item of cached) {
-        if (item.title && !existingTitles.has(item.title)) {
+      for (const [, item] of cacheMap) {
+        if (item.title && !existingTitles.has(item.title) && !existingTitles.has(item.title_ja || '')) {
           latestNews.push({
             ...item,
             title: item.title_ja || item.title,
             description: item.desc_ja || item.description,
           });
-          existingTitles.add(item.title);
+          existingTitles.add(item.title_ja || item.title);
         }
       }
     }
