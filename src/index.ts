@@ -6,7 +6,7 @@ import { getUSDJPY } from './rate';
 import { fetchNews, type SourceFetchStat } from './news';
 import { fetchRedditSignal } from './reddit';
 import { getMarketIndicators } from './indicators';
-import { getDecisionWithHedge, fetchOgDescription, newsStage1, newsStage2, type NewsAnalysisItem, type NewsStage1Result } from './gemini';
+import { getDecisionWithHedge, fetchOgDescription, newsStage1WithHedge, newsStage2, RateLimitError, type NewsAnalysisItem, type NewsStage1Result } from './gemini';
 import { checkAndCloseAllPositions, openPosition } from './position';
 import { shouldCallGemini } from './filter';
 import {
@@ -58,18 +58,112 @@ interface Env {
   DISCORD_WEBHOOK_URL?: string;
 }
 
+// ── キー別クールダウン管理 ──
+// Workers は cron 実行ごとにリセット（ステートレス）なので Map で十分
+const keyCooldowns = new Map<string, number>();  // apiKey → cooldownUntil timestamp
+const keyUsageCount = new Map<string, number>(); // apiKey → 使用回数（均等分散用）
+
 let _keyIndex = 0;
 function getApiKey(env: Env): string {
   const keys = [env.GEMINI_API_KEY, env.GEMINI_API_KEY_2, env.GEMINI_API_KEY_3, env.GEMINI_API_KEY_4, env.GEMINI_API_KEY_5].filter(Boolean) as string[];
-  const key = keys[_keyIndex % keys.length];
-  _keyIndex++;
-  return key;
+  const now = Date.now();
+
+  // クールダウン中でないキーを抽出
+  const available = keys.filter(k => (keyCooldowns.get(k) ?? 0) <= now);
+  if (available.length > 0) {
+    // 使用回数最少のキーを選択（均等分散）
+    available.sort((a, b) => (keyUsageCount.get(a) ?? 0) - (keyUsageCount.get(b) ?? 0));
+    const key = available[0];
+    keyUsageCount.set(key, (keyUsageCount.get(key) ?? 0) + 1);
+    return key;
+  }
+
+  // 全キーがクールダウン中 → 最も早く解除されるキーを返す
+  const earliest = keys.reduce((a, b) =>
+    (keyCooldowns.get(a) ?? 0) < (keyCooldowns.get(b) ?? 0) ? a : b
+  );
+  keyUsageCount.set(earliest, (keyUsageCount.get(earliest) ?? 0) + 1);
+  return earliest;
+}
+
+/** 429受信時にキーをクールダウン登録 */
+function markKeyCooldown(apiKey: string, retryAfterSec: number): void {
+  const cooldownUntil = Date.now() + retryAfterSec * 1000;
+  keyCooldowns.set(apiKey, cooldownUntil);
+  console.log(`[fx-sim] Key cooldown: ${apiKey.slice(0, 8)}... until ${new Date(cooldownUntil).toISOString()} (${retryAfterSec}s)`);
+}
+
+/** クールダウン中でないキーの数 */
+function availableKeyCount(env: Env): number {
+  const keys = [env.GEMINI_API_KEY, env.GEMINI_API_KEY_2, env.GEMINI_API_KEY_3, env.GEMINI_API_KEY_4, env.GEMINI_API_KEY_5].filter(Boolean) as string[];
+  const now = Date.now();
+  return keys.filter(k => (keyCooldowns.get(k) ?? 0) <= now).length;
+}
+
+// ── サーキットブレーカー（3段階: CLOSED → OPEN → HALF_OPEN）──
+// 連続失敗時にAI呼び出しを一時停止し、無意味なリトライによる障害悪化を防止
+interface CircuitBreakerState {
+  state: 'CLOSED' | 'HALF_OPEN' | 'OPEN';
+  failCount: number;
+  openUntil: number;
+}
+
+const circuitBreaker: CircuitBreakerState = {
+  state: 'CLOSED',
+  failCount: 0,
+  openUntil: 0,
+};
+
+const CB_FAIL_THRESHOLD = 3;        // 連続3回失敗で OPEN
+const CB_OPEN_DURATION_MS = 60_000; // OPEN → 1分後に HALF_OPEN
+
+/** AI呼び出し可能かチェック */
+function cbCanRequest(): boolean {
+  const now = Date.now();
+  if (circuitBreaker.state === 'CLOSED') return true;
+  if (circuitBreaker.state === 'OPEN') {
+    if (now >= circuitBreaker.openUntil) {
+      circuitBreaker.state = 'HALF_OPEN';
+      console.log('[fx-sim] Circuit breaker: OPEN → HALF_OPEN（試行再開）');
+      return true;
+    }
+    return false;
+  }
+  return false; // HALF_OPEN: 既に1回試行許可済み
+}
+
+/** AI呼び出し成功時 → CLOSED にリセット */
+function cbRecordSuccess(): void {
+  if (circuitBreaker.state !== 'CLOSED') {
+    console.log(`[fx-sim] Circuit breaker: ${circuitBreaker.state} → CLOSED（復旧）`);
+  }
+  circuitBreaker.state = 'CLOSED';
+  circuitBreaker.failCount = 0;
+}
+
+/** AI呼び出し失敗時 → 閾値超過で OPEN */
+function cbRecordFailure(): void {
+  circuitBreaker.failCount++;
+  if (circuitBreaker.failCount >= CB_FAIL_THRESHOLD) {
+    circuitBreaker.state = 'OPEN';
+    circuitBreaker.openUntil = Date.now() + CB_OPEN_DURATION_MS;
+    console.log(`[fx-sim] Circuit breaker: → OPEN（${CB_OPEN_DURATION_MS / 1000}s間 AI停止, 連続${circuitBreaker.failCount}回失敗）`);
+  }
 }
 
 const PREV_NEWS_HASH_KEY = 'prev_news_hash';
 
-function newsHash(titles: string[]): string {
-  return titles.join('|');
+/**
+ * ニュースハッシュ: 上位5件のみ・正規化・ソートで順序変動に鈍感化
+ * 旧: 全タイトル join → 1件変更で即発火（高感度すぎ）
+ * 新: 上位5件 sort → 重要ニュースの入れ替えのみ検知
+ */
+function newsHash(items: Array<{ title: string }>): string {
+  return items
+    .slice(0, 5)
+    .map(n => n.title.toLowerCase().trim())
+    .sort()
+    .join('|');
 }
 
 export default {
@@ -280,12 +374,11 @@ async function runAIDecisions(
     brokerEnv, now, prices, prevElapsed, excludedPairs,
   } = context;
 
-  // 429クールダウンチェック
-  const cooldownKey = 'gemini_cooldown_until';
-  const cooldownRaw = await getCacheValue(env.DB, cooldownKey);
-  const cooldownUntil = cooldownRaw ? parseInt(cooldownRaw) : 0;
-  const isInCooldown = Date.now() < cooldownUntil;
-  if (isInCooldown) console.log(`[fx-sim] Gemini cooldown until ${new Date(cooldownUntil).toISOString()}`);
+  // 429クールダウン: キー別管理 + サーキットブレーカーで制御
+  const availKeys = availableKeyCount(env);
+  const isInCooldown = availKeys === 0 || !cbCanRequest();
+  if (availKeys === 0) console.log(`[fx-sim] All Gemini keys in cooldown (${keyCooldowns.size} keys blocked)`);
+  if (!cbCanRequest()) console.log(`[fx-sim] Circuit breaker ${circuitBreaker.state}: AI呼び出し停止中`);
 
   // 動的上限: 前回実行時間に応じて調整
   const baseLimit = prevElapsed > 30000 ? 3 : prevElapsed > 15000 ? 5 : 8;
@@ -639,8 +732,17 @@ async function runAIDecisions(
               ` | ${geminiResult.reasoning}`
           );
 
+          cbRecordSuccess(); // サーキットブレーカー: 成功記録
           return { provider: hedgeResult.provider as 'gemini' | 'gpt' | 'claude', pair: instrument.pair };
         } catch (e) {
+          // 429キー別クールダウン + サーキットブレーカー
+          if (e instanceof RateLimitError) {
+            markKeyCooldown(e.apiKey, e.retryAfterSec);
+            await insertSystemLog(env.DB, 'WARN', 'RATE_LIMIT',
+              `429 キークールダウン: ${e.apiKey.slice(0, 8)}... (${e.retryAfterSec}s)`,
+              `pair=${instrument.pair}, available=${availableKeyCount(env)}`);
+          }
+          cbRecordFailure(); // サーキットブレーカー: 失敗記録
           const errMsg = String(e);
           console.warn(`[fx-sim] All AI failed (${instrument.pair}): ${errMsg.split('\n')[0].slice(0, 120)}`);
           await insertSystemLog(env.DB, 'ERROR', 'AI', `全プロバイダー失敗 (${instrument.pair})`, errMsg.split('\n')[0].slice(0, 200));
@@ -691,6 +793,7 @@ async function runPathB(
   redditSignal: { hasSignal: boolean; keywords: string[]; topPosts: string[] },
   openPairs: Set<string>,
   apiKey: string,
+  hedgeKeys?: { openaiApiKey?: string; anthropicApiKey?: string },
 ): Promise<PathBResult> {
   const news = sharedNewsStore.items;
   if (news.length === 0) return { decisions: [], reversals: [], newsAnalysis: [] };
@@ -708,18 +811,59 @@ async function runPathB(
     hasOpenPosition: openPairs.has(i.pair),
   }));
 
-  // B1: タイトル即断（タイムアウト10秒）
-  let stage1: NewsStage1Result;
+  // B1: タイトル即断（タイムアウト10秒）— キャッシュ付き
+  const B1_CACHE_KEY = 'path_b_b1_cache';
+  const B1_CACHE_TTL_MS = 5 * 60 * 1000; // 5分TTL
+  // stage1 は b1CacheHit=true 分岐 or API成功分岐で必ず代入される。
+  // API失敗時は throw するため、ここ以降で未代入のまま使われることはない。
+  let stage1!: NewsStage1Result;
   let b1Ms = 0, b2Ms = 0;
-  try {
-    const tB1 = Date.now();
-    stage1 = await newsStage1({ news, redditSignal, indicators, instruments: instrumentList, apiKey });
-    b1Ms = Date.now() - tB1;
-    console.log(`[fx-sim] Path B B1: ${stage1.news_analysis.filter((a: NewsAnalysisItem) => a.attention).length}件注目, ${stage1.trade_signals.length}件シグナル (${b1Ms}ms)`);
-  } catch (e) {
-    await setCacheValue(env.DB, 'news_analysis_failed_at', String(Date.now()));
-    await insertSystemLog(env.DB, 'WARN', 'PATH_B', 'B1失敗→2分クールダウン', String(e).split('\n')[0].slice(0, 120));
-    throw e;
+  let b1CacheHit = false;
+
+  // B1キャッシュチェック: 同一ハッシュ＋TTL内なら再利用（Gemini呼び出し節約）
+  const cachedB1Raw = await getCacheValue(env.DB, B1_CACHE_KEY);
+  if (cachedB1Raw) {
+    try {
+      const cached = JSON.parse(cachedB1Raw) as { hash: string; at: number; result: NewsStage1Result };
+      if (cached.hash === sharedNewsStore.hash && (Date.now() - cached.at) < B1_CACHE_TTL_MS) {
+        stage1 = cached.result;
+        b1CacheHit = true;
+        console.log('[fx-sim] Path B B1: キャッシュヒット（Gemini呼び出しスキップ）');
+      }
+    } catch { /* キャッシュ破損は無視 */ }
+  }
+
+  if (!b1CacheHit) {
+    try {
+      const tB1 = Date.now();
+      const b1Result = await newsStage1WithHedge({
+        news, redditSignal, indicators, instruments: instrumentList, apiKey,
+        openaiApiKey: hedgeKeys?.openaiApiKey,
+        anthropicApiKey: hedgeKeys?.anthropicApiKey,
+      });
+      stage1 = b1Result;
+      if (b1Result.provider !== 'gemini') {
+        console.log(`[fx-sim] Path B B1: ${b1Result.provider}ヘッジ成功`);
+      }
+      b1Ms = Date.now() - tB1;
+      cbRecordSuccess(); // B1成功 → サーキットブレーカー復旧
+      console.log(`[fx-sim] Path B B1: ${stage1.news_analysis.filter((a: NewsAnalysisItem) => a.attention).length}件注目, ${stage1.trade_signals.length}件シグナル (${b1Ms}ms)`);
+
+      // B1結果をキャッシュ保存
+      void setCacheValue(env.DB, B1_CACHE_KEY, JSON.stringify({
+        hash: sharedNewsStore.hash,
+        at: Date.now(),
+        result: stage1,
+      })).catch(() => {});
+    } catch (e) {
+      if (e instanceof RateLimitError) {
+        markKeyCooldown(e.apiKey, e.retryAfterSec);
+      }
+      cbRecordFailure();
+      await setCacheValue(env.DB, 'news_analysis_failed_at', String(Date.now()));
+      await insertSystemLog(env.DB, 'WARN', 'PATH_B', 'B1失敗→2分クールダウン', String(e).split('\n')[0].slice(0, 120));
+      throw e;
+    }
   }
 
   // B1成功後: og:description 並列取得（attention上位5件, 英語4ソースはスキップ）
@@ -853,7 +997,7 @@ async function run(env: Env): Promise<void> {
     // 3. 共有ニュースストア構築 + Path B 実行（計測開始）
     const t2 = Date.now();
     const prevNewsHashRaw = await getCacheValue(env.DB, PREV_NEWS_HASH_KEY);
-    const currentNewsHash = newsHash(news.map((n) => n.title));
+    const currentNewsHash = newsHash(news);
     const hasChanged = currentNewsHash !== (prevNewsHashRaw ?? '');
     await setCacheValue(env.DB, PREV_NEWS_HASH_KEY, currentNewsHash);
 
@@ -881,14 +1025,32 @@ async function run(env: Env): Promise<void> {
     const openPairsForPathB = new Set((allOpenRawForPathB.results ?? []).map(p => p.pair));
 
     let pathBResult: PathBResult = { decisions: [], reversals: [], newsAnalysis: [] };
-    if (sharedNewsStore.hasChanged) {
+
+    // Path B 最小間隔チェック（5分）— 需要削減で429を構造的に防止
+    const PATH_B_MIN_INTERVAL_MS = 5 * 60 * 1000;
+    const lastPathBRaw = await getCacheValue(env.DB, 'last_path_b_at');
+    const lastPathBAt = lastPathBRaw ? parseInt(lastPathBRaw) : 0;
+    const pathBIntervalOk = (Date.now() - lastPathBAt) >= PATH_B_MIN_INTERVAL_MS;
+
+    if (sharedNewsStore.hasChanged && pathBIntervalOk) {
       try {
-        pathBResult = await runPathB(env, sharedNewsStore, indicators, redditSignal, openPairsForPathB, getApiKey(env));
+        pathBResult = await runPathB(env, sharedNewsStore, indicators, redditSignal, openPairsForPathB, getApiKey(env), {
+          openaiApiKey: env.OPENAI_API_KEY,
+          anthropicApiKey: env.ANTHROPIC_API_KEY,
+        });
+        await setCacheValue(env.DB, 'last_path_b_at', String(Date.now()));
         console.log(`[fx-sim] Path B: ${pathBResult.decisions.length}件シグナル, ${pathBResult.reversals.length}件REVERSE`);
       } catch (e) {
+        if (e instanceof RateLimitError) {
+          markKeyCooldown(e.apiKey, e.retryAfterSec);
+        }
+        cbRecordFailure();
         console.warn(`[fx-sim] Path B failed: ${String(e).split('\n')[0].slice(0, 80)}`);
         await insertSystemLog(env.DB, 'WARN', 'PATH_B', 'Path B実行失敗', String(e).split('\n')[0].slice(0, 120));
       }
+    } else if (sharedNewsStore.hasChanged && !pathBIntervalOk) {
+      const elapsedSec = Math.round((Date.now() - lastPathBAt) / 1000);
+      console.log(`[fx-sim] Path B: 最小間隔未達（${elapsedSec}s < 300s）→スキップ`);
     }
     await insertSystemLog(env.DB, 'INFO', 'FLOW', 'PATH_B完了', JSON.stringify({
       ms: Date.now() - t2,
