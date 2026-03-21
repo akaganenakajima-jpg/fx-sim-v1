@@ -3,7 +3,7 @@
 // fetch:     GET / → ダッシュボード、GET /api/status → JSON、GET /style.css・/app.js → 静的ファイル
 
 import { getUSDJPY } from './rate';
-import { fetchNews, type SourceFetchStat } from './news';
+import { fetchNews, filterNikkeiWithHaiku, translateTitlesWithHaiku, translateAndCacheNews, type SourceFetchStat } from './news';
 import { fetchRedditSignal } from './reddit';
 import { getMarketIndicators } from './indicators';
 import { getDecisionWithHedge, fetchOgDescription, newsStage1WithHedge, newsStage2, RateLimitError, type NewsAnalysisItem, type NewsStage1Result } from './gemini';
@@ -42,6 +42,7 @@ import { generateWeeklyReview, generateMonthlyReview } from './trade-journal';
 // detectBreakout は candle データがキャッシュに保存されるPhase 7以降で統合予定
 // import { detectBreakout } from './breakout';
 import { isValidStrategy } from './strategy-tag';
+import { getWeekendStatus, lockProfitsForWeekend, forceCloseAllForWeekend } from './weekend';
 
 interface Env {
   DB: D1Database;
@@ -278,7 +279,14 @@ async function fetchMarketData(env: Env, now: Date): Promise<MarketData | null> 
     }
   }
 
-  const news = newsData.items;
+  // Haiku で日経ニュースの関連性フィルタ（スポーツ・社会面等を除外）
+  const news = await filterNikkeiWithHaiku(newsData.items, env.ANTHROPIC_API_KEY, env.DB);
+  // 英語タイトル→日本語翻訳（Path B非依存、毎分実行、個別タイトルキャッシュ付き）
+  try {
+    await translateAndCacheNews(news, env.ANTHROPIC_API_KEY, env.DB);
+  } catch (e) {
+    console.warn(`[fx-sim] translateAndCacheNews error: ${e}`);
+  }
   const activeNewsSources = [...new Set(news.map(n => n.source))].join(',');
   const redditSignal = redditResult.status === 'fulfilled' ? redditResult.value : { hasSignal: false, keywords: [], topPosts: [] };
   const indicators = indicatorsResult.status === 'fulfilled' ? indicatorsResult.value : { vix: null, us10y: null, nikkei: null, sp500: null, usdjpy: null, btcusd: null, gold: null, eurusd: null, ethusd: null, crudeoil: null, natgas: null, copper: null, silver: null, gbpusd: null, audusd: null, solusd: null, dax: null, nasdaq: null, uk100: null, hk33: null };
@@ -359,6 +367,10 @@ interface AIRunContext {
   excludedPairs?: Set<string>;
   /** テスタ施策12: 経済イベントガード */
   economicEventGuard?: { highImpactNearby: boolean; mediumImpactNearby: boolean };
+  /** 週末ウィンドダウン状態 */
+  weekendStatus: import('./weekend').WeekendStatus;
+  /** 市場クローズ中だが暗号資産のみ取引許可モード */
+  cryptoOnlyMode: boolean;
 }
 
 // ── v2: 3Path並列 型定義 ──
@@ -393,8 +405,11 @@ async function runAIDecisions(
 ): Promise<AIDecisionSummary> {
   const {
     indicators, news, redditSignal, newsSummary, activeNewsSources,
-    brokerEnv, now, prices, prevElapsed, excludedPairs, economicEventGuard,
+    brokerEnv, now, prices, prevElapsed, excludedPairs, economicEventGuard, weekendStatus, cryptoOnlyMode,
   } = context;
+
+  // 暗号資産のみモード: BTC/ETH/SOL以外はスキップ
+  const CRYPTO_PAIRS = new Set(['BTC/USD', 'ETH/USD', 'SOL/USD']);
 
   // 429クールダウン: キー別管理 + サーキットブレーカーで制御
   const availKeys = availableKeyCount(env);
@@ -452,6 +467,9 @@ async function runAIDecisions(
   const rateUpdates: Array<{ key: string; value: string }> = [];
 
   for (const instrument of INSTRUMENTS) {
+    // 暗号資産のみモード（週末市場クローズ中）: クリプト以外はスキップ
+    if (cryptoOnlyMode && !CRYPTO_PAIRS.has(instrument.pair)) continue;
+
     const currentRate = prices.get(instrument.pair);
     if (currentRate == null) {
       console.warn(`[fx-sim] ${instrument.pair}: price unavailable (no cache)`);
@@ -753,8 +771,12 @@ async function runAIDecisions(
               if (economicEventGuard?.highImpactNearby) calendarMult = 0;
               else if (economicEventGuard?.mediumImpactNearby) calendarMult = 0.5;
 
-              if (sessionMult === 0 || matrixMult === 0 || confidenceMult === 0 || calendarMult === 0) {
-                // セッション禁止 or 確信度不足 or S級イベント接近 → ポジション開かない
+              // 暗号資産は週末でもentryLotMultiplier制限を免除
+              const isCrypto = CRYPTO_PAIRS.has(instrument.pair);
+              const effectiveWeekendMult = isCrypto ? 1.0 : weekendStatus.entryLotMultiplier;
+
+              if (sessionMult === 0 || matrixMult === 0 || confidenceMult === 0 || calendarMult === 0 || effectiveWeekendMult === 0) {
+                // セッション禁止 or 確信度不足 or S級イベント接近 or 週末新規禁止（暗号資産除く） → ポジション開かない
               } else {
               // テスタ施策2: HWMドローダウン制御
               const ddResult = await getDrawdownLevel(env.DB);
@@ -778,7 +800,8 @@ async function runAIDecisions(
                   // 全施策のロット倍率を統合
                   const ddLotMult = ddResult.lotMultiplier;
                   const tierMult = instrument.tierLotMultiplier;
-                  const requestedLot = 1 * rrLotMultiplier * ddLotMult * sessionMult * matrixMult * confidenceMult * calendarMult * tierMult;
+                  const weekendMult = effectiveWeekendMult;
+                  const requestedLot = 1 * rrLotMultiplier * ddLotMult * sessionMult * matrixMult * confidenceMult * calendarMult * tierMult * weekendMult;
 
                   const riskResult = await checkRisk({
                     db: env.DB,
@@ -824,7 +847,7 @@ async function runAIDecisions(
                 source,
                 oandaTradeId,
                 getWebhookUrl(env),
-                { strategy: validStrategy, regime: regimeName, session: currentSession, confidence: validConfidence },
+                { strategy: validStrategy, regime: regimeName, session: currentSession, confidence: validConfidence, pnlMultiplier: instrument.pnlMultiplier },
               );
               await insertSystemLog(
                 env.DB, 'INFO', 'POSITION',
@@ -977,7 +1000,11 @@ async function runPathB(
     }
   }
 
-  // B1成功後: og:description 並列取得（attention上位5件, 英語4ソースはスキップ）
+  // B1成功後: Haiku で英語タイトルを日本語翻訳（title_ja付与）
+  const originalTitles = news.map(n => n.title);
+  await translateTitlesWithHaiku(stage1.news_analysis, originalTitles, env.ANTHROPIC_API_KEY);
+
+  // og:description 並列取得（attention上位5件, 英語4ソースはスキップ）
   const attentionItems = stage1.news_analysis.filter((a: NewsAnalysisItem) => a.attention).slice(0, 5);
   const ogResults = await Promise.allSettled(
     attentionItems.map(async (a: NewsAnalysisItem) => {
@@ -1078,6 +1105,15 @@ async function run(env: Env): Promise<void> {
     // スキーママイグレーション（バージョン管理方式）
     await runMigrations(env.DB);
 
+    // 0. 週末ウィンドダウン判定
+    const weekendStatus = getWeekendStatus(now);
+
+    // Phase 4: 市場クローズ — 暗号資産（BTC/ETH/SOL）のみ継続、それ以外はスキップ
+    const cryptoOnlyMode = weekendStatus.marketClosed;
+    if (cryptoOnlyMode) {
+      console.log(`[fx-sim] ${weekendStatus.label} — 暗号資産のみモード`);
+    }
+
     // 1. 全価格・共通データを一括取得
     const t0 = Date.now();
     const marketData = await fetchMarketData(env, now);
@@ -1119,6 +1155,27 @@ async function run(env: Env): Promise<void> {
     await checkAndCloseAllPositions(env.DB, prices, INSTRUMENTS, brokerEnv, getWebhookUrl(env));
     const tpSlMs = Date.now() - t1;
     await insertSystemLog(env.DB, 'INFO', 'FLOW', 'TPSL完了', JSON.stringify({ ms: tpSlMs }));
+
+    // 2.5 週末ウィンドダウン処理
+    // Phase 2/3 はクリプト以外（FX・株指数等）のみ対象
+    const nonCryptoInstruments = INSTRUMENTS.filter(i => !['BTC/USD', 'ETH/USD', 'SOL/USD'].includes(i.pair));
+    if (weekendStatus.phase >= 2 && weekendStatus.phase < 4) {
+      // Phase 2: 含み益ポジションのSLを引き上げて利益ロック（クリプト以外）
+      const lockedCount = await lockProfitsForWeekend(env.DB, prices, nonCryptoInstruments);
+      if (lockedCount > 0) {
+        console.log(`[fx-sim] 週末利益ロック: ${lockedCount}件のSLを引き上げ`);
+        await insertSystemLog(env.DB, 'INFO', 'WEEKEND',
+          `Phase ${weekendStatus.phase}: 利益ロック ${lockedCount}件`);
+      }
+    }
+    if (weekendStatus.phase === 3) {
+      // Phase 3 (金曜 19:00-21:00 UTC): クリプト以外を強制決済 → クリプトは継続
+      const closedCount = await forceCloseAllForWeekend(env.DB, prices, nonCryptoInstruments);
+      console.log(`[fx-sim] 週末強制決済（クリプト除く）: ${closedCount}件`);
+      await insertSystemLog(env.DB, 'INFO', 'WEEKEND',
+        `Phase 3 強制決済: ${closedCount}件`, weekendStatus.label);
+      // Phase 3 では非クリプトの新規分析は不要 → cryptoOnlyMode で継続
+    }
 
     // 3. 共有ニュースストア構築 + Path B 実行（計測開始）
     const t2 = Date.now();
@@ -1239,8 +1296,16 @@ async function run(env: Env): Promise<void> {
             await insertSystemLog(env.DB, 'WARN', 'SANITY', `Path B TP/SL異常値拒否: ${dec.pair}`, sanity.reason ?? undefined);
             continue;
           }
-          await openPosition(env.DB, dec.pair, dec.decision as 'BUY' | 'SELL', currentRate, dec.tp_rate, dec.sl_rate, 'paper', null, getWebhookUrl(env));
-          await insertSystemLog(env.DB, 'INFO', 'PATH_B', `ポジション開設: ${dec.pair} ${dec.decision} @ ${currentRate}`, JSON.stringify({ tp: dec.tp_rate, sl: dec.sl_rate }));
+          // 補正値があれば使用（差分値→絶対値、SLミラー等）
+          const finalTp = sanity.correctedTp ?? dec.tp_rate;
+          const finalSl = sanity.correctedSl ?? dec.sl_rate;
+          if (sanity.correctedTp != null || sanity.correctedSl != null) {
+            console.log(`[fx-sim] Path B TP/SL補正: ${dec.pair} TP ${dec.tp_rate}→${finalTp} SL ${dec.sl_rate}→${finalSl}`);
+          }
+          const pathBInstr = INSTRUMENTS.find(i => i.pair === dec.pair);
+          await openPosition(env.DB, dec.pair, dec.decision as 'BUY' | 'SELL', currentRate, finalTp, finalSl, 'paper', null, getWebhookUrl(env),
+            { pnlMultiplier: pathBInstr?.pnlMultiplier });
+          await insertSystemLog(env.DB, 'INFO', 'PATH_B', `ポジション開設: ${dec.pair} ${dec.decision} @ ${currentRate}`, JSON.stringify({ tp: finalTp, sl: finalSl }));
         } catch (e) {
           console.warn(`[fx-sim] Path B openPosition failed (${dec.pair}): ${String(e).slice(0, 80)}`);
         }
@@ -1317,6 +1382,8 @@ async function run(env: Env): Promise<void> {
       brokerEnv, now, prices, prevElapsed,
       excludedPairs: pathBHandledPairs,
       economicEventGuard,
+      weekendStatus,
+      cryptoOnlyMode,
     }, cronStart);
     const aiLoopMs = Date.now() - t3;
     await insertSystemLog(env.DB, 'INFO', 'FLOW', 'PATH_A完了', JSON.stringify({

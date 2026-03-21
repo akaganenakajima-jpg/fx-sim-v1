@@ -610,7 +610,7 @@ export async function newsStage1(params: {
     '1. 各ニュースの注目度評価（news_analysis）\n' +
     '2. ニュースに基づいた売買シグナル（trade_signals）\n\n' +
     '必ず以下のJSON形式のみで返答してください:\n' +
-    '{"news_analysis":[{"index":0,"attention":true,"impact":"円安要因（50文字以内）","title_ja":"日本語タイトル","affected_pairs":["USD/JPY"]}],' +
+    '{"news_analysis":[{"index":0,"attention":true,"impact":"円安要因（50文字以内）","affected_pairs":["USD/JPY"]}],' +
     '"trade_signals":[{"pair":"USD/JPY","decision":"BUY","tp_rate":150.50,"sl_rate":149.80,"reasoning":"日本語100文字以内"}]}\n\n' +
     'ルール:\n' +
     '- trade_signalsはBUYまたはSELLのみ（HOLDは含めない）\n' +
@@ -618,7 +618,8 @@ export async function newsStage1(params: {
     '- tp_rate/sl_rateは必ず数値で返す（nullは不可）\n' +
     '- リスクリワード比は1.5以上\n' +
     '- 確信度が低いニュースはtrade_signalsに含めない\n' +
-    '- attention:falseのニュースはimpact/affected_pairsを空にするが、title_jaは英語タイトルの場合必ず日本語訳を返す';
+    '- attention:falseのニュースはimpact/affected_pairsを空にする\n' +
+    '- title_jaフィールドは不要（翻訳は別途処理する）';
 
   const res = await fetchWithTimeout(`${GEMINI_ENDPOINT}?key=${apiKey}`, {
     method: 'POST',
@@ -796,10 +797,11 @@ async function newsStage1GPT(params: {
     '1. 各ニュースの注目度評価（news_analysis）\n' +
     '2. ニュースに基づいた売買シグナル（trade_signals）\n\n' +
     '必ず以下のJSON形式のみで返答してください:\n' +
-    '{"news_analysis":[{"index":0,"attention":true,"impact":"円安要因（50文字以内）","title_ja":"日本語タイトル","affected_pairs":["USD/JPY"]}],' +
+    '{"news_analysis":[{"index":0,"attention":true,"impact":"円安要因（50文字以内）","affected_pairs":["USD/JPY"]}],' +
     '"trade_signals":[{"pair":"USD/JPY","decision":"BUY","tp_rate":150.50,"sl_rate":149.80,"reasoning":"日本語100文字以内"}]}\n\n' +
     'ルール:\n- trade_signalsはBUYまたはSELLのみ（HOLDは含めない）\n- [OP]マークの銘柄はtrade_signalsに含めない\n' +
-    '- tp_rate/sl_rateは必ず数値で返す（nullは不可）\n- リスクリワード比は1.5以上\n- 確信度が低いニュースはtrade_signalsに含めない';
+    '- tp_rate/sl_rateは必ず数値で返す（nullは不可）\n- リスクリワード比は1.5以上\n- 確信度が低いニュースはtrade_signalsに含めない\n' +
+    '- title_jaフィールドは不要';
 
   const res = await fetchWithTimeout('https://api.openai.com/v1/chat/completions', {
     method: 'POST',
@@ -863,8 +865,9 @@ async function newsStage1Claude(params: {
     'あなたは為替FXトレーダーのAIアシスタントです。\n' +
     'ニュース一覧と市場状況を分析し、news_analysisとtrade_signalsを返してください。\n' +
     '必ずJSON形式で返答:\n' +
-    '{"news_analysis":[{"index":0,"attention":true,"impact":"50文字以内","title_ja":"日本語","affected_pairs":["USD/JPY"]}],' +
-    '"trade_signals":[{"pair":"USD/JPY","decision":"BUY","tp_rate":150.50,"sl_rate":149.80,"reasoning":"100文字以内"}]}';
+    '{"news_analysis":[{"index":0,"attention":true,"impact":"50文字以内","affected_pairs":["USD/JPY"]}],' +
+    '"trade_signals":[{"pair":"USD/JPY","decision":"BUY","tp_rate":150.50,"sl_rate":149.80,"reasoning":"100文字以内"}]}\n' +
+    'title_jaフィールドは不要。';
 
   const res = await fetchWithTimeout('https://api.anthropic.com/v1/messages', {
     method: 'POST',

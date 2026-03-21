@@ -107,8 +107,9 @@ function isPlausibleAbsolute(
   const tpDist = Math.abs(tp - rate);
   const slDist = Math.abs(sl - rate);
   const { tpSlMin, tpSlMax } = instrument;
-  if (tpDist < tpSlMin || tpDist > tpSlMax) return false;
-  if (slDist < tpSlMin || slDist > tpSlMax) return false;
+  const tolerance = tpSlMin * 0.01; // 浮動小数点丸め誤差許容
+  if (tpDist < tpSlMin - tolerance || tpDist > tpSlMax) return false;
+  if (slDist < tpSlMin - tolerance || slDist > tpSlMax) return false;
   return true;
 }
 
@@ -144,11 +145,13 @@ export function checkTpSlSanity(params: {
   const { tpSlMin, tpSlMax } = instrument;
   const tpDist = Math.abs(finalTp - rate);
   const slDist = Math.abs(finalSl - rate);
+  // 浮動小数点丸め誤差を吸収（tpSlMinの1%を許容）
+  const minTolerance = tpSlMin * 0.01;
 
-  if (tpDist < tpSlMin || tpDist > tpSlMax) {
+  if (tpDist < tpSlMin - minTolerance || tpDist > tpSlMax) {
     return { valid: false, reason: `TP距離(${tpDist.toFixed(4)}) 範囲外 [${tpSlMin}, ${tpSlMax}]` };
   }
-  if (slDist < tpSlMin || slDist > tpSlMax) {
+  if (slDist < tpSlMin - minTolerance || slDist > tpSlMax) {
     return { valid: false, reason: `SL距離(${slDist.toFixed(4)}) 範囲外 [${tpSlMin}, ${tpSlMax}]` };
   }
 

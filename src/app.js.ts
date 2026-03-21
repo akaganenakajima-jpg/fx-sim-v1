@@ -2504,67 +2504,138 @@ export const JS = `
           '</div>' +
         '</div>' +
         '<div class="detail-panel" id="ai-detail-' + i + '">' +
-          '<div class="detail-trigger-row">' +
-            '<span class="tl-chip ' + trigger + '">' + escHtml(triggerLabel(trigger)) + '</span>' +
-            '<span class="detail-trigger-desc">' + escHtml(
-              trigger === 'news' ? 'ニュースシグナル検知' :
-              trigger === 'rate' ? 'レート変動 ±0.05円超' : '定期チェック (30分)'
-            ) + '</span>' +
-          '</div>' +
-          '<div class="detail-4pt">' +
-            '<div>' +
-              '<div class="detail-label">判断基準</div>' +
-              '<div class="detail-value" style="font-size:11px;line-height:1.4">' +
-                escHtml((function() {
-                  // トリガー種別に応じて最も関連する判断基準を表示
-                  // ニューストリガー → 日本語タイトル(title_ja)優先、なければ英語title
-                  if (trigger === 'news' && d.news_summary) {
-                    try {
-                      var parsed = JSON.parse(d.news_summary);
-                      if (Array.isArray(parsed) && parsed.length > 0) {
-                        var t = parsed[0].title_ja || parsed[0].title || parsed[0];
-                        var impact = parsed[0].impact ? ' (' + parsed[0].impact + ')' : '';
-                        return '📰 ' + (typeof t === 'string' ? t : String(t)).slice(0, 60) + impact + (parsed.length > 1 ? ' 他' + (parsed.length - 1) + '件' : '');
-                      }
-                    } catch(e) {}
-                    return '📰 ' + d.news_summary.slice(0, 60);
-                  }
-                  // Redditシグナル
-                  if (d.reddit_signal) return '💬 Reddit: ' + d.reddit_signal;
-                  // レート変動・定期トリガー → 指標値を表示
-                  var indicators = [];
-                  if (d.vix != null) indicators.push('VIX ' + fmt(d.vix, 1));
-                  if (d.us10y != null) indicators.push('米10Y ' + fmt(d.us10y, 2) + '%');
-                  return indicators.length > 0 ? '📊 ' + indicators.join(' / ') : triggerLabel(trigger);
-                })()) +
-              '</div>' +
-            '</div>' +
-            '<div>' +
-              '<div class="detail-label">判断内容</div>' +
-              '<div class="detail-value ' + dirCls + '">' + d.decision + escHtml(tpslText) + '</div>' +
-            '</div>' +
-            '<div>' +
-              '<div class="detail-label">判断結果</div>' +
-              '<div class="tl-result" style="margin-top:2px">' +
-                '<div class="result-dot ' + resultKey + '"></div>' +
-                '<span class="tl-result-text ' + resultKey + '">' + resultText + resultPnl + '</span>' +
-              '</div>' +
-            '</div>' +
-            '<div>' +
-              '<div class="detail-label">判断時刻</div>' +
-              '<div class="detail-value">' + fmtTimeHMS(d.created_at) + '</div>' +
-            '</div>' +
-          '</div>' +
+
+          // ── セクション1: TP / SL ゲージ（BUY/SELLのみ） ──
+          (d.decision !== 'HOLD' && (d.tp_rate != null || d.sl_rate != null)
+            ? (function() {
+                var tp = d.tp_rate;
+                var sl = d.sl_rate;
+                var entry = d.rate;
+                var isBuy = d.decision === 'BUY';
+                // ゲージ計算: SL----Entry----TP を視覚的に表示
+                var slDist = sl != null ? Math.abs(entry - sl) : 0;
+                var tpDist = tp != null ? Math.abs(tp - entry) : 0;
+                var totalDist = slDist + tpDist || 1;
+                var slPct = Math.round((slDist / totalDist) * 100);
+                var tpPct = 100 - slPct;
+                var rrRatio = slDist > 0 ? (tpDist / slDist).toFixed(1) : '—';
+
+                return '<div class="detail-tpsl-section">' +
+                  '<div class="detail-section-label">TP / SL</div>' +
+                  '<div class="detail-tpsl-gauge">' +
+                    '<div class="tpsl-bar">' +
+                      '<div class="tpsl-sl-zone" style="width:' + slPct + '%"></div>' +
+                      '<div class="tpsl-entry-mark"></div>' +
+                      '<div class="tpsl-tp-zone" style="width:' + tpPct + '%"></div>' +
+                    '</div>' +
+                    '<div class="tpsl-labels">' +
+                      '<span class="tpsl-label sl">' + (sl != null ? 'SL ' + fmt(sl, 3) : '—') + '</span>' +
+                      '<span class="tpsl-label entry">' + fmt(entry, 3) + '</span>' +
+                      '<span class="tpsl-label tp">' + (tp != null ? 'TP ' + fmt(tp, 3) : '—') + '</span>' +
+                    '</div>' +
+                  '</div>' +
+                  '<div class="tpsl-meta">' +
+                    '<span class="tpsl-rr">RR ' + rrRatio + '</span>' +
+                    (slDist > 0 ? '<span class="tpsl-pips">SL ' + fmt(slDist, 3) + ' / TP ' + fmt(tpDist, 3) + '</span>' : '') +
+                  '</div>' +
+                '</div>';
+              })()
+            : '') +
+
+          // ── セクション2: AI判断理由（メインコンテンツ） ──
           (reasoning && reasoning !== '—'
-            ? '<div class="detail-reasoning">' +
-                '<div class="detail-reasoning-text">' + escHtml(reasoning) + '</div>' +
+            ? '<div class="detail-reason-section">' +
+                '<div class="detail-section-label">AI判断理由</div>' +
+                '<div class="detail-reason-body">' + escHtml(reasoning) + '</div>' +
               '</div>'
             : '') +
-          (chips.length > 0
-            ? '<div class="detail-chips">' +
-                chips.map(function(c) { return '<span class="detail-chip">' + escHtml(c) + '</span>'; }).join('') +
-              '</div>'
-            : '') +
+
+          // ── セクション3: 市場コンテキスト（指標 + ニュース） ──
+          (function() {
+            // Path B判定: reasoning が [PATH_B] で始まる
+            var isPathB = d.reasoning && d.reasoning.indexOf('[PATH_B]') === 0;
+
+            // ニュース解析
+            var newsArr = [];
+            if (d.news_summary) {
+              try {
+                var raw = d.news_summary;
+                for (var attempt = 0; attempt < 3 && typeof raw === 'string'; attempt++) {
+                  try { raw = JSON.parse(raw); } catch(e) { break; }
+                }
+                if (Array.isArray(raw)) newsArr = raw;
+              } catch(e) {}
+            }
+
+            // Path B: title_ja/impact付き = 判断根拠ニュース
+            var hasPathBNews = isPathB && newsArr.length > 0 && newsArr.some(function(n) {
+              return n && typeof n === 'object' && (n.title_ja || n.impact);
+            });
+
+            var sectionHtml = '<div class="detail-context-section">';
+
+            // セクションヘッダー: Path B → 「判断根拠ニュース」、Path A → 「市場コンテキスト」
+            if (hasPathBNews) {
+              sectionHtml += '<div class="detail-section-label">判断根拠ニュース</div>';
+              // Path B: 判断根拠のニュースを強調表示
+              sectionHtml += '<div class="detail-news-list pathb">' +
+                newsArr.slice(0, 3).map(function(n) {
+                  var title = n.title_ja || n.title || (typeof n === 'string' ? n : String(n));
+                  var impact = n.impact;
+                  var impactCls = impact === 'high' ? 'high' : impact === 'medium' ? 'med' : '';
+                  return '<div class="detail-news-item">' +
+                    (impactCls ? '<span class="detail-news-dot ' + impactCls + '"></span>' : '<span class="detail-news-dot"></span>') +
+                    '<span class="detail-news-title">' + escHtml(String(title).slice(0, 80)) + '</span>' +
+                    (impact ? '<div class="detail-news-impact">' + escHtml(impact) + '</div>' : '') +
+                  '</div>';
+                }).join('') +
+              '</div>';
+            } else {
+              sectionHtml += '<div class="detail-section-label">市場コンテキスト</div>';
+            }
+
+            // 指標バー（共通）
+            if (d.vix != null || d.us10y != null || d.nikkei != null || d.sp500 != null) {
+              sectionHtml += '<div class="detail-indicator-bar">' +
+                (d.vix != null ? '<div class="detail-ind"><span class="detail-ind-label">VIX</span><span class="detail-ind-val' + (d.vix >= 25 ? ' warn' : '') + '">' + fmt(d.vix, 1) + '</span></div>' : '') +
+                (d.us10y != null ? '<div class="detail-ind"><span class="detail-ind-label">米10Y</span><span class="detail-ind-val">' + fmt(d.us10y, 2) + '%</span></div>' : '') +
+                (d.nikkei != null ? '<div class="detail-ind"><span class="detail-ind-label">日経</span><span class="detail-ind-val">' + fmt(d.nikkei, 0) + '</span></div>' : '') +
+                (d.sp500 != null ? '<div class="detail-ind"><span class="detail-ind-label">S&P</span><span class="detail-ind-val">' + fmt(d.sp500, 0) + '</span></div>' : '') +
+              '</div>';
+            }
+
+            // Path A: ニュースがあれば「参考ニュース」として控えめに表示
+            if (!hasPathBNews && newsArr.length > 0) {
+              sectionHtml += '<div class="detail-news-ref">' +
+                '<span class="detail-news-ref-label">参考ニュース（判断時点）</span>' +
+                newsArr.slice(0, 2).map(function(n) {
+                  var title = n.title_ja || n.title || (typeof n === 'string' ? n : String(n));
+                  return '<div class="detail-news-ref-item">' + escHtml(String(title).slice(0, 60)) + '</div>';
+                }).join('') +
+              '</div>';
+            }
+
+            // Reddit（共通）
+            if (d.reddit_signal) {
+              sectionHtml += '<div class="detail-reddit"><span class="detail-reddit-icon">R</span>' + escHtml(d.reddit_signal) + '</div>';
+            }
+
+            sectionHtml += '</div>';
+            return sectionHtml;
+          })() +
+
+          // ── セクション4: フッター（トリガー + 結果 + 時刻） ──
+          '<div class="detail-footer">' +
+            '<div class="detail-footer-left">' +
+              '<span class="tl-chip ' + trigger + '" style="font-size:10px">' + escHtml(triggerLabel(trigger)) + '</span>' +
+              '<span class="detail-footer-time">' + fmtTimeHMS(d.created_at) + '</span>' +
+            '</div>' +
+            '<div class="tl-result">' +
+              '<div class="result-dot ' + resultKey + '"></div>' +
+              '<span class="tl-result-text ' + resultKey + '">' + resultText + resultPnl + '</span>' +
+            '</div>' +
+          '</div>' +
+
         '</div>' +
       '</div>';
     }).join('');

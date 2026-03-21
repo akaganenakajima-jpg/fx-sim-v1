@@ -268,6 +268,7 @@ export async function openPosition(
     regime?: string | null;
     session?: string | null;
     confidence?: number | null;
+    pnlMultiplier?: number;
   },
 ): Promise<void> {
   const existing = await getOpenPositionByPair(db, pair);
@@ -299,9 +300,8 @@ export async function openPosition(
   // テスタ施策9: SL幅ベースポジションサイズ（1%ルール）
   if (slRate != null) {
     const slPips = Math.abs(entryRate - slRate);
-    // pnlMultiplier はinstrument依存だが、openPositionには渡されないため
-    // position.ts 内では簡易版として slPips × 100 で概算
-    const riskPerLot = slPips * 100;
+    const multiplier = extra?.pnlMultiplier ?? 100;
+    const riskPerLot = slPips * multiplier;
     // balance 取得は高コストなので初期資産10000で近似
     const maxRisk = 10000 * 0.01; // 1%ルール
     if (riskPerLot > 0) {
