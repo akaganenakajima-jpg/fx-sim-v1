@@ -3,11 +3,15 @@
 
 import type { InstrumentConfig } from './instruments';
 
+export type RRCategory = 'NORMAL' | 'REDUCED' | 'REJECTED';
+
 export interface SanityResult {
   valid: boolean;
   reason?: string;
   correctedTp?: number;
   correctedSl?: number;
+  rrRatio?: number;
+  rrCategory?: RRCategory;
 }
 
 /**
@@ -149,13 +153,23 @@ export function checkTpSlSanity(params: {
   }
 
   const rr = slDist > 0 ? tpDist / slDist : 0;
-  if (rr < 1.5) {
-    return { valid: false, reason: `RR比不足: ${rr.toFixed(2)} < 1.5` };
+
+  // テスタ施策3: RR比段階制御
+  // ≧1.5 → NORMAL（通常ロット）
+  // 1.0〜1.5 → REDUCED（ロット50%削減、呼び出し元で処理）
+  // <1.0 → REJECTED（エントリー拒否）
+  let rrCategory: RRCategory;
+  if (rr >= 1.5) {
+    rrCategory = 'NORMAL';
+  } else if (rr >= 1.0) {
+    rrCategory = 'REDUCED';
+  } else {
+    return { valid: false, reason: `RR比不足: ${rr.toFixed(2)} < 1.0`, rrRatio: rr, rrCategory: 'REJECTED' };
   }
 
   if (norm.corrected) {
-    return { valid: true, correctedTp: finalTp, correctedSl: finalSl };
+    return { valid: true, correctedTp: finalTp, correctedSl: finalSl, rrRatio: rr, rrCategory };
   }
 
-  return { valid: true };
+  return { valid: true, rrRatio: rr, rrCategory };
 }

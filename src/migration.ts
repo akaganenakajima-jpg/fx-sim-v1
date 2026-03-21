@@ -76,6 +76,15 @@ const MIGRATIONS: Array<{ version: number; description: string; sql: string }> =
     description: 'instrument_scores に thompson_beta カラム追加',
     sql: 'ALTER TABLE instrument_scores ADD COLUMN thompson_beta REAL NOT NULL DEFAULT 1',
   },
+  {
+    version: 200,
+    description: 'risk_state テーブル新設（HWM・DD管理用）',
+    sql: `CREATE TABLE IF NOT EXISTS risk_state (
+      key TEXT PRIMARY KEY,
+      value TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    )`,
+  },
 ];
 
 export async function runMigrations(db: D1Database): Promise<void> {
