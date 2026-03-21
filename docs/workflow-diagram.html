@@ -532,7 +532,7 @@
         <div class="sub-step">
           <div class="sub-step-title">B1: newsStage1WithHedge（タイムアウト 10秒）</div>
           <div class="sub-step-desc">
-            ニュース最大20件 + 指標 → AI分析<br>
+            <strong>Haiku和訳済みの日本語ニュース</strong>最大20件 + 指標 → AI分析（日本語入力で一貫性確保）<br>
             出力: <code>news_analysis[]</code>（attention/impact） + <code>trade_signals[]</code>（BUY/SELL + 対象ペア）
           </div>
           <div class="fallback-chain">
@@ -554,7 +554,7 @@
         <div class="sub-step">
           <div class="sub-step-title">B1後処理（直列）</div>
           <div class="sub-step-desc">
-            ① title_ja転写 — <code>filterAndTranslateWithHaiku()</code>で付与済みの日本語タイトルを<code>news_analysis</code>にコピー（APIコール不要）<br>
+            ① title_ja転写 — B1入力は既に日本語だが、<code>news_analysis</code>にtitle_jaをコピーしてキャッシュ・フロントエンド表示用に保持（APIコール不要）<br>
             ② <code>fetchOgDescription()</code> — attention上位5件の og:description 並列取得（3秒TO）<br>
             ③ 過剰検出ガード: signals > 10件 → 先頭5件のみ
           </div>
@@ -688,7 +688,8 @@
         <div class="sub-step">
           <div class="sub-step-title">AI判定: getDecisionWithHedge（銘柄ごと）</div>
           <div class="sub-step-desc">
-            Gemini即座開始 → 4秒後にGPTを並列起動 → <code>Promise.any()</code> で先着採用
+            Gemini即座開始 → 4秒後にGPTを並列起動 → <code>Promise.any()</code> で先着採用<br>
+            入力ニュースは<strong>Haiku和訳済みの日本語タイトル</strong>（title_ja優先）
           </div>
           <div class="fallback-chain">
             <span class="fb-item primary">Gemini 3.1 Pro</span>
@@ -867,7 +868,7 @@
           <span class="merge-layer-num">分析マージ</span>
           <div class="merge-layer-body">
             <strong>Path B B1分析結果</strong> — <code>market_cache['news_analysis']</code><br>
-            attention/impact付きの分析データ。キャッシュにないタイトルのみ<strong>先頭に挿入</strong>（重要ニュース優先）。
+            attention/impact付きの分析データ。<strong>title・descriptionは日本語（title_ja/desc_ja優先で格納）</strong>。キャッシュにないタイトルのみ<strong>先頭に挿入</strong>（重要ニュース優先）。
           </div>
         </div>
       </div>

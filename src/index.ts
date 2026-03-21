@@ -1288,12 +1288,12 @@ async function run(env: Env): Promise<void> {
           const relevantNews = (d.news_analysis ?? result.newsAnalysis)
             .filter(a => a.attention && a.affected_pairs.includes(d.pair))
             .slice(0, 5)
-            .map(a => ({ title: news[a.index]?.title ?? a.title_ja, title_ja: a.title_ja, impact: a.impact }));
+            .map(a => ({ title: a.title_ja || news[a.index]?.title_ja || (news[a.index]?.title ?? ''), title_ja: a.title_ja, impact: a.impact }));
           const summaryItems = relevantNews.length > 0
             ? relevantNews
             : (d.news_analysis ?? result.newsAnalysis)
                 .filter(a => a.attention).slice(0, 3)
-                .map(a => ({ title: news[a.index]?.title ?? a.title_ja, title_ja: a.title_ja, impact: a.impact }));
+                .map(a => ({ title: a.title_ja || news[a.index]?.title_ja || (news[a.index]?.title ?? ''), title_ja: a.title_ja, impact: a.impact }));
           const pathBNewsSummary = summaryItems.length > 0 ? JSON.stringify(summaryItems) : newsSummary;
           return stmt.bind(
             d.pair, prices.get(d.pair) ?? d.rate, d.decision, d.tp_rate, d.sl_rate,
@@ -1308,9 +1308,9 @@ async function run(env: Env): Promise<void> {
       if (result.newsAnalysis.length > 0) {
         const enriched = result.newsAnalysis.map(a => ({
           ...a,
-          title: news[a.index]?.title ?? null,
+          title: news[a.index]?.title_ja || (news[a.index]?.title ?? null),
           pubDate: news[a.index]?.pubDate ?? null,
-          description: news[a.index]?.description ?? null,
+          description: news[a.index]?.desc_ja || (news[a.index]?.description ?? null),
           source: (news[a.index] as any)?.source ?? null,
         }));
         await setCacheValue(env.DB, 'news_analysis', JSON.stringify(enriched));

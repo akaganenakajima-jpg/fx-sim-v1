@@ -849,9 +849,9 @@ export const JS = `
           (dateStr ? '<span style="font-size:12px;color:var(--label-secondary)">' + dateStr + '</span>' : '') +
           sourceHtml +
         '</div>' +
-        '<div style="font-size:15px;font-weight:600;line-height:1.5;margin-bottom:12px">' + escHtml(item.title) + '</div>' +
+        '<div style="font-size:15px;font-weight:600;line-height:1.5;margin-bottom:12px">' + escHtml(item.title_ja || item.title) + '</div>' +
         impactHtml +
-        (item.description ? '<div style="font-size:13px;color:var(--label-secondary);line-height:1.6">' + escHtml(item.description) + '</div>' : '');
+        ((item.desc_ja || item.description) ? '<div style="font-size:13px;color:var(--label-secondary);line-height:1.6">' + escHtml(item.desc_ja || item.description) + '</div>' : '');
       lockScroll();
       el('sheet').classList.add('open');
       el('sheet-backdrop').classList.add('visible');
@@ -997,8 +997,8 @@ export const JS = `
     if (newsEl && data.latestNews) {
       newsEl.innerHTML = (data.latestNews || []).slice(0, 6).map(function(n) {
         return '<div class="panel-news-item">'
-          + '<div class="panel-news-title">' + escHtml(n.title) + '</div>'
-          + '<div class="panel-news-meta">Reuters • ' + fmtTimeShort(n.pubDate) + '</div></div>';
+          + '<div class="panel-news-title">' + escHtml(n.title_ja || n.title) + '</div>'
+          + '<div class="panel-news-meta">' + escHtml(n.source || 'Reuters') + ' • ' + fmtTimeShort(n.pubDate) + '</div></div>';
       }).join('');
     }
 
