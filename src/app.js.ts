@@ -2281,12 +2281,13 @@ export const JS = `
     // ─ KPI: 今日の判断 ─
     // IPA品質修正: recentDecisions は LIMIT 20 のため過小計上になる
     // サーバー側の専用COUNTクエリ値（todayDecisionCount 等）を使用する
-    var todayTotal = data.todayDecisionCount != null ? data.todayDecisionCount
-                   : decisions.filter(function(d) { return isToday(d.created_at); }).length;
+    // todayD: トリガー内訳の計算では引き続き利用（isToday + LIMIT 20 サブセットで可）
+    var todayD    = decisions.filter(function(d) { return isToday(d.created_at); });
+    var todayTotal = data.todayDecisionCount != null ? data.todayDecisionCount : todayD.length;
     var buyCount  = data.todayBuyCount  != null ? data.todayBuyCount
-                  : decisions.filter(function(d) { return isToday(d.created_at) && d.decision === 'BUY';  }).length;
+                  : todayD.filter(function(d) { return d.decision === 'BUY';  }).length;
     var sellCount = data.todaySellCount != null ? data.todaySellCount
-                  : decisions.filter(function(d) { return isToday(d.created_at) && d.decision === 'SELL'; }).length;
+                  : todayD.filter(function(d) { return d.decision === 'SELL'; }).length;
 
     var kpiTodayVal = el('ai-kpi-today-val');
     var kpiTodaySub = el('ai-kpi-today-sub');
