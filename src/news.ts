@@ -7,6 +7,9 @@ export interface NewsItem {
   pubDate: string;
   source: string;       // ソース名（'NHK', 'WSJ_Markets' 等）
   freshnessMin: number; // 鮮度（取得時刻 - pubDate, 分）
+  url?: string;         // 記事URL（RSSの<link>タグから取得）
+  title_ja?: string;    // 日本語タイトル（filterAndTranslateWithHaiku()で付与）
+  desc_ja?: string;     // 日本語概要（filterAndTranslateWithHaiku()で付与）
 }
 
 export interface SourceFetchStat {
@@ -76,12 +79,20 @@ function parseItems(xml: string, sourceName: string, now: Date, limit = 8): News
 
     const pubDate = extractCdata('pubDate', block)
       || extractCdata('dc:date', block);  // RDF 1.0 用
+
+    // <link> タグ取得（CDATA非対応のソース多いため平文パースも試みる）
+    const linkRe = /<link[^>]*>([^<]+)<\/link>/i;
+    const linkAlt = /<link[^>]+href=["']([^"']+)["']/i;
+    const linkMatch = linkRe.exec(block) ?? linkAlt.exec(block);
+    const url = linkMatch ? linkMatch[1].trim() : undefined;
+
     items.push({
       title,
       description: extractCdata('description', block),
       pubDate,
       source: sourceName,
       freshnessMin: calcFreshnessMin(pubDate, now),
+      url,
     });
     if (items.length >= limit) break;
   }
@@ -171,32 +182,27 @@ function hashTitles(titles: string[]): string {
   for (let i = 0; i < s.length; i++) {
     h = ((h << 5) - h + s.charCodeAt(i)) | 0;
   }
-  return 'nikkei_haiku_' + (h >>> 0).toString(36);
+  return 'news_haiku_' + (h >>> 0).toString(36);
 }
 
 /**
- * Haiku で日経ニュースをFX/金融関連のみにフィルタリング
+ * Haiku で全ソースのニュースをFX/金融関連のみにフィルタリング
  *
  * @param items - fetchNews()の結果（全ソース混合）
  * @param anthropicApiKey - Anthropic API キー
  * @param db - D1（キャッシュ用）
- * @returns フィルタ済みのNewsItem[]（Nikkei以外はそのまま通過）
+ * @returns フィルタ済みのNewsItem[]（FX/金融無関係な記事を除去）
  */
-export async function filterNikkeiWithHaiku(
+export async function filterAllNewsWithHaiku(
   items: NewsItem[],
   anthropicApiKey: string | undefined,
   db: D1Database,
 ): Promise<NewsItem[]> {
   // APIキーがなければフィルタなしで全通過
   if (!anthropicApiKey) return items;
+  if (items.length === 0) return items;
 
-  const nikkeiItems = items.filter(i => i.source === 'Nikkei');
-  const otherItems = items.filter(i => i.source !== 'Nikkei');
-
-  // 日経ニュースがなければそのまま返す
-  if (nikkeiItems.length === 0) return items;
-
-  const titles = nikkeiItems.map(i => i.title);
+  const titles = items.map(i => i.title);
   const cacheKey = hashTitles(titles);
 
   // キャッシュチェック: 同じタイトル群なら前回の判定結果を再利用
@@ -208,17 +214,17 @@ export async function filterNikkeiWithHaiku(
     if (cached) {
       const relevantIndices: number[] = JSON.parse(cached.value);
       const filtered = relevantIndices
-        .filter(i => i >= 0 && i < nikkeiItems.length)
-        .map(i => nikkeiItems[i]);
-      console.log(`[news] Nikkei Haiku filter: キャッシュヒット (${filtered.length}/${nikkeiItems.length}件通過)`);
-      return [...otherItems, ...filtered];
+        .filter(i => i >= 0 && i < items.length)
+        .map(i => items[i]);
+      console.log(`[news] Haiku filter: キャッシュヒット (${filtered.length}/${items.length}件通過)`);
+      return filtered;
     }
   } catch { /* キャッシュ読み取り失敗は無視して再分類 */ }
 
   // Haiku API 呼び出し: タイトル一覧をバッチで分類
   try {
     const start = Date.now();
-    const prompt = `以下は日経ニュースのタイトル一覧です。各タイトルがFX・為替・金融・経済・株式・債券・商品市場・地政学リスク・金融政策・マクロ経済に関連するか判定してください。
+    const prompt = `以下はニュースのタイトル一覧です。各タイトルがFX・為替・金融・経済・株式・債券・商品市場・地政学リスク・金融政策・マクロ経済に関連するか判定してください。
 
 タイトル一覧:
 ${titles.map((t, i) => `${i}: ${t}`).join('\n')}
@@ -264,19 +270,225 @@ JSON配列のみを返し、他の文字は一切含めないでください。`
     } catch { /* キャッシュ書き込み失敗は無視 */ }
 
     const filtered = relevantIndices
-      .filter(i => i >= 0 && i < nikkeiItems.length)
-      .map(i => nikkeiItems[i]);
+      .filter(i => i >= 0 && i < items.length)
+      .map(i => items[i]);
 
-    const removed = nikkeiItems.length - filtered.length;
-    if (removed > 0) {
-      console.log(`[news] Nikkei Haiku filter: ${removed}件除外, ${filtered.length}件通過 (${latencyMs}ms)`);
-    }
+    const removed = items.length - filtered.length;
+    console.log(`[news] Haiku filter: ${removed}件除外, ${filtered.length}/${items.length}件通過 (${latencyMs}ms)`);
 
-    return [...otherItems, ...filtered];
+    return filtered;
   } catch (e) {
     console.log(`[news] Haiku filter error: ${e} — フィルタなしで全通過`);
     return items;
   }
+}
+
+/** @deprecated filterAllNewsWithHaiku を使用してください */
+export const filterNikkeiWithHaiku = filterAllNewsWithHaiku;
+
+// ---------------------------------------------------------------------------
+// Haiku フィルタ + タイトル・概要 翻訳 一括処理
+// ---------------------------------------------------------------------------
+// filterAllNewsWithHaiku() + translateAndCacheNews() を1回のHaiku APIコールに統合。
+// - 無関係記事（スポーツ・芸能等）を除去
+// - title_ja（日本語タイトル）を付与
+// - desc_ja（日本語概要）を付与（descriptionがなければURL先の本文から要約）
+// - latest_news キャッシュを title_ja + desc_ja 付きで更新
+// キャッシュ: タイトルハッシュが同一なら30分間再利用
+
+/**
+ * descriptionが空の記事に対して、URL先の本文を取得する。
+ * - 最大MAX_BODY_FETCH件まで並列フェッチ（cron 30秒制限対策）
+ * - 1件あたり3秒タイムアウト + エッジキャッシュ5分
+ * - HTMLタグ除去後、先頭300文字を返す
+ */
+const MAX_BODY_FETCH = 5;
+const BODY_FETCH_TIMEOUT_MS = 3000;
+
+async function fetchBodyForEmptyDesc(items: NewsItem[]): Promise<Map<number, string>> {
+  const bodyMap = new Map<number, string>();
+  const targets = items
+    .map((item, i) => ({ idx: i, url: item.url, desc: item.description }))
+    .filter(t => !t.desc && t.url)
+    .slice(0, MAX_BODY_FETCH);
+
+  if (targets.length === 0) return bodyMap;
+
+  const results = await Promise.allSettled(
+    targets.map(async (t) => {
+      const ctrl = new AbortController();
+      const timer = setTimeout(() => ctrl.abort(), BODY_FETCH_TIMEOUT_MS);
+      try {
+        const res = await fetch(t.url!, {
+          signal: ctrl.signal,
+          headers: { 'User-Agent': 'Mozilla/5.0 (compatible; FXNewsBot/1.0)' },
+          cf: { cacheTtl: 300 },
+        } as RequestInit);
+        if (!res.ok) return { idx: t.idx, body: '' };
+        const html = await res.text();
+        // <p>タグ内のテキストを優先抽出、なければbody全体からHTMLタグ除去
+        const paragraphs = html.match(/<p[^>]*>([\s\S]*?)<\/p>/gi);
+        let text: string;
+        if (paragraphs && paragraphs.length > 0) {
+          text = paragraphs.slice(0, 5).join(' ').replace(/<[^>]+>/g, '').trim();
+        } else {
+          text = html.replace(/<script[\s\S]*?<\/script>/gi, '')
+                     .replace(/<style[\s\S]*?<\/style>/gi, '')
+                     .replace(/<[^>]+>/g, ' ')
+                     .replace(/\s+/g, ' ')
+                     .trim();
+        }
+        return { idx: t.idx, body: text.slice(0, 300) };
+      } finally {
+        clearTimeout(timer);
+      }
+    })
+  );
+
+  for (const r of results) {
+    if (r.status === 'fulfilled' && r.value.body) {
+      bodyMap.set(r.value.idx, r.value.body);
+    }
+  }
+  console.log(`[news] URL本文フェッチ: ${targets.length}件中${bodyMap.size}件取得`);
+  return bodyMap;
+}
+
+/** Haikuによるフィルタ+翻訳の結果レコード */
+interface HaikuTranslatedItem {
+  index: number;
+  title_ja: string;
+  desc_ja: string;
+}
+
+/**
+ * Haiku で全ソースをフィルタしつつタイトル・概要を日本語化する
+ *
+ * @param items - fetchNews()の結果（全ソース混合）
+ * @param anthropicApiKey - Anthropic API キー
+ * @param db - D1（キャッシュ用）
+ * @returns フィルタ済みの NewsItem[]（title_ja・desc_ja 付き）
+ */
+export async function filterAndTranslateWithHaiku(
+  items: NewsItem[],
+  anthropicApiKey: string | undefined,
+  db: D1Database,
+): Promise<NewsItem[]> {
+  if (!anthropicApiKey || items.length === 0) return items;
+
+  const titles = items.map(i => i.title);
+  const cacheKey = hashTitles(titles);
+
+  // キャッシュチェック
+  try {
+    const cached = await db.prepare(
+      "SELECT value FROM market_cache WHERE key = ? AND updated_at > datetime('now', '-30 minutes')"
+    ).bind(cacheKey).first<{ value: string }>();
+
+    if (cached) {
+      const results: HaikuTranslatedItem[] = JSON.parse(cached.value);
+      const filteredItems = results
+        .filter(r => r.index >= 0 && r.index < items.length)
+        .map(r => ({ ...items[r.index], title_ja: r.title_ja, desc_ja: r.desc_ja }));
+      console.log(`[news] filter+translate: キャッシュヒット (${filteredItems.length}/${items.length}件通過)`);
+      await _updateLatestNewsCache(filteredItems, db);
+      return filteredItems;
+    }
+  } catch { /* キャッシュ読み取り失敗は無視して再処理 */ }
+
+  // descriptionが空の記事はURL先から本文を取得
+  const bodyMap = await fetchBodyForEmptyDesc(items);
+
+  // Haiku API 呼び出し: フィルタ + 翻訳を1回のバッチで
+  try {
+    const start = Date.now();
+
+    // 各記事のテキストを構築（description→URL本文→なし の優先順）
+    const articleLines = items.map((item, i) => {
+      const desc = item.description
+        ? item.description.replace(/<[^>]+>/g, '').slice(0, 150)
+        : bodyMap.get(i)?.slice(0, 200) || '';
+      return desc
+        ? `${i}: title=${item.title} | desc=${desc}`
+        : `${i}: title=${item.title}`;
+    }).join('\n');
+
+    const prompt = `以下のニュース記事一覧を分析してください。
+
+【作業内容】
+1. 各記事がFX・為替・金融・経済・株式・債券・商品市場・地政学リスク・金融政策・マクロ経済に関連するか判定する
+2. 関連する記事のみ、タイトルと概要を日本語に翻訳する（既に日本語なら原文のまま）
+3. 無関係な記事（スポーツ・芸能・社会面・天気・事件・生活情報等）は出力に含めない
+
+【記事一覧】
+${articleLines}
+
+【出力形式】
+関連する記事のみを以下のJSON配列で返してください。
+- title_ja: 日本語タイトル（30字以内に要約）
+- desc_ja: 日本語概要（descがあれば翻訳・要約、なければ60字以内で要約）
+
+[{"index":0,"title_ja":"日本語タイトル","desc_ja":"日本語概要"},...]
+
+JSON配列のみを返し、他の文字は一切含めないでください。`;
+
+    const res = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: {
+        'x-api-key': anthropicApiKey,
+        'anthropic-version': '2023-06-01',
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify({
+        model: 'claude-sonnet-4-5',
+        max_tokens: 2048,
+        messages: [{ role: 'user', content: prompt }],
+      }),
+    });
+
+    const latencyMs = Date.now() - start;
+
+    if (!res.ok) {
+      const errBody = await res.text().catch(() => '(body read failed)');
+      console.log(`[news] filter+translate API error: ${res.status} (${latencyMs}ms) body=${errBody.slice(0, 200)} — フィルタなしで全通過`);
+      return items;
+    }
+
+    const data = await res.json() as { content: Array<{ type: string; text?: string }> };
+    const rawText = data.content?.[0]?.text ?? '[]';
+    // レスポンスに余分なテキストが混入することがあるためJSON配列部分だけ抽出
+    const jsonMatch = rawText.match(/\[[\s\S]*\]/);
+    const results: HaikuTranslatedItem[] = jsonMatch ? JSON.parse(jsonMatch[0]) : [];
+
+    // キャッシュ保存
+    try {
+      await db.prepare(
+        "INSERT OR REPLACE INTO market_cache (key, value, updated_at) VALUES (?, ?, datetime('now'))"
+      ).bind(cacheKey, JSON.stringify(results)).run();
+    } catch { /* キャッシュ書き込み失敗は無視 */ }
+
+    const filteredItems = results
+      .filter(r => r.index >= 0 && r.index < items.length)
+      .map(r => ({ ...items[r.index], title_ja: r.title_ja, desc_ja: r.desc_ja }));
+
+    const removed = items.length - filteredItems.length;
+    console.log(`[news] filter+translate: ${removed}件除外, ${filteredItems.length}/${items.length}件通過, title_ja+desc_ja付与 (${latencyMs}ms)`);
+
+    await _updateLatestNewsCache(filteredItems, db);
+    return filteredItems;
+  } catch (e) {
+    console.log(`[news] filter+translate error: ${e} — フィルタなしで全通過`);
+    return items;
+  }
+}
+
+/** latest_news キャッシュを title_ja・desc_ja 付きで更新 */
+async function _updateLatestNewsCache(items: NewsItem[], db: D1Database): Promise<void> {
+  try {
+    await db.prepare(
+      "INSERT OR REPLACE INTO market_cache (key, value, updated_at) VALUES (?, ?, datetime('now'))"
+    ).bind('latest_news', JSON.stringify(items.slice(0, 30))).run();
+  } catch { /* ignore */ }
 }
 
 // ---------------------------------------------------------------------------
@@ -506,15 +718,11 @@ JSON配列のみを返し、他の文字は一切含めないでください。`
   }
 
   // latest_news キャッシュ更新（title_ja付き）
-  try {
-    const latestNews = news.slice(0, 30).map((n, i) => ({
-      ...n,
-      title_ja: titleJaMap.get(i) || null,
-    }));
-    await db.prepare(
-      "INSERT OR REPLACE INTO market_cache (key, value, updated_at) VALUES (?, ?, datetime('now'))"
-    ).bind('latest_news', JSON.stringify(latestNews)).run();
-  } catch { /* ignore */ }
+  const latestNews = news.slice(0, 30).map((n, i) => ({
+    ...n,
+    title_ja: titleJaMap.get(i) || n.title_ja || undefined,
+  }));
+  await _updateLatestNewsCache(latestNews, db);
 }
 
 /** 簡易ハッシュ（タイトルキャッシュ用） */

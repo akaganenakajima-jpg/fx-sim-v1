@@ -3,7 +3,7 @@
 // fetch:     GET / → ダッシュボード、GET /api/status → JSON、GET /style.css・/app.js → 静的ファイル
 
 import { getUSDJPY } from './rate';
-import { fetchNews, filterNikkeiWithHaiku, translateTitlesWithHaiku, translateAndCacheNews, type SourceFetchStat } from './news';
+import { fetchNews, filterAndTranslateWithHaiku, translateTitlesWithHaiku, type SourceFetchStat } from './news';
 import { getMarketIndicators } from './indicators';
 import { getDecisionWithHedge, fetchOgDescription, newsStage1WithHedge, newsStage2, RateLimitError, type NewsAnalysisItem, type NewsStage1Result } from './gemini';
 import { checkAndCloseAllPositions, openPosition } from './position';
@@ -273,14 +273,8 @@ async function fetchMarketData(env: Env, now: Date): Promise<MarketData | null> 
     }
   }
 
-  // Haiku で日経ニュースの関連性フィルタ（スポーツ・社会面等を除外）
-  const news = await filterNikkeiWithHaiku(newsData.items, env.ANTHROPIC_API_KEY, env.DB);
-  // 英語タイトル→日本語翻訳（Path B非依存、毎分実行、個別タイトルキャッシュ付き）
-  try {
-    await translateAndCacheNews(news, env.ANTHROPIC_API_KEY, env.DB);
-  } catch (e) {
-    console.warn(`[fx-sim] translateAndCacheNews error: ${e}`);
-  }
+  // Haiku でフィルタ + タイトル・概要の日本語化を一括処理（title_ja・desc_ja付与）
+  const news = await filterAndTranslateWithHaiku(newsData.items, env.ANTHROPIC_API_KEY, env.DB);
   const activeNewsSources = [...new Set(news.map(n => n.source))].join(',');
   const indicators = indicatorsResult.status === 'fulfilled' ? indicatorsResult.value : { vix: null, us10y: null, nikkei: null, sp500: null, usdjpy: null, btcusd: null, gold: null, eurusd: null, ethusd: null, crudeoil: null, natgas: null, copper: null, silver: null, gbpusd: null, audusd: null, solusd: null, dax: null, nasdaq: null, uk100: null, hk33: null };
   const frankfurterRate = frankfurterResult.status === 'fulfilled' ? frankfurterResult.value : null;
@@ -1335,7 +1329,7 @@ async function run(env: Env): Promise<void> {
 
     const runPathAWithExclusion = async (excludedPairs: Set<string>) => {
       return runAIDecisions(env, {
-        indicators, news, redditSignal, newsSummary, activeNewsSources,
+        indicators, news, newsSummary, activeNewsSources,
         brokerEnv, now, prices, prevElapsed,
         excludedPairs,
         economicEventGuard,
@@ -1420,7 +1414,7 @@ async function run(env: Env): Promise<void> {
 
       if (shouldRunPathB) {
         try {
-          pathBResult = await runPathB(env, sharedNewsStore, indicators, redditSignal, openPairsForPathB, getApiKey(env), {
+          pathBResult = await runPathB(env, sharedNewsStore, indicators, openPairsForPathB, getApiKey(env), {
             openaiApiKey: env.OPENAI_API_KEY,
             anthropicApiKey: env.ANTHROPIC_API_KEY,
           });
