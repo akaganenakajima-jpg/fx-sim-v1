@@ -71,7 +71,7 @@ function buildUserMessage(params: {
   const { instrument, rate, indicators, news, hasOpenPosition, recentTrades, allPositionDirections, sparkRates, regime } = params;
 
   const newsText = news
-    .map((n, i) => `  ${i + 1}. ${n.title}`)
+    .map((n, i) => `  ${i + 1}. ${n.title_ja || n.title}`)
     .join('\n');
 
   // VIX連動TP/SL幅: VIX高→幅広、VIX低→幅狭
@@ -575,7 +575,7 @@ export async function newsStage1(params: {
   const { news, indicators, instruments, apiKey } = params;
 
   const newsList = news.slice(0, 20).map((n, i) =>
-    `[${i}] ${n.title}${(n as any).source ? ` (${(n as any).source})` : ''}`
+    `[${i}] ${n.title_ja || n.title}${(n as any).source ? ` (${(n as any).source})` : ''}`
   ).join('\n');
 
   const instrumentList = instruments.map(inst =>
@@ -598,7 +598,7 @@ export async function newsStage1(params: {
 
   const systemPrompt =
     'あなたは為替FXトレーダーのAIアシスタントです。\n' +
-    '以下のニュース一覧と市場状況を分析し、次の2つのことを返してください。\n' +
+    '以下のニュース一覧（日本語翻訳済み）と市場状況を分析し、次の2つのことを返してください。\n' +
     '1. 各ニュースの注目度評価（news_analysis）\n' +
     '2. ニュースに基づいた売買シグナル（trade_signals）\n\n' +
     '必ず以下のJSON形式のみで返答してください:\n' +
@@ -610,8 +610,7 @@ export async function newsStage1(params: {
     '- tp_rate/sl_rateは必ず数値で返す（nullは不可）\n' +
     '- リスクリワード比は1.5以上\n' +
     '- 確信度が低いニュースはtrade_signalsに含めない\n' +
-    '- attention:falseのニュースはimpact/affected_pairsを空にする\n' +
-    '- title_jaフィールドは不要（翻訳は別途処理する）';
+    '- attention:falseのニュースはimpact/affected_pairsを空にする';
 
   const res = await fetchWithTimeout(`${GEMINI_ENDPOINT}?key=${apiKey}`, {
     method: 'POST',
@@ -661,8 +660,8 @@ export async function newsStage2(params: {
     .slice(0, 5)
     .map(a => {
       const item = news[a.index];
-      const ogDesc = a.og_description ?? item?.description ?? '（詳細なし）';
-      return `[${a.index}] ${item?.title ?? ''}\nog:description: ${ogDesc.slice(0, 300)}`;
+      const ogDesc = a.og_description ?? item?.desc_ja ?? item?.description ?? '（詳細なし）';
+      return `[${a.index}] ${(item?.title_ja || item?.title) ?? ''}\nog:description: ${ogDesc.slice(0, 300)}`;
     })
     .join('\n\n');
 
@@ -763,7 +762,7 @@ async function newsStage1GPT(params: {
   const { news, indicators, instruments, apiKey } = params;
 
   const newsList = news.slice(0, 20).map((n, i) =>
-    `[${i}] ${n.title}${(n as any).source ? ` (${(n as any).source})` : ''}`
+    `[${i}] ${n.title_ja || n.title}${(n as any).source ? ` (${(n as any).source})` : ''}`
   ).join('\n');
 
   const instrumentList = instruments.map(inst =>
@@ -782,15 +781,14 @@ async function newsStage1GPT(params: {
 
   const systemPrompt =
     'あなたは為替FXトレーダーのAIアシスタントです。\n' +
-    '以下のニュース一覧と市場状況を分析し、次の2つのことを返してください。\n' +
+    '以下のニュース一覧（日本語翻訳済み）と市場状況を分析し、次の2つのことを返してください。\n' +
     '1. 各ニュースの注目度評価（news_analysis）\n' +
     '2. ニュースに基づいた売買シグナル（trade_signals）\n\n' +
     '必ず以下のJSON形式のみで返答してください:\n' +
     '{"news_analysis":[{"index":0,"attention":true,"impact":"円安要因（50文字以内）","affected_pairs":["USD/JPY"]}],' +
     '"trade_signals":[{"pair":"USD/JPY","decision":"BUY","tp_rate":150.50,"sl_rate":149.80,"reasoning":"日本語100文字以内"}]}\n\n' +
     'ルール:\n- trade_signalsはBUYまたはSELLのみ（HOLDは含めない）\n- [OP]マークの銘柄はtrade_signalsに含めない\n' +
-    '- tp_rate/sl_rateは必ず数値で返す（nullは不可）\n- リスクリワード比は1.5以上\n- 確信度が低いニュースはtrade_signalsに含めない\n' +
-    '- title_jaフィールドは不要';
+    '- tp_rate/sl_rateは必ず数値で返す（nullは不可）\n- リスクリワード比は1.5以上\n- 確信度が低いニュースはtrade_signalsに含めない';
 
   const res = await fetchWithTimeout('https://api.openai.com/v1/chat/completions', {
     method: 'POST',
@@ -831,7 +829,7 @@ async function newsStage1Claude(params: {
   const { news, indicators, instruments, apiKey } = params;
 
   const newsList = news.slice(0, 20).map((n, i) =>
-    `[${i}] ${n.title}${(n as any).source ? ` (${(n as any).source})` : ''}`
+    `[${i}] ${n.title_ja || n.title}${(n as any).source ? ` (${(n as any).source})` : ''}`
   ).join('\n');
 
   const instrumentList = instruments.map(inst =>
@@ -850,11 +848,10 @@ async function newsStage1Claude(params: {
 
   const systemPrompt =
     'あなたは為替FXトレーダーのAIアシスタントです。\n' +
-    'ニュース一覧と市場状況を分析し、news_analysisとtrade_signalsを返してください。\n' +
+    'ニュース一覧（日本語翻訳済み）と市場状況を分析し、news_analysisとtrade_signalsを返してください。\n' +
     '必ずJSON形式で返答:\n' +
     '{"news_analysis":[{"index":0,"attention":true,"impact":"50文字以内","affected_pairs":["USD/JPY"]}],' +
-    '"trade_signals":[{"pair":"USD/JPY","decision":"BUY","tp_rate":150.50,"sl_rate":149.80,"reasoning":"100文字以内"}]}\n' +
-    'title_jaフィールドは不要。';
+    '"trade_signals":[{"pair":"USD/JPY","decision":"BUY","tp_rate":150.50,"sl_rate":149.80,"reasoning":"100文字以内"}]}';
 
   const res = await fetchWithTimeout('https://api.anthropic.com/v1/messages', {
     method: 'POST',
