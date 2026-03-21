@@ -516,13 +516,15 @@ async function runAIDecisions(
             await insertSystemLog(env.DB, 'INFO', hedgeResult.provider.toUpperCase(), `${hedgeResult.provider}ヘッジ成功 (${instrument.pair}) → ${geminiResult.decision}`);
           }
 
+          // トリガー種別プレフィックスを付与（inferTrigger で分類するため）
+          const triggerPrefix = candidate.filterResult.reason.startsWith('レート変化') ? '[RATE] ' : '[CRON] ';
           await insertDecision(env.DB, {
             pair: instrument.pair,
             rate: currentRate,
             decision: geminiResult.decision,
             tp_rate: geminiResult.tp_rate,
             sl_rate: geminiResult.sl_rate,
-            reasoning: geminiResult.reasoning,
+            reasoning: triggerPrefix + geminiResult.reasoning,
             news_summary: newsSummary || null,
             reddit_signal: redditSignal.keywords.join(', ') || null,
             vix: indicators.vix,
