@@ -1122,19 +1122,43 @@ async function run(env: Env): Promise<void> {
     }
 
     // Path B decisions を decisions テーブルに記録
+    // news_summary: そのdecisionに関連する注目ニュース(attention=true & affected_pairs一致)を格納
     if (pathBResult.decisions.length > 0) {
       const stmt = env.DB.prepare(
         `INSERT INTO decisions (pair, rate, decision, tp_rate, sl_rate, reasoning, news_summary, vix, us10y, nikkei, sp500, created_at)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
       );
-      await env.DB.batch(pathBResult.decisions.map(d =>
-        stmt.bind(
+      await env.DB.batch(pathBResult.decisions.map(d => {
+        // この decision の pair に影響する注目ニュースを抽出
+        const relevantNews = (d.news_analysis ?? pathBResult.newsAnalysis)
+          .filter(a => a.attention && a.affected_pairs.includes(d.pair))
+          .slice(0, 5)
+          .map(a => ({
+            title: news[a.index]?.title ?? a.title_ja,
+            title_ja: a.title_ja,
+            impact: a.impact,
+          }));
+        // フォールバック: pair一致がなければ attention=true の上位を使用
+        const summaryItems = relevantNews.length > 0
+          ? relevantNews
+          : (d.news_analysis ?? pathBResult.newsAnalysis)
+              .filter(a => a.attention)
+              .slice(0, 3)
+              .map(a => ({
+                title: news[a.index]?.title ?? a.title_ja,
+                title_ja: a.title_ja,
+                impact: a.impact,
+              }));
+        const pathBNewsSummary = summaryItems.length > 0
+          ? JSON.stringify(summaryItems)
+          : newsSummary;
+        return stmt.bind(
           d.pair, prices.get(d.pair) ?? d.rate, d.decision, d.tp_rate, d.sl_rate,
-          `[PATH_B] ${d.reasoning}`, newsSummary,
+          `[PATH_B] ${d.reasoning}`, pathBNewsSummary,
           indicators.vix, indicators.us10y, indicators.nikkei, indicators.sp500,
           now.toISOString()
-        )
-      ));
+        );
+      }));
     }
 
     // news_analysis + latest_news キャッシュ更新（Path B分析結果、title_ja付き）

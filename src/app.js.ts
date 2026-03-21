@@ -2452,13 +2452,14 @@ export const JS = `
               '<div class="detail-value" style="font-size:11px;line-height:1.4">' +
                 escHtml((function() {
                   // トリガー種別に応じて最も関連する判断基準を表示
-                  // ニューストリガー → ニュースタイトル優先
+                  // ニューストリガー → 日本語タイトル(title_ja)優先、なければ英語title
                   if (trigger === 'news' && d.news_summary) {
                     try {
                       var parsed = JSON.parse(d.news_summary);
                       if (Array.isArray(parsed) && parsed.length > 0) {
-                        var t = parsed[0].title || parsed[0];
-                        return '📰 ' + (typeof t === 'string' ? t : String(t)).slice(0, 50) + (parsed.length > 1 ? ' 他' + (parsed.length - 1) + '件' : '');
+                        var t = parsed[0].title_ja || parsed[0].title || parsed[0];
+                        var impact = parsed[0].impact ? ' (' + parsed[0].impact + ')' : '';
+                        return '📰 ' + (typeof t === 'string' ? t : String(t)).slice(0, 60) + impact + (parsed.length > 1 ? ' 他' + (parsed.length - 1) + '件' : '');
                       }
                     } catch(e) {}
                     return '📰 ' + d.news_summary.slice(0, 60);
