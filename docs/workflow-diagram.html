@@ -93,6 +93,45 @@
   .bg-final .node-title { color: #f472b6; }
   .bg-api { background: rgba(20,184,166,0.08); border-color: rgba(20,184,166,0.2); }
   .bg-api .node-title { color: #2dd4bf; }
+  .bg-keys { background: rgba(244,114,182,0.06); border-color: rgba(244,114,182,0.18); }
+  .bg-keys .node-title { color: #f9a8d4; }
+
+  /* ── Key Pool Diagram ── */
+  .key-pool {
+    display: grid;
+    grid-template-columns: repeat(5, 1fr);
+    gap: 6px;
+    margin: 10px 0;
+  }
+  .key-slot {
+    text-align: center;
+    border-radius: 8px;
+    padding: 8px 4px;
+    font-size: 10px;
+    font-weight: 600;
+    border: 1px solid rgba(255,255,255,0.08);
+  }
+  .key-slot-ok { background: rgba(16,185,129,0.12); color: #6ee7b7; border-color: rgba(16,185,129,0.3); }
+  .key-slot-cd { background: rgba(239,68,68,0.12); color: #fca5a5; border-color: rgba(239,68,68,0.3); }
+  .key-flow-arrows {
+    display: flex;
+    justify-content: center;
+    gap: 24px;
+    margin: 12px 0 6px;
+    font-size: 12px;
+    color: #9ca3af;
+  }
+  .key-flow-arrows .arrow-box {
+    background: rgba(255,255,255,0.03);
+    border-radius: 8px;
+    padding: 8px 14px;
+    border: 1px solid rgba(255,255,255,0.06);
+    text-align: center;
+    font-size: 11px;
+    line-height: 1.5;
+  }
+  .key-flow-arrows .arrow-box strong { color: #d1d5db; }
+  .key-flow-arrows .arrow-box code { color: #5eead4; font-family: 'SF Mono', monospace; font-size: 10px; }
 
   /* ── Merge Layers ── */
   .merge-layers {
@@ -710,6 +749,84 @@
 
   <hr class="separator">
 
+  <!-- ═══ Gemini API キー管理 ═══ -->
+  <div class="phase">
+    <div class="phase-label">Gemini 3.1 Pro — APIキー管理（5キーローテーション）</div>
+    <div class="node bg-keys">
+      <div class="node-title">
+        🔑 getApiKey(env) — 均等分散 + クールダウン制御
+      </div>
+      <div class="node-desc">
+        5本の Gemini API キーをプールし、<strong>使用回数最少のキー</strong>を自動選択。<br>
+        429受信時は <code>markKeyCooldown()</code> でそのキーを一時停止し、残りのキーで継続。<br>
+        全キーがクールダウン中 → 最も早く解除されるキーを返す（完全停止を防止）。
+      </div>
+
+      <!-- キープール可視化 -->
+      <div class="key-pool">
+        <div class="key-slot key-slot-ok">KEY_1<br><span style="font-size:9px;opacity:.7">✅ 使用可</span></div>
+        <div class="key-slot key-slot-ok">KEY_2<br><span style="font-size:9px;opacity:.7">✅ 使用可</span></div>
+        <div class="key-slot key-slot-cd">KEY_3<br><span style="font-size:9px;opacity:.7">⏳ CD中</span></div>
+        <div class="key-slot key-slot-ok">KEY_4<br><span style="font-size:9px;opacity:.7">✅ 使用可</span></div>
+        <div class="key-slot key-slot-ok">KEY_5<br><span style="font-size:9px;opacity:.7">✅ 使用可</span></div>
+      </div>
+
+      <div class="node-desc" style="margin-top: 10px; font-size: 11px;">
+        <strong>選択アルゴリズム</strong>: クールダウンでないキーの中から <code>keyUsageCount</code> 最少を選択（均等分散）。<br>
+        <strong>クールダウン登録</strong>: <code>429</code> の <code>retry-after</code> ヘッダ秒数でそのキーを一時停止。<br>
+        <strong>availableKeyCount()</strong>: 現在使用可能なキー数を返す → サーキットブレーカーの判断材料。
+      </div>
+
+      <!-- どこから呼ばれるか -->
+      <div style="margin-top: 14px; padding-top: 12px; border-top: 1px solid rgba(255,255,255,0.06);">
+        <div class="node-desc"><strong>利用箇所（全3箇所でキーが消費される）</strong></div>
+        <div class="key-flow-arrows">
+          <div class="arrow-box">
+            <strong>🅰️ Path A</strong><br>
+            <code>getDecisionWithHedge()</code><br>
+            銘柄ごとに1キー消費<br>
+            <span style="color:#fb923c;font-size:10px;">最大20銘柄/分</span>
+          </div>
+          <div class="arrow-box">
+            <strong>🅱️ Path B — B1</strong><br>
+            <code>newsStage1WithHedge()</code><br>
+            ニュース分析で1キー消費<br>
+            <span style="color:#34d399;font-size:10px;">5分に1回</span>
+          </div>
+          <div class="arrow-box">
+            <strong>🅱️ Path B — B2</strong><br>
+            <code>newsStage2()</code><br>
+            TP/SL精査で1キー消費<br>
+            <span style="color:#34d399;font-size:10px;">B1成功時のみ</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- ヘッジ構造 -->
+      <div style="margin-top: 14px; padding-top: 12px; border-top: 1px solid rgba(255,255,255,0.06);">
+        <div class="node-desc"><strong>ヘッジ構造（Gemini 失敗時のフォールバック）</strong></div>
+        <div class="key-flow-arrows" style="flex-direction: column; gap: 6px; align-items: stretch;">
+          <div class="arrow-box" style="text-align: left;">
+            <strong>Path A — getDecisionWithHedge()</strong><br>
+            <span style="color:#60a5fa;">① Gemini 3.1 Pro</span> を即座に開始 →
+            <span style="color:#a78bfa;">4秒後に ② GPT</span>（KEY_1/KEY_2交互）をヘッジ起動 →
+            <code>Promise.any()</code> で最初の成功を採用。<br>
+            GPT失敗時 → <span style="color:#f9a8d4;">③ Claude Sonnet</span> にフォールバック。
+          </div>
+          <div class="arrow-box" style="text-align: left;">
+            <strong>Path B — newsStage1WithHedge()</strong><br>
+            <span style="color:#60a5fa;">① Gemini 3.1 Pro</span> →
+            失敗時 <span style="color:#a78bfa;">② GPT</span> →
+            失敗時 <span style="color:#f9a8d4;">③ Claude Sonnet</span>（順次フォールバック）
+          </div>
+        </div>
+      </div>
+
+    </div>
+  </div>
+
+  <hr class="separator">
+
   <!-- ═══ Path C ═══ -->
   <div class="phase">
     <div class="node" style="background: rgba(255,255,255,0.02); border: 1px dashed rgba(255,255,255,0.1);">
@@ -808,6 +925,10 @@
     <div class="legend-item">
       <div class="legend-dot" style="background: #2dd4bf;"></div>
       API（フロントエンド）
+    </div>
+    <div class="legend-item">
+      <div class="legend-dot" style="background: #f9a8d4;"></div>
+      APIキー管理
     </div>
     <div class="legend-item">
       <span class="node-badge badge-parallel" style="font-size: 10px;">並列</span>
