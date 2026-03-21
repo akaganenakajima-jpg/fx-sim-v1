@@ -47,7 +47,7 @@ function buildSystemInstruction(instrument: InstrumentConfig): string {
     `以下のデータを分析し ${instrument.pair} の売買判断を JSON で返してください。` +
     `既にオープンポジションがある場合は原則 HOLD を返すこと。` +
     `TP/SL は${instrument.tpSlHint}の範囲で設定すること。` +
-    `【重要】リスクリワード比（TP距離÷SL距離）は必ず1.5以上にすること。SLは狭く、TPは広く設定せよ。確信度が低い場合はHOLDを返すこと。` +
+    `【重要】リスクリワード比（TP距離÷SL距離）は必ず1.5以上にすること。SLは少なくとも通常の時間足ボラティリティ（ATR）1本分の幅を確保せよ。ATR以下のSLは通常のノイズで損切りされるため禁止。確信度が低い場合はHOLDを返すこと。` +
     `\n【手法分類】"strategy"フィールドで判断手法を分類せよ: trend_follow(トレンド順張り), mean_reversion(逆張り), breakout(ブレイクアウト), news_driven(ニュース起因), range_trade(レンジ売買)` +
     `\n【確信度】"confidence"フィールドで確信度を0-100で示せ。40未満ならHOLDを推奨。` +
     `\n必ず以下のフォーマットのみで返答してください:\n` +
@@ -77,7 +77,7 @@ function buildUserMessage(params: {
   // VIX連動TP/SL幅: VIX高→幅広、VIX低→幅狭
   const vix = indicators.vix ?? 20;
   const vixMultiplier = vix > 30 ? 1.5 : vix > 25 ? 1.2 : vix > 20 ? 1.0 : 0.8;
-  const tpSlNote = `TP/SLは${instrument.tpSlHint}を基準に、現在VIX=${vix.toFixed(1)}のため幅を${vixMultiplier}倍に調整すること。リスクリワード比（TP距離÷SL距離）は必ず1.5以上を確保すること。`;
+  const tpSlNote = `TP/SLは${instrument.tpSlHint}を基準に、現在VIX=${vix.toFixed(1)}のため幅を${vixMultiplier}倍に調整すること。リスクリワード比（TP距離÷SL距離）は必ず1.5以上を確保すること。\n⚠️ SL距離の最低ライン: ${instrument.tpSlMin}（これ未満はシステムが自動拒否します）\n推奨SL距離: ${instrument.tpSlMin}の1.5〜2.5倍`;
 
   return [
     `取引対象: ${instrument.pair}`,
@@ -377,6 +377,7 @@ export interface NewsAnalysisItem {
   affected_pairs: string[];
   link?: string;
   og_description?: string; // B2でfetch後に付与
+  [key: string]: unknown; // インデックスシグネチャ（translateTitlesWithHaiku互換）
 }
 
 /** Path B B1出力 */
