@@ -326,11 +326,15 @@ export async function getApiStatus(db: D1Database, tradingEnv?: { TRADING_ENABLE
   try {
     const cachedRaw = await db.prepare("SELECT value FROM market_cache WHERE key = 'latest_news'").first<{ value: string }>();
     if (cachedRaw?.value) {
-      const cached: Array<{ title: string; title_ja?: string | null; pubDate: string; description: string; source?: string }> = JSON.parse(cachedRaw.value);
+      const cached: Array<{ title: string; title_ja?: string | null; desc_ja?: string | null; pubDate: string; description: string; source?: string }> = JSON.parse(cachedRaw.value);
       const existingTitles = new Set(latestNews.map(n => n.title));
       for (const item of cached) {
         if (item.title && !existingTitles.has(item.title)) {
-          latestNews.push({ ...item, title: item.title_ja || item.title });
+          latestNews.push({
+            ...item,
+            title: item.title_ja || item.title,
+            description: item.desc_ja || item.description,
+          });
           existingTitles.add(item.title);
         }
       }
