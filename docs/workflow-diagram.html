@@ -847,51 +847,34 @@
     <div class="node bg-api">
       <div class="node-title">
         📱 資産タブ下部モーダル — ニュース一覧
-        <span class="node-badge badge-parallel">3層マージ + ソート</span>
+        <span class="node-badge badge-parallel">キャッシュ参照 + 分析マージ</span>
       </div>
       <div class="node-desc">
-        APIリクエスト毎に以下のソースをマージし、<code>pubDate</code>降順で最大30件を返す。<br>
-        <strong>Layer 1+2はcron非依存で単体動作可能。</strong> Layer 3と分析マージはPath Bキャッシュに依存。
+        API側ではRSS取得を行わず、cron側で<code>filterAndTranslateWithHaiku()</code>処理済みのキャッシュのみを参照。<br>
+        <strong>ニュースの取得・フィルタ・翻訳は全てcron側の責務。</strong>API側はキャッシュ読み取り＋分析データのマージのみ。
       </div>
 
       <div class="merge-layers">
         <div class="merge-layer">
-          <span class="merge-layer-num">Layer 1</span>
+          <span class="merge-layer-num">メインソース</span>
           <div class="merge-layer-body">
-            <strong>RSSライブ取得</strong> — <code>fetchNews()</code><br>
-            CNBC / Bloomberg / FXStreet / CoinDesk / Reuters / Nikkei / Minkabu をリアルタイム取得。
-            失敗時は後続レイヤーで補完。
-          </div>
-        </div>
-        <div class="merge-layer">
-          <span class="merge-layer-num">Layer 2</span>
-          <div class="merge-layer-body">
-            <strong>decisionsキャッシュ補完</strong> — <code>decisions.news_summary</code><br>
-            最新5件のdecisionに保存されたニュースサマリーJSONを参照。
-            RSSで取得できなかった記事を補う。
-          </div>
-        </div>
-        <div class="merge-layer">
-          <span class="merge-layer-num">Layer 3</span>
-          <div class="merge-layer-body">
-            <strong>Path Bキャッシュ</strong> — <code>market_cache['latest_news']</code><br>
-            cron実行時にPath Bが保存したキャッシュ。<strong>title_ja</strong>は<code>filterAndTranslateWithHaiku()</code>で全記事に付与済み。
-            existingTitlesに存在しない記事を追加。
+            <strong>latest_newsキャッシュ</strong> — <code>market_cache['latest_news']</code><br>
+            cron毎分更新。<code>filterAndTranslateWithHaiku()</code>で<strong>フィルタ済み＋title_ja・desc_ja付き</strong>。
+            日本語タイトル・概要をそのまま使用。
           </div>
         </div>
         <div class="merge-layer">
           <span class="merge-layer-num">分析マージ</span>
           <div class="merge-layer-body">
             <strong>Path B B1分析結果</strong> — <code>market_cache['news_analysis']</code><br>
-            attention/impact付きの分析データ。latestNewsにないタイトルは<strong>先頭に挿入</strong>（重要ニュース優先）。
+            attention/impact付きの分析データ。キャッシュにないタイトルのみ<strong>先頭に挿入</strong>（重要ニュース優先）。
           </div>
         </div>
       </div>
 
       <div class="data-flow" style="border-left-color: rgba(20,184,166,0.4); margin-top: 12px;">
         📤 出力: <code>latestNews[]</code>（最大30件, pubDate降順）→ フロントエンドのモーダルに渡す<br>
-        ⚠️ <code>title_ja</code>は<code>filterAndTranslateWithHaiku()</code>で全記事に付与済みのためPath B非依存。
-        attention ニュースの先頭挿入のみ Path B キャッシュ依存。APIリクエスト側でAI呼び出しなし。
+        ✅ APIリクエスト側でRSS取得・AI呼び出しなし。キャッシュ参照のみで高速レスポンス。
       </div>
     </div>
   </div>
