@@ -29,10 +29,15 @@ export interface FetchNewsResult {
 interface SourceDef {
   name: string;
   url: string;
+  /** 対象ペア（省略時 = 全ペア共通）。指定した場合はそのペアのAI分析時のみ使用 */
+  pairs?: string[];
 }
 
+// 暗号資産ペア一覧（ペア別ニュースのタグ付けに使用）
+const CRYPTO_PAIRS = ['BTC/USD', 'ETH/USD', 'SOL/USD'];
+
 const SOURCES: SourceDef[] = [
-  // === 英語速報（description付き、直接使用）===
+  // === 英語速報（全ペア共通）===
   { name: 'CNBC',      url: 'https://search.cnbc.com/rs/search/combinedcms/view.xml?partnerId=wrss01&id=100003114' },
   { name: 'CoinDesk',  url: 'https://www.coindesk.com/arc/outboundfeeds/rss/' },
   { name: 'FXStreet',  url: 'https://www.fxstreet.com/rss' },
@@ -44,8 +49,31 @@ const SOURCES: SourceDef[] = [
   { name: 'Minkabu_FX',         url: 'https://assets.wor.jp/rss/rdf/minkabufx/statement.rdf' },
   { name: 'Minkabu_Stock',      url: 'https://assets.wor.jp/rss/rdf/minkabufx/stock.rdf' },
   { name: 'Minkabu_Commodity',  url: 'https://assets.wor.jp/rss/rdf/minkabufx/commodity.rdf' },
+  // === 暗号資産専用（BTC/ETH/SOL のみ）===
+  { name: 'Bitcoinist', url: 'https://bitcoinist.com/feed/', pairs: CRYPTO_PAIRS },
   // 削除: NHK(経済少ない), Investing(9h停止多発), 2NN_Biz(7日前混在), Reuters_JP/top.rdf(Markets+Worldに分割)
 ];
+
+/**
+ * 特定ペアのAI分析用にニュースをフィルタリング
+ * - pairs タグなし（全ペア共通）ソースの記事は常に含む
+ * - pairs タグあり（ペア専用）ソースの記事は対象ペアのみ含む
+ * @param items fetchNews() の結果
+ * @param pair 対象ペア（例: 'BTC/USD'）
+ */
+export function getNewsForPair(items: NewsItem[], pair: string): NewsItem[] {
+  // ソース名 → pairs マッピングを構築
+  const pairSources = new Map<string, string[] | undefined>(
+    SOURCES.map(s => [s.name, s.pairs])
+  );
+  return items.filter(item => {
+    const sourcePairs = pairSources.get(item.source);
+    // pairs 未定義 = 全ペア共通 → 含む
+    if (!sourcePairs) return true;
+    // pairs 定義あり → 対象ペアに含まれる場合のみ含む
+    return sourcePairs.includes(pair);
+  });
+}
 
 function extractCdata(tag: string, xml: string): string {
   const cdataRe = new RegExp(
