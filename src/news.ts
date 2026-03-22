@@ -647,7 +647,7 @@ export async function filterAndTranslateWithHaiku(
 
     // 過去トピックセクション（あれば追加）
     const recentTopicsSection = recentTopics.length > 0
-      ? `\n【配信済みトピック（過去2時間）】\n以下は既に配信済みの記事トピックです。意味的に同じ内容（同じ事象・発表・データを報じている記事）は重複として除外してください。\nタイトルの文字列が異なっていても、報じている事実が同じなら重複です。\n${recentTopics.map(t => `- ${t}`).join('\n')}\n`
+      ? `\n【配信済みトピック（過去2時間）】\n以下は既に配信済みの記事です。まったく同じ発表・声明・数値を報じている記事のみ重複として除外してください。\n同じテーマでも、異なる発言者・新たな数値・異なる角度・追加の事実が含まれる場合は重複ではありません。\n${recentTopics.map(t => `- ${t}`).join('\n')}\n`
       : '';
 
     const prompt = `以下のニュース記事一覧を分析してください。
@@ -660,7 +660,7 @@ export async function filterAndTranslateWithHaiku(
    - まとめ記事（"X things to watch", "weekly roundup", "今週の振り返り"等）
    - 過去の事象を振り返る記事（"how X happened", "what went wrong"等の事後分析）
    - コラム・オピニオン・解説記事で、新しい事実を含まないもの
-   - 配信済みトピックと意味的に同じ内容の記事（異なるソース・異なるタイトルでも同じ事実なら重複）
+   - まったく同じ発表・声明・数値を別ソースが報じているだけの記事（ただし、同テーマでも異なる発言者・新たな数値・異なる角度・追加の事実が含まれる場合は採用する）
    速報性が高く、今後の相場に影響しうる新しい事実・発表・データのみを通すこと
 ${recentTopicsSection}
 【記事一覧】
@@ -963,7 +963,8 @@ export async function updateHaikuResults(
       const reason = rejectMap.get(i) || '除外（理由不明）';
       stmts.push(
         db.prepare(
-          `UPDATE news_raw SET haiku_accepted = -1, reject_reason = ? WHERE hash = ?`
+          // haiku_accepted != 1: 採用済み記事を後続バッチで上書きしない（バグ防止）
+          `UPDATE news_raw SET haiku_accepted = -1, reject_reason = ? WHERE hash = ? AND haiku_accepted != 1`
         ).bind(reason, hash)
       );
     }
