@@ -563,9 +563,11 @@ async function fetchBodyForEmptyDesc(items: NewsItem[]): Promise<Map<number, str
 /** Haikuによるフィルタ+翻訳の結果レコード */
 interface HaikuTranslatedItem {
   index: number;
+  accepted?: boolean;       // true=採用, false=不採用（旧形式は undefined）
   title_ja: string;
   desc_ja: string;
-  topic?: string;  // 5語以内のトピック要約（セマンティック重複排除用）
+  topic?: string;           // 5語以内のトピック要約（セマンティック重複排除用）
+  reject_reason?: string;   // 不採用理由（不採用時のみ）
 }
 
 /**
@@ -594,9 +596,21 @@ export async function filterAndTranslateWithHaiku(
 
     if (cached) {
       const results: HaikuTranslatedItem[] = JSON.parse(cached.value);
-      const filteredItems = results
-        .filter(r => r.index >= 0 && r.index < items.length)
+      const acceptedCached = results.filter(r =>
+        r.index >= 0 && r.index < items.length && (r.accepted !== false)
+      );
+      const filteredItems = acceptedCached
         .map(r => ({ ...items[r.index], title_ja: r.title_ja, desc_ja: r.desc_ja }));
+
+      // キャッシュヒット時も news_raw のフラグを更新（未処理→採用/不採用）
+      const rejectMapCached = new Map<number, string>();
+      for (const r of results) {
+        if (r.accepted === false && r.reject_reason) {
+          rejectMapCached.set(r.index, r.reject_reason);
+        }
+      }
+      updateHaikuResults(items, acceptedCached, rejectMapCached, db).catch(() => {});
+
       console.log(`[news] filter+translate: キャッシュヒット (${filteredItems.length}/${items.length}件通過)`);
       await _updateLatestNewsCache(filteredItems, db);
       return filteredItems;
@@ -653,12 +667,17 @@ ${recentTopicsSection}
 ${articleLines}
 
 【出力形式】
-関連する記事のみを以下のJSON配列で返してください。
-- title_ja: 日本語タイトル（30字以内に要約）
-- desc_ja: 日本語概要（descがあれば翻訳・要約、なければ60字以内で要約）
-- topic: この記事の核心を10字以内の日本語で（例: "米CPI上振れ", "日銀利上げ", "原油急落"）
+全記事について、採用/不採用を判定し、以下のJSON配列で返してください。
 
-[{"index":0,"title_ja":"日本語タイトル","desc_ja":"日本語概要","topic":"核心10字"},...]
+採用する記事:
+  {"index":0,"accepted":true,"title_ja":"日本語タイトル","desc_ja":"日本語概要","topic":"核心10字"}
+
+除外する記事:
+  {"index":1,"accepted":false,"reject_reason":"スポーツ"}
+
+reject_reasonは以下のいずれか: "無関係","まとめ記事","事後分析","オピニオン","重複","その他"
+
+[{"index":0,"accepted":true,"title_ja":"...", ...},{"index":1,"accepted":false,"reject_reason":"無関係"},...]
 
 JSON配列のみを返し、他の文字は一切含めないでください。`;
 
@@ -697,12 +716,28 @@ JSON配列のみを返し、他の文字は一切含めないでください。`
       ).bind(cacheKey, JSON.stringify(results)).run();
     } catch { /* キャッシュ書き込み失敗は無視 */ }
 
-    const filteredItems = results
-      .filter(r => r.index >= 0 && r.index < items.length)
+    // 新形式: accepted フィールドで採用/不採用を判定
+    // 旧形式互換: accepted が無い場合は全て採用扱い
+    const acceptedResults = results.filter(r =>
+      r.index >= 0 && r.index < items.length && (r.accepted !== false)
+    );
+    const filteredItems = acceptedResults
       .map(r => ({ ...items[r.index], title_ja: r.title_ja, desc_ja: r.desc_ja }));
 
+    // news_raw に Haiku 結果を反映（採用/不採用フラグ＋理由）
+    const rejectMap = new Map<number, string>();
+    for (const r of results) {
+      if (r.accepted === false && r.reject_reason) {
+        rejectMap.set(r.index, r.reject_reason);
+      }
+    }
+    // 非同期で更新（メインフローをブロックしない）
+    updateHaikuResults(items, acceptedResults, rejectMap, db).catch(e =>
+      console.warn(`[news_raw] updateHaikuResults error: ${String(e).slice(0, 100)}`)
+    );
+
     // 過去トピックキャッシュ更新: 新トピックを追加し、最大50件に制限
-    const newTopics = results
+    const newTopics = acceptedResults
       .map(r => r.topic)
       .filter((t): t is string => !!t);
     if (newTopics.length > 0) {
@@ -834,6 +869,138 @@ JSON配列のみを返し、他の文字は一切含めないでください。`
     for (const t of toTranslate) {
       newsAnalysis[t.analysisIdx].title_ja = t.title;
     }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// news_raw ステージングテーブル操作（ETL Extract層）
+// ---------------------------------------------------------------------------
+
+/** 記事のハッシュ値を計算（source + title で一意性を担保） */
+function hashArticle(source: string, title: string): string {
+  let h = 0;
+  const s = `${source}||${title}`;
+  for (let i = 0; i < s.length; i++) {
+    h = ((h << 5) - h + s.charCodeAt(i)) | 0;
+  }
+  return (h >>> 0).toString(36);
+}
+
+/**
+ * Haiku フィルタ前の全記事を news_raw テーブルに保存する
+ * 既に同じ hash が存在する場合は INSERT OR IGNORE で重複排除
+ *
+ * @returns 新規挿入された件数
+ */
+export async function saveRawNews(
+  items: NewsItem[],
+  db: D1Database,
+): Promise<number> {
+  if (items.length === 0) return 0;
+  const now = new Date().toISOString();
+  let inserted = 0;
+
+  // D1 は batch で最大100ステートメント
+  const batchSize = 50;
+  for (let i = 0; i < items.length; i += batchSize) {
+    const batch = items.slice(i, i + batchSize);
+    const stmts = batch.map(item =>
+      db.prepare(
+        `INSERT OR IGNORE INTO news_raw (hash, source, title, description, pub_date, url, fetched_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`
+      ).bind(
+        hashArticle(item.source, item.title),
+        item.source,
+        item.title,
+        item.description?.slice(0, 500) || null,
+        item.pubDate || null,
+        item.url || null,
+        now,
+      )
+    );
+    try {
+      const results = await db.batch(stmts);
+      inserted += results.filter(r => ((r.meta as { changes?: number }).changes ?? 0) > 0).length;
+    } catch (e) {
+      console.warn(`[news_raw] batch insert error: ${String(e).slice(0, 100)}`);
+    }
+  }
+
+  if (inserted > 0) {
+    console.log(`[news_raw] ${inserted}/${items.length}件を新規保存`);
+  }
+  return inserted;
+}
+
+/**
+ * Haiku フィルタ結果で news_raw の採用/不採用フラグを更新する
+ *
+ * @param allItems    - フィルタ前の全記事
+ * @param accepted    - Haiku が採用した記事（index, title_ja, desc_ja 付き）
+ * @param rejectMap   - index → 不採用理由のマップ（Haikuが返した場合）
+ */
+export async function updateHaikuResults(
+  allItems: NewsItem[],
+  accepted: Array<{ index: number; title_ja: string; desc_ja: string }>,
+  rejectMap: Map<number, string>,
+  db: D1Database,
+): Promise<void> {
+  const acceptedSet = new Set(accepted.map(a => a.index));
+  const stmts: D1PreparedStatement[] = [];
+
+  for (let i = 0; i < allItems.length; i++) {
+    const item = allItems[i];
+    const hash = hashArticle(item.source, item.title);
+
+    if (acceptedSet.has(i)) {
+      const a = accepted.find(x => x.index === i)!;
+      stmts.push(
+        db.prepare(
+          `UPDATE news_raw SET haiku_accepted = 1, title_ja = ?, desc_ja = ? WHERE hash = ?`
+        ).bind(a.title_ja, a.desc_ja, hash)
+      );
+    } else {
+      const reason = rejectMap.get(i) || '除外（理由不明）';
+      stmts.push(
+        db.prepare(
+          `UPDATE news_raw SET haiku_accepted = -1, reject_reason = ? WHERE hash = ?`
+        ).bind(reason, hash)
+      );
+    }
+  }
+
+  // バッチ実行
+  const batchSize = 50;
+  for (let i = 0; i < stmts.length; i += batchSize) {
+    try {
+      await db.batch(stmts.slice(i, i + batchSize));
+    } catch (e) {
+      console.warn(`[news_raw] update batch error: ${String(e).slice(0, 100)}`);
+    }
+  }
+
+  const acceptedCount = acceptedSet.size;
+  const rejectedCount = allItems.length - acceptedCount;
+  console.log(`[news_raw] Haiku結果反映: 採用${acceptedCount}件, 不採用${rejectedCount}件`);
+}
+
+/**
+ * 古い news_raw レコードを削除（TTL パージ）
+ * IPA db.md §5.2: レンジパーティション相当の日付ベースTTL
+ */
+export async function purgeOldNewsRaw(db: D1Database, daysToKeep = 7): Promise<number> {
+  try {
+    const result = await db.prepare(
+      `DELETE FROM news_raw WHERE fetched_at < datetime('now', ? || ' days')`
+    ).bind(-daysToKeep).run();
+    const deleted = (result.meta as { changes?: number }).changes ?? 0;
+    if (deleted > 0) {
+      console.log(`[news_raw] TTLパージ: ${deleted}件削除 (${daysToKeep}日以上前)`);
+    }
+    return deleted;
+  } catch (e) {
+    console.warn(`[news_raw] purge error: ${String(e).slice(0, 100)}`);
+    return 0;
   }
 }
 
