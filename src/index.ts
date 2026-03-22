@@ -3,7 +3,7 @@
 // fetch:     GET / → ダッシュボード、GET /api/status → JSON、GET /style.css・/app.js → 静的ファイル
 
 import { getUSDJPY } from './rate';
-import { fetchNews, filterAndTranslateWithHaiku, type SourceFetchStat } from './news';
+import { fetchNews, filterAndTranslateWithHaiku, getNewsForPair, type SourceFetchStat } from './news';
 import { getMarketIndicators } from './indicators';
 import { getDecisionWithHedge, fetchOgDescription, newsStage1WithHedge, newsStage2, RateLimitError, type NewsAnalysisItem, type NewsStage1Result } from './gemini';
 import { checkAndCloseAllPositions, openPosition } from './position';
@@ -633,7 +633,7 @@ async function runAIDecisions(
             instrument,
             rate: currentRate,
             indicators,
-            news,
+            news: getNewsForPair(news, instrument.pair),
             hasOpenPosition,
             recentTrades,
             allPositionDirections,
