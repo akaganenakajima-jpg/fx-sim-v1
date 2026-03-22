@@ -43,6 +43,8 @@ const SKIP_SCHEDULES: SkipSchedule[] = [
   { weekday: 5, nthWeek: 3, months: [1, 3, 4, 6, 7, 9, 10, 12], hour: 2, min: 0, duration: 180 },
   { weekday: 4, nthWeek: 4, months: [1, 3, 4, 6, 7, 9, 10, 12], hour: 2, min: 0, duration: 180 },
   { weekday: 5, nthWeek: 4, months: [1, 3, 4, 6, 7, 9, 10, 12], hour: 2, min: 0, duration: 180 },
+  // 早朝禁止帯 (JST 3:00〜7:00 = UTC 18:00〜22:00): 流動性低、スプレッド拡大、機関不在
+  { hour: 18, min: 0, duration: 240 },
 ];
 
 // 定期強制呼び出し間隔（分）
