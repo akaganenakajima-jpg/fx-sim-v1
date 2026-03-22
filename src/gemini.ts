@@ -47,6 +47,7 @@ function buildSystemInstruction(instrument: InstrumentConfig): string {
     `以下のデータを分析し ${instrument.pair} の売買判断を JSON で返してください。` +
     `既にオープンポジションがある場合は原則 HOLD を返すこと。` +
     `TP/SL は${instrument.tpSlHint}の範囲で設定すること。` +
+    `【絶対価格必須】tp_rate・sl_rate は現在レートに近い絶対価格で返すこと。差分・Pips・パーセント・オフセットで返すのは厳禁。例: 現在レート=69277なら TP=68000、SL=70000 のように現在値に近い実際の価格を返せ。` +
     `【重要】リスクリワード比（TP距離÷SL距離）は必ず1.5以上にすること。SLは少なくとも通常の時間足ボラティリティ（ATR）1本分の幅を確保せよ。ATR以下のSLは通常のノイズで損切りされるため禁止。確信度が低い場合はHOLDを返すこと。` +
     `\n【手法分類】"strategy"フィールドで判断手法を分類せよ: trend_follow(トレンド順張り), mean_reversion(逆張り), breakout(ブレイクアウト), news_driven(ニュース起因), range_trade(レンジ売買)` +
     `\n【確信度】"confidence"フィールドで確信度を0-100で示せ。40未満ならHOLDを推奨。` +
