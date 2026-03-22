@@ -82,8 +82,8 @@ const SOURCES: SourceDef[] = [
   { name: 'Finnhub_General',  type: 'finnhub',    enabled: true,  url: 'https://finnhub.io/api/v1/news?category=general' },
   // MarketAux（sentiment_score -1〜+1 付き・金融ニュース特化）— 要 MARKETAUX_API_KEY
   { name: 'MarketAux',        type: 'marketaux',  enabled: true,  url: 'https://api.marketaux.com/v1/news/all?language=en&filter_entities=true&limit=10' },
-  // CryptoPanic（bullish/bearish 投票スコア付き・暗号資産専用）— 要 CRYPTOPANIC_API_KEY
-  { name: 'CryptoPanic',      type: 'cryptopanic',enabled: true,  url: 'https://cryptopanic.com/api/free/v1/posts/?currencies=BTC,ETH,SOL', pairs: CRYPTO_PAIRS },
+  // CryptoPanic（bullish/bearish 投票スコア付き・暗号資産専用）— 無料版終了のため無効化（2026-03-23）
+  { name: 'CryptoPanic',      type: 'cryptopanic',enabled: false, url: 'https://cryptopanic.com/api/free/v1/posts/?currencies=BTC,ETH,SOL', pairs: CRYPTO_PAIRS },
 ];
 
 /**
