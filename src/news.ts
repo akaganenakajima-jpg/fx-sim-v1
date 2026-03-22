@@ -359,6 +359,7 @@ interface HaikuTranslatedItem {
   index: number;
   title_ja: string;
   desc_ja: string;
+  topic?: string;  // 5語以内のトピック要約（セマンティック重複排除用）
 }
 
 /**
@@ -399,7 +400,18 @@ export async function filterAndTranslateWithHaiku(
   // descriptionが空の記事はURL先から本文を取得
   const bodyMap = await fetchBodyForEmptyDesc(items);
 
-  // Haiku API 呼び出し: フィルタ + 翻訳を1回のバッチで
+  // 過去トピックキャッシュ読み込み（セマンティック重複排除用）
+  let recentTopics: string[] = [];
+  try {
+    const topicCache = await db.prepare(
+      "SELECT value FROM market_cache WHERE key = 'recent_topics' AND updated_at > datetime('now', '-2 hours')"
+    ).first<{ value: string }>();
+    if (topicCache) {
+      recentTopics = JSON.parse(topicCache.value);
+    }
+  } catch { /* キャッシュ読み取り失敗は無視 */ }
+
+  // Haiku API 呼び出し: フィルタ + 翻訳 + セマンティック重複排除を1回のバッチで
   try {
     const start = Date.now();
 
@@ -413,18 +425,24 @@ export async function filterAndTranslateWithHaiku(
         : `${i}: title=${item.title}`;
     }).join('\n');
 
+    // 過去トピックセクション（あれば追加）
+    const recentTopicsSection = recentTopics.length > 0
+      ? `\n【配信済みトピック（過去2時間）】\n以下は既に配信済みの記事トピックです。意味的に同じ内容（同じ事象・発表・データを報じている記事）は重複として除外してください。\nタイトルの文字列が異なっていても、報じている事実が同じなら重複です。\n${recentTopics.map(t => `- ${t}`).join('\n')}\n`
+      : '';
+
     const prompt = `以下のニュース記事一覧を分析してください。
 
 【作業内容】
 1. 各記事がFX・為替・金融・経済・株式・債券・商品市場・地政学リスク・金融政策・マクロ経済に関連するか判定する
 2. 関連する記事のみ、タイトルと概要を日本語に翻訳する（既に日本語なら原文のまま）
-3. 以下に該当する記事は無関係として除外する:
+3. 以下に該当する記事は除外する:
    - スポーツ・芸能・社会面・天気・事件・生活情報
    - まとめ記事（"X things to watch", "weekly roundup", "今週の振り返り"等）
    - 過去の事象を振り返る記事（"how X happened", "what went wrong"等の事後分析）
    - コラム・オピニオン・解説記事で、新しい事実を含まないもの
+   - 配信済みトピックと意味的に同じ内容の記事（異なるソース・異なるタイトルでも同じ事実なら重複）
    速報性が高く、今後の相場に影響しうる新しい事実・発表・データのみを通すこと
-
+${recentTopicsSection}
 【記事一覧】
 ${articleLines}
 
@@ -432,8 +450,9 @@ ${articleLines}
 関連する記事のみを以下のJSON配列で返してください。
 - title_ja: 日本語タイトル（30字以内に要約）
 - desc_ja: 日本語概要（descがあれば翻訳・要約、なければ60字以内で要約）
+- topic: この記事の核心を10字以内の日本語で（例: "米CPI上振れ", "日銀利上げ", "原油急落"）
 
-[{"index":0,"title_ja":"日本語タイトル","desc_ja":"日本語概要"},...]
+[{"index":0,"title_ja":"日本語タイトル","desc_ja":"日本語概要","topic":"核心10字"},...]
 
 JSON配列のみを返し、他の文字は一切含めないでください。`;
 
@@ -476,8 +495,22 @@ JSON配列のみを返し、他の文字は一切含めないでください。`
       .filter(r => r.index >= 0 && r.index < items.length)
       .map(r => ({ ...items[r.index], title_ja: r.title_ja, desc_ja: r.desc_ja }));
 
+    // 過去トピックキャッシュ更新: 新トピックを追加し、最大50件に制限
+    const newTopics = results
+      .map(r => r.topic)
+      .filter((t): t is string => !!t);
+    if (newTopics.length > 0) {
+      const mergedTopics = [...new Set([...newTopics, ...recentTopics])].slice(0, 50);
+      try {
+        await db.prepare(
+          "INSERT OR REPLACE INTO market_cache (key, value, updated_at) VALUES (?, ?, datetime('now'))"
+        ).bind('recent_topics', JSON.stringify(mergedTopics)).run();
+      } catch { /* キャッシュ書き込み失敗は無視 */ }
+      console.log(`[news] recent_topics更新: ${newTopics.length}件追加, 合計${mergedTopics.length}件`);
+    }
+
     const removed = items.length - filteredItems.length;
-    console.log(`[news] filter+translate: ${removed}件除外, ${filteredItems.length}/${items.length}件通過, title_ja+desc_ja付与 (${latencyMs}ms)`);
+    console.log(`[news] filter+translate: ${removed}件除外, ${filteredItems.length}/${items.length}件通過, title_ja+desc_ja付与 (${latencyMs}ms) [過去トピック${recentTopics.length}件参照]`);
 
     await _updateLatestNewsCache(filteredItems, db);
     return filteredItems;
