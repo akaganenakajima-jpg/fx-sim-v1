@@ -86,6 +86,7 @@ export interface StatusResponse {
   systemLogs: SystemLog[];
   logStats: LogStats;
   latestNews: Array<{ title: string; pubDate: string; description: string; source?: string }>;
+  acceptedNews: Array<{ id: number; source: string; title_ja: string; desc_ja: string; fetched_at: string }>;
   newsAnalysis: Array<{ index: number; attention: boolean; impact: string | null; title_ja: string | null; title?: string | null }>;
   tradingMode: 'paper' | 'demo' | 'live';
   riskStatus: {
@@ -164,7 +165,7 @@ export interface StatusResponse {
 }
 
 export async function getApiStatus(db: D1Database, tradingEnv?: { TRADING_ENABLED?: string; OANDA_LIVE?: string; RISK_MAX_DAILY_LOSS?: string; RISK_MAX_LIVE_POSITIONS?: string; RISK_MAX_LOT_SIZE?: string; RISK_ANOMALY_THRESHOLD?: string }): Promise<StatusResponse> {
-  const [rateRow, openPositions, perf, latest, recent, sysRow, sparkRaw, perfByPairRaw, recentClosesRaw, _newsRaw, sysLogsRaw, logStatsRaw, instrScoresRaw, slPatternsRow, cronTimingsRow, todayDecisionCountRow] =
+  const [rateRow, openPositions, perf, latest, recent, sysRow, sparkRaw, perfByPairRaw, recentClosesRaw, acceptedNewsRaw, sysLogsRaw, logStatsRaw, instrScoresRaw, slPatternsRow, cronTimingsRow, todayDecisionCountRow] =
     await Promise.all([
       db
         .prepare("SELECT value FROM market_cache WHERE key = 'prev_rate_USD/JPY'")
@@ -233,10 +234,10 @@ export async function getApiStatus(db: D1Database, tradingEnv?: { TRADING_ENABLE
         .prepare(`SELECT * FROM positions WHERE status = 'CLOSED' ORDER BY closed_at DESC LIMIT 30`)
         .all<Position>(),
 
-      // 直近ニュースサマリー（news_summaryがある最新5件）
+      // news_raw から採用記事（最大30件、7日TTL+purgeで自動管理）
       db
-        .prepare(`SELECT news_summary FROM decisions WHERE news_summary IS NOT NULL ORDER BY id DESC LIMIT 5`)
-        .all<{ news_summary: string }>(),
+        .prepare(`SELECT id, source, title_ja, desc_ja, fetched_at FROM news_raw WHERE haiku_accepted = 1 ORDER BY id DESC LIMIT 30`)
+        .all<{ id: number; source: string; title_ja: string; desc_ja: string; fetched_at: string }>(),
 
       // システムログ（直近30件）
       db
@@ -485,6 +486,13 @@ export async function getApiStatus(db: D1Database, tradingEnv?: { TRADING_ENABLE
     riskStatus,
     instrumentScores: instrScoresRaw.results ?? [],
     latestNews,
+    acceptedNews: (acceptedNewsRaw.results ?? []).map(r => ({
+      id: r.id,
+      source: r.source,
+      title_ja: r.title_ja,
+      desc_ja: r.desc_ja,
+      fetched_at: r.fetched_at,
+    })),
     newsAnalysis,
     systemLogs: sysLogs,
     logStats: {
