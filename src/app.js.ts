@@ -844,6 +844,13 @@ export const JS = `
       var sourceHtml = item.source
         ? '<span style="font-size:11px;font-weight:600;color:var(--blue);background:rgba(10,132,255,0.1);padding:2px 8px;border-radius:4px;margin-left:8px">' + escHtml(item.source) + '</span>'
         : '';
+      var urlHtml = item.url
+        ? '<div style="margin-top:14px;padding-top:12px;border-top:1px solid var(--separator)">' +
+            '<a href="' + escHtml(item.url) + '" target="_blank" rel="noopener noreferrer" ' +
+            'style="font-size:12px;color:var(--blue);text-decoration:underline;word-break:break-all;line-height:1.4">' +
+            escHtml(item.url) + '</a>' +
+          '</div>'
+        : '';
       el('sheet-body').innerHTML =
         '<div style="display:flex;align-items:center;margin-bottom:8px">' +
           (dateStr ? '<span style="font-size:12px;color:var(--label-secondary)">' + dateStr + '</span>' : '') +
@@ -851,7 +858,8 @@ export const JS = `
         '</div>' +
         '<div style="font-size:15px;font-weight:600;line-height:1.5;margin-bottom:12px">' + escHtml(item.title_ja || item.title) + '</div>' +
         impactHtml +
-        ((item.desc_ja || item.description) ? '<div style="font-size:13px;color:var(--label-secondary);line-height:1.6">' + escHtml(item.desc_ja || item.description) + '</div>' : '');
+        ((item.desc_ja || item.description) ? '<div style="font-size:13px;color:var(--label-secondary);line-height:1.6">' + escHtml(item.desc_ja || item.description) + '</div>' : '') +
+        urlHtml;
       lockScroll();
       el('sheet').classList.add('open');
       el('sheet-backdrop').classList.add('visible');
@@ -2218,7 +2226,7 @@ export const JS = `
     // ニュースドロワー（acceptedNews優先、なければlatestNewsフォールバック）
     var newsForDrawer = (data.acceptedNews || []).length > 0
       ? (data.acceptedNews || []).map(function(n) {
-          return { title: n.title_ja, title_ja: n.title_ja, description: n.desc_ja, desc_ja: n.desc_ja, pubDate: n.fetched_at, source: n.source };
+          return { title: n.title_ja, title_ja: n.title_ja, description: n.desc_ja, desc_ja: n.desc_ja, pubDate: n.fetched_at, source: n.source, url: n.url || null };
         })
       : (data.latestNews || []);
     if (window._renderNews) window._renderNews(newsForDrawer, data.newsAnalysis || []);
