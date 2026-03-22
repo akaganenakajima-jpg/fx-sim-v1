@@ -3,7 +3,7 @@
 // fetch:     GET / → ダッシュボード、GET /api/status → JSON、GET /style.css・/app.js → 静的ファイル
 
 import { getUSDJPY } from './rate';
-import { fetchNews, filterAndTranslateWithHaiku, getNewsForPair, type SourceFetchStat } from './news';
+import { fetchNews, filterAndTranslateWithHaiku, getNewsForPair, type SourceFetchStat, type NewsApiKeys } from './news';
 import { getMarketIndicators } from './indicators';
 import { getDecisionWithHedge, fetchOgDescription, newsStage1WithHedge, newsStage2, RateLimitError, type NewsAnalysisItem, type NewsStage1Result } from './gemini';
 import { checkAndCloseAllPositions, openPosition } from './position';
@@ -74,6 +74,11 @@ interface Env {
   FINNHUB_API_KEY?: string;
   // Path A/B 並列化フラグ（'true' で有効、未設定 or それ以外で直列）
   PARALLEL_PATH_AB?: string;
+  // JSON API ニュースソース
+  POLYGON_API_KEY?: string;
+  MARKETAUX_API_KEY?: string;
+  CRYPTOPANIC_API_KEY?: string;
+  // FINNHUB_API_KEY は calendar.ts と共有（上記に既に定義）
 }
 
 // ── キー別クールダウン管理 ──
@@ -242,8 +247,15 @@ interface MarketData {
 
 /** 市場データ一括取得（RSS/Reddit/Yahoo Finance/Frankfurter + キャッシュフォールバック） */
 async function fetchMarketData(env: Env, now: Date): Promise<MarketData | null> {
+  const newsApiKeys: NewsApiKeys = {
+    polygon:     env.POLYGON_API_KEY,
+    finnhub:     env.FINNHUB_API_KEY,
+    marketaux:   env.MARKETAUX_API_KEY,
+    cryptopanic: env.CRYPTOPANIC_API_KEY,
+  };
+
   const [newsResult, indicatorsResult, frankfurterResult] = await Promise.allSettled([
-    fetchNews(),
+    fetchNews(newsApiKeys),
     getMarketIndicators(env.TWELVE_DATA_API_KEY),
     getUSDJPY(),
   ]);
@@ -276,7 +288,7 @@ async function fetchMarketData(env: Env, now: Date): Promise<MarketData | null> 
   // Haiku でフィルタ + タイトル・概要の日本語化を一括処理（title_ja・desc_ja付与）
   const news = await filterAndTranslateWithHaiku(newsData.items, env.ANTHROPIC_API_KEY, env.DB);
   const activeNewsSources = [...new Set(news.map(n => n.source))].join(',');
-  const indicators = indicatorsResult.status === 'fulfilled' ? indicatorsResult.value : { vix: null, us10y: null, nikkei: null, sp500: null, usdjpy: null, btcusd: null, gold: null, eurusd: null, ethusd: null, crudeoil: null, natgas: null, copper: null, silver: null, gbpusd: null, audusd: null, solusd: null, dax: null, nasdaq: null, uk100: null, hk33: null };
+  const indicators = indicatorsResult.status === 'fulfilled' ? indicatorsResult.value : { vix: null, us10y: null, nikkei: null, sp500: null, usdjpy: null, btcusd: null, gold: null, eurusd: null, ethusd: null, crudeoil: null, natgas: null, copper: null, silver: null, gbpusd: null, audusd: null, solusd: null, dax: null, nasdaq: null, uk100: null, hk33: null, fearGreed: null, fearGreedLabel: null, cftcJpyNetLong: null };
   const frankfurterRate = frankfurterResult.status === 'fulfilled' ? frankfurterResult.value : null;
 
   const usdJpyRate = indicators.usdjpy ?? frankfurterRate;
