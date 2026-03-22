@@ -1,5 +1,7 @@
 // 日本語・英語ニュースを複数ソースから取得
 // ソース別の計測データ（レイテンシ・鮮度）も返す
+// v3: JSON API ソース追加（Polygon / Finnhub / MarketAux / CryptoPanic）
+//     各ソースに enabled フラグ追加（false でスキップ）
 
 export interface NewsItem {
   title: string;
@@ -26,32 +28,62 @@ export interface FetchNewsResult {
   stats: SourceFetchStat[];
 }
 
+/** ソースタイプ: rss は既存の XML 解析、それ以外は JSON API */
+type SourceType = 'rss' | 'polygon' | 'finnhub' | 'marketaux' | 'cryptopanic';
+
 interface SourceDef {
   name: string;
   url: string;
+  /** ソースタイプ（省略時 = 'rss'）*/
+  type?: SourceType;
+  /** ON/OFFスイッチ（false で完全スキップ。精度・速報性を見ながら調整）*/
+  enabled: boolean;
   /** 対象ペア（省略時 = 全ペア共通）。指定した場合はそのペアのAI分析時のみ使用 */
   pairs?: string[];
+}
+
+/** fetchNews() に渡す JSON API キー */
+export interface NewsApiKeys {
+  polygon?: string;
+  finnhub?: string;
+  marketaux?: string;
+  cryptopanic?: string;
 }
 
 // 暗号資産ペア一覧（ペア別ニュースのタグ付けに使用）
 const CRYPTO_PAIRS = ['BTC/USD', 'ETH/USD', 'SOL/USD'];
 
+// ─────────────────────────────────────────────────────────────────────────────
+// ニュースソース設定
+// enabled: true/false で ON/OFF（変更後 wrangler deploy するだけで反映）
+// ─────────────────────────────────────────────────────────────────────────────
 const SOURCES: SourceDef[] = [
-  // === 英語速報（全ペア共通）===
-  { name: 'CNBC',      url: 'https://search.cnbc.com/rs/search/combinedcms/view.xml?partnerId=wrss01&id=100003114' },
-  { name: 'CoinDesk',  url: 'https://www.coindesk.com/arc/outboundfeeds/rss/' },
-  { name: 'FXStreet',  url: 'https://www.fxstreet.com/rss' },
-  { name: 'Bloomberg', url: 'https://feeds.bloomberg.com/markets/news.rss' },
-  // === 日本語速報（wor.jp経由、超低レイテンシ）===
-  { name: 'Reuters_Markets',    url: 'https://assets.wor.jp/rss/rdf/reuters/markets.rdf' },
-  { name: 'Reuters_World',      url: 'https://assets.wor.jp/rss/rdf/reuters/world.rdf' },
-  { name: 'Nikkei',             url: 'https://assets.wor.jp/rss/rdf/nikkei/news.rdf' },
-  { name: 'Minkabu_FX',         url: 'https://assets.wor.jp/rss/rdf/minkabufx/statement.rdf' },
-  { name: 'Minkabu_Stock',      url: 'https://assets.wor.jp/rss/rdf/minkabufx/stock.rdf' },
-  { name: 'Minkabu_Commodity',  url: 'https://assets.wor.jp/rss/rdf/minkabufx/commodity.rdf' },
-  // === 暗号資産専用（BTC/ETH/SOL のみ）===
-  { name: 'Bitcoinist', url: 'https://bitcoinist.com/feed/', pairs: CRYPTO_PAIRS },
-  // 削除: NHK(経済少ない), Investing(9h停止多発), 2NN_Biz(7日前混在), Reuters_JP/top.rdf(Markets+Worldに分割)
+  // ═══ RSS（全ペア共通）═══════════════════════════════════════════════════════
+  { name: 'CNBC',             type: 'rss', enabled: true,  url: 'https://search.cnbc.com/rs/search/combinedcms/view.xml?partnerId=wrss01&id=100003114' },
+  { name: 'CoinDesk',         type: 'rss', enabled: true,  url: 'https://www.coindesk.com/arc/outboundfeeds/rss/' },
+  { name: 'FXStreet',         type: 'rss', enabled: true,  url: 'https://www.fxstreet.com/rss' },
+  { name: 'Bloomberg',        type: 'rss', enabled: true,  url: 'https://feeds.bloomberg.com/markets/news.rss' },
+  // 日本語速報（wor.jp 経由、超低レイテンシ）
+  { name: 'Reuters_Markets',  type: 'rss', enabled: true,  url: 'https://assets.wor.jp/rss/rdf/reuters/markets.rdf' },
+  { name: 'Reuters_World',    type: 'rss', enabled: true,  url: 'https://assets.wor.jp/rss/rdf/reuters/world.rdf' },
+  { name: 'Nikkei',           type: 'rss', enabled: true,  url: 'https://assets.wor.jp/rss/rdf/nikkei/news.rdf' },
+  { name: 'Minkabu_FX',       type: 'rss', enabled: true,  url: 'https://assets.wor.jp/rss/rdf/minkabufx/statement.rdf' },
+  { name: 'Minkabu_Stock',    type: 'rss', enabled: true,  url: 'https://assets.wor.jp/rss/rdf/minkabufx/stock.rdf' },
+  { name: 'Minkabu_Commodity',type: 'rss', enabled: true,  url: 'https://assets.wor.jp/rss/rdf/minkabufx/commodity.rdf' },
+  // 暗号資産専用 RSS（BTC/ETH/SOL のみ）
+  { name: 'Bitcoinist',       type: 'rss', enabled: true,  url: 'https://bitcoinist.com/feed/', pairs: CRYPTO_PAIRS },
+
+  // ═══ JSON API（S/A Tier 新規追加）══════════════════════════════════════════
+  // Polygon.io News（センチメント付き・FX/株/暗号資産網羅）— 要 POLYGON_API_KEY
+  { name: 'Polygon',          type: 'polygon',    enabled: true,  url: 'https://api.polygon.io/v2/reference/news?limit=10' },
+  // Finnhub FX News（FX専用カテゴリ・高レート枠）— 要 FINNHUB_API_KEY（calendar.tsと共有可）
+  { name: 'Finnhub_FX',       type: 'finnhub',    enabled: true,  url: 'https://finnhub.io/api/v1/news?category=forex' },
+  // Finnhub 一般ニュース（マクロ経済・中央銀行）
+  { name: 'Finnhub_General',  type: 'finnhub',    enabled: true,  url: 'https://finnhub.io/api/v1/news?category=general' },
+  // MarketAux（sentiment_score -1〜+1 付き・金融ニュース特化）— 要 MARKETAUX_API_KEY
+  { name: 'MarketAux',        type: 'marketaux',  enabled: true,  url: 'https://api.marketaux.com/v1/news/all?language=en&filter_entities=true&limit=10' },
+  // CryptoPanic（bullish/bearish 投票スコア付き・暗号資産専用）— 要 CRYPTOPANIC_API_KEY
+  { name: 'CryptoPanic',      type: 'cryptopanic',enabled: true,  url: 'https://cryptopanic.com/api/free/v1/posts/?currencies=BTC,ETH,SOL', pairs: CRYPTO_PAIRS },
 ];
 
 /**
@@ -73,6 +105,149 @@ export function getNewsForPair(items: NewsItem[], pair: string): NewsItem[] {
     // pairs 定義あり → 対象ペアに含まれる場合のみ含む
     return sourcePairs.includes(pair);
   });
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// JSON API フェッチ関数（ソースタイプ別）
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** Polygon.io News API — sentimentタグをdescに埋め込んでHaiku翻訳時にも活用 */
+async function fetchPolygon(src: SourceDef, apiKey: string | undefined, now: Date): Promise<NewsItem[]> {
+  if (!apiKey) return [];
+  try {
+    const url = `${src.url}&apiKey=${apiKey}`;
+    const res = await fetch(url, { signal: AbortSignal.timeout(5000) });
+    if (!res.ok) return [];
+    const data = await res.json() as {
+      results?: Array<{
+        title: string;
+        description?: string;
+        published_utc: string;
+        publisher?: { name: string };
+        article_url: string;
+        insights?: Array<{ sentiment: string; sentiment_reasoning?: string }>;
+      }>;
+    };
+    return (data.results ?? []).slice(0, 8).map(item => {
+      const sentiment = item.insights?.[0]?.sentiment;
+      const reasoning = item.insights?.[0]?.sentiment_reasoning;
+      const sentTag = sentiment ? ` [${sentiment.toUpperCase()}${reasoning ? ': ' + reasoning.slice(0, 60) : ''}]` : '';
+      return {
+        title: item.title,
+        description: (item.description ?? '') + sentTag,
+        pubDate: item.published_utc,
+        source: src.name,
+        freshnessMin: calcFreshnessMin(item.published_utc, now),
+        url: item.article_url,
+      };
+    });
+  } catch { return []; }
+}
+
+/** Finnhub News API（forex / general カテゴリ） */
+async function fetchFinnhub(src: SourceDef, apiKey: string | undefined, now: Date): Promise<NewsItem[]> {
+  if (!apiKey) return [];
+  try {
+    const url = `${src.url}&token=${apiKey}`;
+    const res = await fetch(url, { signal: AbortSignal.timeout(5000) });
+    if (!res.ok) return [];
+    const data = await res.json() as Array<{
+      headline: string;
+      summary?: string;
+      datetime: number;
+      source?: string;
+      url?: string;
+    }>;
+    if (!Array.isArray(data)) return [];
+    return data.slice(0, 8).map(item => {
+      const pubDate = new Date(item.datetime * 1000).toISOString();
+      return {
+        title: item.headline,
+        description: item.summary ?? '',
+        pubDate,
+        source: src.name,
+        freshnessMin: calcFreshnessMin(pubDate, now),
+        url: item.url,
+      };
+    });
+  } catch { return []; }
+}
+
+/** MarketAux News API — sentiment_score を descに埋め込む */
+async function fetchMarketAux(src: SourceDef, apiKey: string | undefined, now: Date): Promise<NewsItem[]> {
+  if (!apiKey) return [];
+  try {
+    const url = `${src.url}&api_token=${apiKey}`;
+    const res = await fetch(url, { signal: AbortSignal.timeout(5000) });
+    if (!res.ok) return [];
+    const data = await res.json() as {
+      data?: Array<{
+        title: string;
+        description?: string;
+        published_at: string;
+        url?: string;
+        entities?: Array<{ sentiment_score?: number }>;
+      }>;
+    };
+    return (data.data ?? []).slice(0, 8).map(item => {
+      const scores = (item.entities ?? []).map(e => e.sentiment_score).filter((s): s is number => s != null);
+      const avg = scores.length > 0 ? scores.reduce((a, b) => a + b, 0) / scores.length : null;
+      const sentTag = avg != null ? ` [sentiment: ${avg >= 0.05 ? 'BULLISH' : avg <= -0.05 ? 'BEARISH' : 'NEUTRAL'}(${avg.toFixed(2)})]` : '';
+      return {
+        title: item.title,
+        description: (item.description ?? '') + sentTag,
+        pubDate: item.published_at,
+        source: src.name,
+        freshnessMin: calcFreshnessMin(item.published_at, now),
+        url: item.url,
+      };
+    });
+  } catch { return []; }
+}
+
+/** CryptoPanic API — bullish/bearish 投票スコアをタイトルに付与 */
+async function fetchCryptoPanic(src: SourceDef, apiKey: string | undefined, now: Date): Promise<NewsItem[]> {
+  if (!apiKey) return [];
+  try {
+    const url = `${src.url}&auth_token=${apiKey}`;
+    const res = await fetch(url, { signal: AbortSignal.timeout(5000) });
+    if (!res.ok) return [];
+    const data = await res.json() as {
+      results?: Array<{
+        title: string;
+        published_at: string;
+        url?: string;
+        votes?: { positive?: number; negative?: number };
+      }>;
+    };
+    return (data.results ?? []).slice(0, 8).map(item => {
+      const pos = item.votes?.positive ?? 0;
+      const neg = item.votes?.negative ?? 0;
+      const voteTag = (pos + neg) > 0 ? ` [👍${pos} 👎${neg}]` : '';
+      return {
+        title: item.title + voteTag,
+        description: '',
+        pubDate: item.published_at,
+        source: src.name,
+        freshnessMin: calcFreshnessMin(item.published_at, now),
+        url: item.url,
+      };
+    });
+  } catch { return []; }
+}
+
+/** RSS ソースを1件フェッチしてパース（既存ロジックを関数化） */
+async function fetchRssSource(src: SourceDef, now: Date): Promise<NewsItem[]> {
+  const res = await fetch(src.url, {
+    headers: {
+      'User-Agent': 'Mozilla/5.0 (compatible; FXNewsBot/1.0)',
+      Accept: 'application/rss+xml, application/xml, text/xml',
+    },
+    cf: { cacheTtl: 60 },
+  } as RequestInit);
+  if (!res.ok) return [];
+  const xml = await res.text();
+  return parseItems(xml, src.name, now, 5);
 }
 
 function extractCdata(tag: string, xml: string): string {
@@ -127,33 +302,36 @@ function parseItems(xml: string, sourceName: string, now: Date, limit = 8): News
   return items;
 }
 
-export async function fetchNews(): Promise<FetchNewsResult> {
+export async function fetchNews(apiKeys?: NewsApiKeys): Promise<FetchNewsResult> {
   const now = new Date();
   const stats: SourceFetchStat[] = [];
+  const keys = apiKeys ?? {};
+
+  // disabled ソースは最初からスキップ（CPU時間ゼロ）
+  const enabledSources = SOURCES.filter(s => s.enabled);
 
   const results = await Promise.allSettled(
-    SOURCES.map(async (src) => {
+    enabledSources.map(async (src) => {
       const start = Date.now();
       try {
-        const res = await fetch(src.url, {
-          headers: {
-            'User-Agent': 'Mozilla/5.0 (compatible; FXNewsBot/1.0)',
-            Accept: 'application/rss+xml, application/xml, text/xml',
-          },
-          cf: { cacheTtl: 60 },
-        } as RequestInit);
-        const latencyMs = Date.now() - start;
+        let items: NewsItem[];
+        const type = src.type ?? 'rss';
 
-        if (!res.ok) {
-          stats.push({
-            source: src.name, url: src.url, ok: false,
-            latencyMs, itemCount: 0, avgFreshnessMin: null,
-          });
-          return [];
+        if (type === 'rss') {
+          items = await fetchRssSource(src, now);
+        } else if (type === 'polygon') {
+          items = await fetchPolygon(src, keys.polygon, now);
+        } else if (type === 'finnhub') {
+          items = await fetchFinnhub(src, keys.finnhub, now);
+        } else if (type === 'marketaux') {
+          items = await fetchMarketAux(src, keys.marketaux, now);
+        } else if (type === 'cryptopanic') {
+          items = await fetchCryptoPanic(src, keys.cryptopanic, now);
+        } else {
+          items = [];
         }
 
-        const xml = await res.text();
-        const items = parseItems(xml, src.name, now, 5);
+        const latencyMs = Date.now() - start;
         const freshValues = items.map(i => i.freshnessMin).filter(f => f >= 0);
         const avgFresh = freshValues.length > 0
           ? Math.round(freshValues.reduce((a, b) => a + b, 0) / freshValues.length)
