@@ -461,7 +461,7 @@
         </div>
       </div>
       <div class="data-flow" style="margin-top: 12px;">
-        📝 取得後: <code>filterAndTranslateWithHaiku()</code> → ①FX無関係記事除外（スポーツ・芸能等）＋ ②title_ja（日本語タイトル）＋ ③desc_ja（日本語概要）を<strong>1回のHaiku APIコールで一括処理</strong> → <code>latest_news</code>キャッシュ更新（title_ja・desc_ja付き、30分TTL）
+        📝 取得後: <code>filterAndTranslateWithHaiku()</code> → ①FX無関係記事除外（スポーツ・芸能等）＋ ②<strong>セマンティック重複排除</strong>（<code>recent_topics</code>キャッシュの過去2h配信済みトピックと意味的に同じ記事を除外）＋ ③title_ja（日本語タイトル）＋ ④desc_ja（日本語概要）＋ ⑤topic（核心10字要約）を<strong>1回のHaiku APIコールで一括処理</strong> → <code>latest_news</code>キャッシュ更新（title_ja・desc_ja付き、30分TTL）＋ <code>recent_topics</code>キャッシュ更新（最大50件、2h TTL）
       </div>
     </div>
   </div>
@@ -860,7 +860,7 @@
           <span class="merge-layer-num">メインソース</span>
           <div class="merge-layer-body">
             <strong>latest_newsキャッシュ</strong> — <code>market_cache['latest_news']</code><br>
-            cron毎分更新。<code>filterAndTranslateWithHaiku()</code>で<strong>フィルタ済み＋title_ja・desc_ja付き</strong>。
+            cron毎分更新。<code>filterAndTranslateWithHaiku()</code>で<strong>フィルタ済み＋セマンティック重複排除済み＋title_ja・desc_ja付き</strong>。
             日本語タイトル・概要をそのまま使用。
           </div>
         </div>
