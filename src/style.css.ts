@@ -1026,7 +1026,8 @@ body.sheet-open .tab-bar {
   transform: translateY(100%);
   transition: transform 0.45s cubic-bezier(0.34, 1.56, 0.64, 1);
   padding-bottom: env(safe-area-inset-bottom);
-  max-height: 80dvh;
+  min-height: 55dvh;
+  max-height: 65dvh;
   overflow-y: auto;
 }
 .sheet.open { transform: translateY(0); }
