@@ -58,6 +58,27 @@ CREATE TABLE IF NOT EXISTS news_fetch_log (
   created_at      TEXT    NOT NULL
 );
 
+-- ニュース生データ ステージングテーブル（ETL Extract層）
+-- Haiku フィルタ前の全記事を保存し、採用/不採用フラグで追跡可能にする
+CREATE TABLE IF NOT EXISTS news_raw (
+  id             INTEGER PRIMARY KEY AUTOINCREMENT,
+  hash           TEXT    NOT NULL UNIQUE,     -- SHA-256(source + title) 重複排除
+  source         TEXT    NOT NULL,            -- ソース名（'CNBC', 'Polygon' 等）
+  title          TEXT    NOT NULL,
+  description    TEXT,
+  pub_date       TEXT,                        -- 記事の公開日時
+  url            TEXT,
+  fetched_at     TEXT    NOT NULL,            -- 取得日時（UTC）
+  -- Haiku フィルタ結果
+  haiku_accepted INTEGER DEFAULT 0,           -- 0=未処理, 1=採用, -1=不採用
+  title_ja       TEXT,                        -- 採用時: 日本語タイトル
+  desc_ja        TEXT,                        -- 採用時: 日本語概要
+  reject_reason  TEXT                         -- 不採用時: 理由（「スポーツ」「重複」等）
+);
+
+CREATE INDEX IF NOT EXISTS idx_news_raw_fetched ON news_raw(fetched_at);
+CREATE INDEX IF NOT EXISTS idx_news_raw_source_accepted ON news_raw(source, haiku_accepted);
+
 -- パフォーマンス用インデックス（T002: IPA評価 🔴高優先）
 CREATE INDEX IF NOT EXISTS idx_positions_status ON positions(status);
 CREATE INDEX IF NOT EXISTS idx_positions_pair_status ON positions(pair, status);

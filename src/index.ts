@@ -3,7 +3,7 @@
 // fetch:     GET / → ダッシュボード、GET /api/status → JSON、GET /style.css・/app.js → 静的ファイル
 
 import { getUSDJPY } from './rate';
-import { fetchNews, filterAndTranslateWithHaiku, getNewsForPair, type SourceFetchStat, type NewsApiKeys } from './news';
+import { fetchNews, filterAndTranslateWithHaiku, getNewsForPair, saveRawNews, purgeOldNewsRaw, type SourceFetchStat, type NewsApiKeys } from './news';
 import { getMarketIndicators } from './indicators';
 import { getDecisionWithHedge, fetchOgDescription, newsStage1WithHedge, newsStage2, RateLimitError, type NewsAnalysisItem, type NewsStage1Result } from './gemini';
 import { checkAndCloseAllPositions, openPosition } from './position';
@@ -283,6 +283,18 @@ async function fetchMarketData(env: Env, now: Date): Promise<MarketData | null> 
     } catch (e) {
       console.warn(`[fx-sim] news_fetch_log insert error: ${String(e).slice(0, 100)}`);
     }
+  }
+
+  // news_raw ステージングテーブルに全記事を保存（Haikuフィルタ前）
+  saveRawNews(newsData.items, env.DB).catch(e =>
+    console.warn(`[fx-sim] saveRawNews error: ${String(e).slice(0, 100)}`)
+  );
+
+  // TTLパージ: 毎時0分台（分=0）のみ実行して負荷を分散
+  if (now.getUTCMinutes() === 0) {
+    purgeOldNewsRaw(env.DB).catch(e =>
+      console.warn(`[fx-sim] purgeOldNewsRaw error: ${String(e).slice(0, 100)}`)
+    );
   }
 
   // Haiku でフィルタ + タイトル・概要の日本語化を一括処理（title_ja・desc_ja付与）
