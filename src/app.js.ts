@@ -994,11 +994,18 @@ export const JS = `
 
     // ニュースフィード
     var newsEl = document.getElementById('panel-news');
-    if (newsEl && data.latestNews) {
-      newsEl.innerHTML = (data.latestNews || []).slice(0, 6).map(function(n) {
+    if (newsEl) {
+      var panelNews = (data.acceptedNews || []).length > 0
+        ? (data.acceptedNews || []).map(function(n) {
+            return { title: n.title_ja, source: n.source, pubDate: n.fetched_at };
+          })
+        : (data.latestNews || []).map(function(n) {
+            return { title: n.title_ja || n.title, source: n.source || 'Reuters', pubDate: n.pubDate };
+          });
+      newsEl.innerHTML = panelNews.slice(0, 6).map(function(n) {
         return '<div class="panel-news-item">'
-          + '<div class="panel-news-title">' + escHtml(n.title_ja || n.title) + '</div>'
-          + '<div class="panel-news-meta">' + escHtml(n.source || 'Reuters') + ' • ' + fmtTimeShort(n.pubDate) + '</div></div>';
+          + '<div class="panel-news-title">' + escHtml(n.title) + '</div>'
+          + '<div class="panel-news-meta">' + escHtml(n.source || '') + ' • ' + fmtTimeShort(n.pubDate) + '</div></div>';
       }).join('');
     }
 
@@ -2208,8 +2215,13 @@ export const JS = `
     // タブバッジ更新（Zeigarnik効果）
     updateTabBadges(data);
 
-    // ニュースドロワー
-    if (window._renderNews) window._renderNews(data.latestNews || [], data.newsAnalysis || []);
+    // ニュースドロワー（acceptedNews優先、なければlatestNewsフォールバック）
+    var newsForDrawer = (data.acceptedNews || []).length > 0
+      ? (data.acceptedNews || []).map(function(n) {
+          return { title: n.title_ja, title_ja: n.title_ja, description: n.desc_ja, desc_ja: n.desc_ja, pubDate: n.fetched_at, source: n.source };
+        })
+      : (data.latestNews || []);
+    if (window._renderNews) window._renderNews(newsForDrawer, data.newsAnalysis || []);
 
     // ティッカーバー（ニュースドロワー展開時の横スクロール銘柄バー）
     var tickerEl = el('ticker-scroll');
