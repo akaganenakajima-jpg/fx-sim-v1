@@ -86,7 +86,7 @@ export interface StatusResponse {
   systemLogs: SystemLog[];
   logStats: LogStats;
   latestNews: Array<{ title: string; pubDate: string; description: string; source?: string }>;
-  acceptedNews: Array<{ id: number; source: string; title_ja: string; desc_ja: string; fetched_at: string }>;
+  acceptedNews: Array<{ id: number; source: string; title_ja: string; desc_ja: string; url: string | null; fetched_at: string }>;
   newsAnalysis: Array<{ index: number; attention: boolean; impact: string | null; title_ja: string | null; title?: string | null }>;
   tradingMode: 'paper' | 'demo' | 'live';
   riskStatus: {
@@ -236,8 +236,8 @@ export async function getApiStatus(db: D1Database, tradingEnv?: { TRADING_ENABLE
 
       // news_raw から採用記事（最大30件、7日TTL+purgeで自動管理）
       db
-        .prepare(`SELECT id, source, title_ja, desc_ja, fetched_at FROM news_raw WHERE haiku_accepted = 1 ORDER BY id DESC LIMIT 30`)
-        .all<{ id: number; source: string; title_ja: string; desc_ja: string; fetched_at: string }>(),
+        .prepare(`SELECT id, source, title_ja, desc_ja, url, fetched_at FROM news_raw WHERE haiku_accepted = 1 ORDER BY id DESC LIMIT 30`)
+        .all<{ id: number; source: string; title_ja: string; desc_ja: string; url: string | null; fetched_at: string }>(),
 
       // システムログ（直近30件）
       db
@@ -491,6 +491,7 @@ export async function getApiStatus(db: D1Database, tradingEnv?: { TRADING_ENABLE
       source: r.source,
       title_ja: r.title_ja,
       desc_ja: r.desc_ja,
+      url: r.url ?? null,
       fetched_at: r.fetched_at,
     })),
     newsAnalysis,
