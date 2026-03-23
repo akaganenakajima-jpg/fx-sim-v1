@@ -122,6 +122,9 @@ export async function applyDrawdownControl(
   result: DrawdownResult
 ): Promise<void> {
   if (result.level === 'HALT') {
+    // W002: 既存停止期間が有効な場合は上書きしない（スパイラル防止）
+    const existingPause = await getRiskStateValue(db, 'dd_paused_until');
+    if (existingPause && new Date(existingPause) > new Date()) return;
     // 1週間停止フラグ
     const pauseUntil = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString();
     await setRiskStateValue(db, 'dd_paused_until', pauseUntil);

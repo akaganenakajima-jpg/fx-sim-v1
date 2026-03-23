@@ -1315,11 +1315,21 @@ async function run(env: Env): Promise<void> {
 
       // BUY/SELL: ポジション開設
       if (result.decisions.length > 0) {
+        let pathBNewEntries = 0; // W005: このtickの新規開設数
+        const PATH_B_OPEN_LIMIT = 10; // W005: 全体OPEN上限
         for (const dec of result.decisions) {
           if (dec.decision === 'HOLD') continue;
           const currentRate = prices.get(dec.pair);
           if (currentRate == null) continue;
           if (openPairsForPathB.has(dec.pair)) continue;
+          // W005: OPEN上限ハードブロック（初期OPEN + このtick新規合計が上限以上なら停止）
+          if (openPairsForPathB.size + pathBNewEntries >= PATH_B_OPEN_LIMIT) {
+            await insertSystemLog(env.DB, 'WARN', 'RISK',
+              `PATH_B OPEN上限ブロック: ${dec.pair}`,
+              `OPEN=${openPairsForPathB.size + pathBNewEntries}/${PATH_B_OPEN_LIMIT}`
+            ).catch(() => {});
+            continue;
+          }
           try {
             const instrument = INSTRUMENTS.find(i => i.pair === dec.pair);
             if (!instrument) continue;
@@ -1342,6 +1352,7 @@ async function run(env: Env): Promise<void> {
             const pathBInstr = INSTRUMENTS.find(i => i.pair === dec.pair);
             await openPosition(env.DB, dec.pair, dec.decision as 'BUY' | 'SELL', currentRate, finalTp, finalSl, 'paper', null, getWebhookUrl(env),
               { pnlMultiplier: pathBInstr?.pnlMultiplier });
+            pathBNewEntries++; // W005: 成功したらカウント増加
             await insertSystemLog(env.DB, 'INFO', 'PATH_B', `ポジション開設: ${dec.pair} ${dec.decision} @ ${currentRate}`, JSON.stringify({ tp: finalTp, sl: finalSl }));
           } catch (e) {
             console.warn(`[fx-sim] Path B openPosition failed (${dec.pair}): ${String(e).slice(0, 80)}`);

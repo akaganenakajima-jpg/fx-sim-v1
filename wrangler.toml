@@ -12,5 +12,6 @@ database_id = "0796cb8f-0d50-40de-928e-c5c2ea427359"
 
 [vars]
 TWELVE_DATA_API_KEY = ""  # wrangler secret put TWELVE_DATA_API_KEY で設定
+PARALLEL_PATH_AB = "true"  # W001: PATH_B後処理とPATH_Aを並列実行（CRON超過対策）
 # wrangler secret put GEMINI_API_KEY
 # wrangler secret put FRED_API_KEY
