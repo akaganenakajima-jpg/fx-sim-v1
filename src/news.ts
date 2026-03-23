@@ -568,6 +568,62 @@ interface HaikuTranslatedItem {
   desc_ja: string;
   topic?: string;           // 5語以内のトピック要約（セマンティック重複排除用）
   reject_reason?: string;   // 不採用理由（不採用時のみ）
+  scores?: {                // AIによる5軸スコア（0〜10）
+    r: number;              // relevance  市場有効性
+    c: number;              // credibility 信憑性
+    s: number;              // sentiment  センチメント強度
+    b: number;              // breadth    影響範囲（銘柄数）
+    n: number;              // novelty    新規性（既報焼き直しでないか）
+  };
+}
+
+// ---------------------------------------------------------------------------
+// 7軸スコアリング ユーティリティ
+// ---------------------------------------------------------------------------
+
+/** timeliness: freshnessMin（取得時点での経過分）から即時性スコアを算出 */
+function scoreTimeliness(freshnessMin: number): number {
+  if (freshnessMin < 0) return 5;   // パース失敗→中間値
+  if (freshnessMin < 10) return 10;
+  if (freshnessMin < 30) return 7;
+  if (freshnessMin < 60) return 4;
+  return 1;
+}
+
+/** uniqueness: topicとrecentTopicsの語彙重複度からユニーク性スコアを算出 */
+function scoreUniqueness(topic: string | undefined, recentTopics: string[]): number {
+  if (!topic || recentTopics.length === 0) return 8; // 比較対象なし→やや高め
+  const aWords = new Set(topic.split(/[\s\u3000・、]+/).filter(w => w.length >= 2));
+  for (const rt of recentTopics) {
+    const bWords = new Set(rt.split(/[\s\u3000・、]+/).filter(w => w.length >= 2));
+    const intersection = [...aWords].filter(w => bWords.has(w)).length;
+    const union = new Set([...aWords, ...bWords]).size;
+    if (union > 0 && intersection / union >= 0.5) return 2; // 重複記事
+  }
+  return 10; // ユニーク
+}
+
+/** 7軸加重合計スコアを計算（0〜10） */
+function computeComposite(t: number, u: number, r: number, c: number, s: number, b: number, n: number): number {
+  return (
+    t * 0.20 +  // timeliness   20%
+    u * 0.15 +  // uniqueness   15%
+    r * 0.30 +  // relevance    30% ← 最重要
+    c * 0.15 +  // credibility  15%
+    s * 0.10 +  // sentiment    10%
+    b * 0.05 +  // breadth       5%
+    n * 0.05    // novelty       5%
+  );
+}
+
+/** ソース名から信憑性スコアを算出 */
+function scoreCredibility(source: string): number {
+  const s = source.toLowerCase();
+  if (/reuters|bloomberg|ap |associated press|fed |ecb |boj |mof/.test(s)) return 10;
+  if (/marketaux|yahoo|cnbc|wsj|ft\.com|nikkei|barron/.test(s)) return 7;
+  if (/finnhub|polygon|seeking alpha/.test(s)) return 5;
+  if (/reddit|twitter|x\.com/.test(s)) return 3;
+  return 6; // その他→中間
 }
 
 /**
@@ -609,7 +665,7 @@ export async function filterAndTranslateWithHaiku(
           rejectMapCached.set(r.index, r.reject_reason);
         }
       }
-      updateHaikuResults(items, acceptedCached, rejectMapCached, db).catch(() => {});
+      updateHaikuResults(items, acceptedCached, rejectMapCached, new Map(), db).catch(() => {});
 
       console.log(`[news] filter+translate: キャッシュヒット (${filteredItems.length}/${items.length}件通過)`);
       await _updateLatestNewsCache(filteredItems, db);
@@ -669,8 +725,10 @@ ${articleLines}
 【出力形式】
 全記事について、採用/不採用を判定し、以下のJSON配列で返してください。
 
-採用する記事:
-  {"index":0,"accepted":true,"title_ja":"日本語タイトル","desc_ja":"日本語概要","topic":"核心10字"}
+採用する記事（scoresフィールドに5軸スコアを0〜10で付与）:
+  {"index":0,"accepted":true,"title_ja":"日本語タイトル","desc_ja":"日本語概要","topic":"核心10字","scores":{"r":8,"c":9,"s":7,"b":6,"n":8}}
+
+  r=relevance(市場有効性), c=credibility(信憑性), s=sentiment(シグナル強度), b=breadth(影響銘柄数), n=novelty(新規情報度)
 
 除外する記事:
   {"index":1,"accepted":false,"reject_reason":"スポーツ"}
@@ -690,7 +748,7 @@ JSON配列のみを返し、他の文字は一切含めないでください。`
       },
       body: JSON.stringify({
         model: 'claude-sonnet-4-5',
-        max_tokens: 2048,
+        max_tokens: 4096,
         messages: [{ role: 'user', content: prompt }],
       }),
     });
@@ -716,27 +774,68 @@ JSON配列のみを返し、他の文字は一切含めないでください。`
       ).bind(cacheKey, JSON.stringify(results)).run();
     } catch { /* キャッシュ書き込み失敗は無視 */ }
 
-    // 新形式: accepted フィールドで採用/不採用を判定
-    // 旧形式互換: accepted が無い場合は全て採用扱い
+    // ── 7軸スコアリング ──────────────────────────────────────────
+    // Haikuが「accepted=false」と判定した記事は無条件除外（理由保持）
+    // Haikuが「accepted=true」の記事にさらに複合スコアでフィルタを掛ける
+    const COMPOSITE_THRESHOLD = 6.0;
+    const scoresMap = new Map<number, {
+      timeliness: number; uniqueness: number;
+      relevance: number; credibility: number;
+      sentiment: number; breadth: number; novelty: number;
+      composite: number;
+    }>();
+    const rejectMap = new Map<number, string>();
+
+    for (const r of results) {
+      if (r.index < 0 || r.index >= items.length) continue;
+
+      // Haikuが明示的に除外 → そのまま不採用
+      if (r.accepted === false) {
+        rejectMap.set(r.index, r.reject_reason ?? '除外（理由不明）');
+        continue;
+      }
+
+      // コード側スコア
+      const item = items[r.index];
+      const t = scoreTimeliness(item.freshnessMin);
+      const u = scoreUniqueness(r.topic, recentTopics);
+      const credBase = scoreCredibility(item.source);
+
+      // AI側スコア（なければデフォルト値）
+      const ai = r.scores ?? { r: 6, c: credBase, s: 5, b: 5, n: 6 };
+
+      const composite = computeComposite(t, u, ai.r, ai.c, ai.s, ai.b, ai.n);
+      const rounded = Math.round(composite * 10) / 10;
+
+      scoresMap.set(r.index, {
+        timeliness: t, uniqueness: u,
+        relevance: ai.r, credibility: ai.c,
+        sentiment: ai.s, breadth: ai.b, novelty: ai.n,
+        composite: rounded,
+      });
+
+      if (composite < COMPOSITE_THRESHOLD) {
+        rejectMap.set(r.index, `スコア不足(${rounded})`);
+      }
+    }
+    // ────────────────────────────────────────────────────────────
+
+    // composite 閾値を通過した記事のみ採用
     const acceptedResults = results.filter(r =>
-      r.index >= 0 && r.index < items.length && (r.accepted !== false)
+      r.index >= 0 && r.index < items.length &&
+      r.accepted !== false &&
+      !rejectMap.has(r.index)
     );
     const filteredItems = acceptedResults
       .map(r => ({ ...items[r.index], title_ja: r.title_ja, desc_ja: r.desc_ja }));
 
-    // news_raw に Haiku 結果を反映（採用/不採用フラグ＋理由）
-    const rejectMap = new Map<number, string>();
-    for (const r of results) {
-      if (r.accepted === false && r.reject_reason) {
-        rejectMap.set(r.index, r.reject_reason);
-      }
-    }
+    // news_raw に結果反映（採用/不採用フラグ＋スコア）
     // 非同期で更新（メインフローをブロックしない）
-    updateHaikuResults(items, acceptedResults, rejectMap, db).catch(e =>
+    updateHaikuResults(items, acceptedResults, rejectMap, scoresMap, db).catch(e =>
       console.warn(`[news_raw] updateHaikuResults error: ${String(e).slice(0, 100)}`)
     );
 
-    // 過去トピックキャッシュ更新: 新トピックを追加し、最大50件に制限
+    // 過去トピックキャッシュ更新: 採用済みトピックのみ追加、最大50件に制限
     const newTopics = acceptedResults
       .map(r => r.topic)
       .filter((t): t is string => !!t);
@@ -750,8 +849,9 @@ JSON配列のみを返し、他の文字は一切含めないでください。`
       console.log(`[news] recent_topics更新: ${newTopics.length}件追加, 合計${mergedTopics.length}件`);
     }
 
+    const scoringRejected = [...rejectMap.entries()].filter(([, v]) => v.startsWith('スコア不足')).length;
     const removed = items.length - filteredItems.length;
-    console.log(`[news] filter+translate: ${removed}件除外, ${filteredItems.length}/${items.length}件通過, title_ja+desc_ja付与 (${latencyMs}ms) [過去トピック${recentTopics.length}件参照]`);
+    console.log(`[news] filter+translate: ${removed}件除外(うちスコア不足${scoringRejected}件), ${filteredItems.length}/${items.length}件通過, title_ja+desc_ja付与 (${latencyMs}ms) [過去トピック${recentTopics.length}件参照]`);
 
     await _updateLatestNewsCache(filteredItems, db);
     return filteredItems;
@@ -936,13 +1036,20 @@ export async function saveRawNews(
  * Haiku フィルタ結果で news_raw の採用/不採用フラグを更新する
  *
  * @param allItems    - フィルタ前の全記事
- * @param accepted    - Haiku が採用した記事（index, title_ja, desc_ja 付き）
- * @param rejectMap   - index → 不採用理由のマップ（Haikuが返した場合）
+ * @param accepted    - 採用した記事（index, title_ja, desc_ja 付き）
+ * @param rejectMap   - index → 不採用理由のマップ
+ * @param scoresMap   - index → 7軸スコアのマップ
  */
 export async function updateHaikuResults(
   allItems: NewsItem[],
   accepted: Array<{ index: number; title_ja: string; desc_ja: string }>,
   rejectMap: Map<number, string>,
+  scoresMap: Map<number, {
+    timeliness: number; uniqueness: number;
+    relevance: number; credibility: number;
+    sentiment: number; breadth: number; novelty: number;
+    composite: number;
+  }>,
   db: D1Database,
 ): Promise<void> {
   const acceptedSet = new Set(accepted.map(a => a.index));
@@ -951,21 +1058,23 @@ export async function updateHaikuResults(
   for (let i = 0; i < allItems.length; i++) {
     const item = allItems[i];
     const hash = hashArticle(item.source, item.title);
+    const sc = scoresMap.get(i);
+    const scoresJson = sc ? JSON.stringify(sc) : null;
 
     if (acceptedSet.has(i)) {
       const a = accepted.find(x => x.index === i)!;
       stmts.push(
         db.prepare(
-          `UPDATE news_raw SET haiku_accepted = 1, title_ja = ?, desc_ja = ? WHERE hash = ?`
-        ).bind(a.title_ja, a.desc_ja, hash)
+          `UPDATE news_raw SET haiku_accepted = 1, title_ja = ?, desc_ja = ?, scores = ?, composite_score = ? WHERE hash = ?`
+        ).bind(a.title_ja, a.desc_ja, scoresJson, sc?.composite ?? null, hash)
       );
     } else {
       const reason = rejectMap.get(i) || '除外（理由不明）';
       stmts.push(
         db.prepare(
           // haiku_accepted != 1: 採用済み記事を後続バッチで上書きしない（バグ防止）
-          `UPDATE news_raw SET haiku_accepted = -1, reject_reason = ? WHERE hash = ? AND haiku_accepted != 1`
-        ).bind(reason, hash)
+          `UPDATE news_raw SET haiku_accepted = -1, reject_reason = ?, scores = ?, composite_score = ? WHERE hash = ? AND haiku_accepted != 1`
+        ).bind(reason, scoresJson, sc?.composite ?? null, hash)
       );
     }
   }
