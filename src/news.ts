@@ -450,7 +450,7 @@ JSON配列のみを返し、他の文字は一切含めないでください。`
         'content-type': 'application/json',
       },
       body: JSON.stringify({
-        model: 'claude-sonnet-4-5',
+        model: 'claude-haiku-4-20250514',
         max_tokens: 256,
         messages: [{ role: 'user', content: prompt }],
       }),
@@ -469,7 +469,7 @@ JSON配列のみを返し、他の文字は一切含めないでください。`
       usage?: { input_tokens?: number; output_tokens?: number };
     };
     if (data.usage) {
-      void insertTokenUsage(db, 'claude-sonnet-4-5', 'NEWS_FILTER',
+      void insertTokenUsage(db, 'claude-haiku-4-20250514', 'NEWS_FILTER',
         data.usage.input_tokens ?? 0, data.usage.output_tokens ?? 0);
     }
     const text = data.content?.[0]?.text ?? '[]';
