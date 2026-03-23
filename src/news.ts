@@ -1105,7 +1105,8 @@ export async function updateHaikuResults(
       const a = accepted.find(x => x.index === i)!;
       stmts.push(
         db.prepare(
-          `UPDATE news_raw SET haiku_accepted = 1, title_ja = ?, desc_ja = ?, scores = ?, composite_score = ? WHERE hash = ?`
+          // haiku_accepted != -1: 一度スコア拒否された記事を後続バッチで採用に上書きしない
+          `UPDATE news_raw SET haiku_accepted = 1, title_ja = ?, desc_ja = ?, scores = ?, composite_score = ? WHERE hash = ? AND haiku_accepted != -1`
         ).bind(a.title_ja, a.desc_ja, scoresJson, sc?.composite ?? null, hash)
       );
     } else {
