@@ -869,7 +869,11 @@ async function runAIDecisions(
                 source,
                 oandaTradeId,
                 getWebhookUrl(env),
-                { strategy: validStrategy, regime: regimeName, session: currentSession, confidence: validConfidence, pnlMultiplier: instrument.pnlMultiplier },
+                {
+                  strategy: validStrategy, regime: regimeName, session: currentSession,
+                  confidence: validConfidence, pnlMultiplier: instrument.pnlMultiplier,
+                  trigger: triggerPrefix.includes('RATE') ? 'RATE' : 'SCHED',
+                },
               );
               await insertSystemLog(
                 env.DB, 'INFO', 'POSITION',
@@ -1376,7 +1380,7 @@ async function run(env: Env): Promise<void> {
             }
             const pathBInstr = INSTRUMENTS.find(i => i.pair === dec.pair);
             await openPosition(env.DB, dec.pair, dec.decision as 'BUY' | 'SELL', currentRate, finalTp, finalSl, 'paper', null, getWebhookUrl(env),
-              { pnlMultiplier: pathBInstr?.pnlMultiplier });
+              { pnlMultiplier: pathBInstr?.pnlMultiplier, trigger: 'NEWS' });
             await insertSystemLog(env.DB, 'INFO', 'PATH_B', `ポジション開設: ${dec.pair} ${dec.decision} @ ${currentRate}`, JSON.stringify({ tp: finalTp, sl: finalSl }));
           } catch (e) {
             console.warn(`[fx-sim] Path B openPosition failed (${dec.pair}): ${String(e).slice(0, 80)}`);

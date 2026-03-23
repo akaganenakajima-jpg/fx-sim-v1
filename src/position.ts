@@ -269,6 +269,7 @@ export async function openPosition(
     session?: string | null;
     confidence?: number | null;
     pnlMultiplier?: number;
+    trigger?: string | null;  // 'RATE'=レート変動, 'SCHED'=定期30m, 'NEWS'=ニュース
   },
 ): Promise<void> {
   const existing = await getOpenPositionByPair(db, pair);
@@ -343,11 +344,12 @@ export async function openPosition(
     .prepare(
       `INSERT INTO positions
          (pair, direction, entry_rate, tp_rate, sl_rate, lot, status, entry_at, source, oanda_trade_id,
-          strategy, regime, session, confidence, original_lot)
-       VALUES (?, ?, ?, ?, ?, ?, 'OPEN', ?, ?, ?, ?, ?, ?, ?, ?)`
+          strategy, regime, session, confidence, original_lot, trigger)
+       VALUES (?, ?, ?, ?, ?, ?, 'OPEN', ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     )
     .bind(pair, direction, entryRate, tpRate, slRate, lot, new Date().toISOString(), source, oandaTradeId,
-      extra?.strategy ?? null, extra?.regime ?? null, extra?.session ?? null, extra?.confidence ?? null, lot)
+      extra?.strategy ?? null, extra?.regime ?? null, extra?.session ?? null, extra?.confidence ?? null, lot,
+      extra?.trigger ?? null)
     .run();
 
   console.log(`[position] Opened ${pair} ${direction} @ ${entryRate} TP=${tpRate} SL=${slRate} [${source}${oandaTradeId ? ` trade=${oandaTradeId}` : ''}]`);
