@@ -661,6 +661,7 @@ export async function newsStage1(params: {
     '- SELL: tp_rate は現在レートより【低い】価格 / sl_rate は現在レートより【高い】価格\n' +
     '- 例(BUY, rate=5.29): tp_rate=5.55(上), sl_rate=5.15(下) ← SLは必ずentryより下\n' +
     '- 例(SELL, rate=1.33): tp_rate=1.30(下), sl_rate=1.36(上) ← SLは必ずentryより上\n' +
+    '- 例(USD/JPY SELL, rate=158.37): tp_rate=156.00(下), sl_rate=160.50(上) ← 大きい値でもSELLのSLは必ずentry(158.37)より上\n' +
     '- tp_rate/sl_rateは各銘柄の現在レートを起点にした絶対価格で返す\n\n' +
     'その他ルール:\n' +
     '- trade_signalsはBUYまたはSELLのみ（HOLDは含めない）\n' +
@@ -867,6 +868,9 @@ async function newsStage1GPT(params: {
     'TP/SL方向の絶対ルール（違反はシステムが自動拒否）:\n' +
     '- BUY → tp_rate > 現在レート かつ sl_rate < 現在レート（上が利確・下が損切）\n' +
     '- SELL → tp_rate < 現在レート かつ sl_rate > 現在レート（下が利確・上が損切）\n' +
+    '- 例(BUY, rate=5.29): tp_rate=5.55(上), sl_rate=5.15(下) ← SLは必ずentryより下\n' +
+    '- 例(SELL, rate=1.33): tp_rate=1.30(下), sl_rate=1.36(上) ← SLは必ずentryより上\n' +
+    '- 例(USD/JPY SELL, rate=158.37): tp_rate=156.00(下), sl_rate=160.50(上) ← 大きい値でもSELLのSLは必ずentry(158.37)より上\n' +
     '- tp_rate/sl_rateは各銘柄の現在レートを起点にした絶対価格で返す\n\n' +
     'その他ルール:\n- trade_signalsはBUYまたはSELLのみ（HOLDは含めない）\n- [OP]マークの銘柄はtrade_signalsに含めない\n' +
     '- tp_rate/sl_rateは必ず数値で返す（nullは不可）\n- リスクリワード比は1.5以上\n- 確信度が低いニュースはtrade_signalsに含めない';
@@ -951,6 +955,7 @@ async function newsStage1Claude(params: {
     '- SELL: tp_rate は現在レートより【低い】価格 / sl_rate は現在レートより【高い】価格\n' +
     '- 例(BUY, rate=5.29): tp_rate=5.55(上), sl_rate=5.15(下) ← SLは必ずentryより下\n' +
     '- 例(SELL, rate=1.33): tp_rate=1.30(下), sl_rate=1.36(上) ← SLは必ずentryより上\n' +
+    '- 例(USD/JPY SELL, rate=158.37): tp_rate=156.00(下), sl_rate=160.50(上) ← 大きい値でもSELLのSLは必ずentry(158.37)より上\n' +
     '- tp_rate/sl_rateは各銘柄の現在レートを起点にした絶対価格で返すこと';
 
   const res = await fetchWithTimeout('https://api.anthropic.com/v1/messages', {
