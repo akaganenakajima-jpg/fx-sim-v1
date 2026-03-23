@@ -3,6 +3,8 @@
 // v3: JSON API ソース追加（Polygon / Finnhub / MarketAux / CryptoPanic）
 //     各ソースに enabled フラグ追加（false でスキップ）
 
+import { insertSystemLog } from './db';
+
 export interface NewsItem {
   title: string;
   description: string;
@@ -708,6 +710,16 @@ export async function filterAndTranslateWithHaiku(
 
       const scoringRejected = [...rejectMapCached.entries()].filter(([, v]) => v.startsWith('スコア不足')).length;
       console.log(`[news] filter+translate: キャッシュヒット(スコアリング適用) ${filteredItems.length}/${items.length}件通過(うちスコア不足${scoringRejected}件)`);
+
+      // ── キャッシュスコアリング機能不全検出 ──
+      // 採用5件以上なのにスコア拒否が0件 = スコアチェックが機能していない可能性（PR#45で修正したバグの再発検出）
+      if (scoringRejected === 0 && acceptedCached.length >= 5) {
+        await insertSystemLog(
+          db, 'WARN', 'NEWS_CACHE',
+          `キャッシュスコア拒否ゼロ疑惑: ${acceptedCached.length}件全通過（スコアチェック機能確認要）`,
+          JSON.stringify({ accepted: acceptedCached.length, total: items.length })
+        ).catch(() => {});
+      }
       await _updateLatestNewsCache(filteredItems, db);
       return filteredItems;
     }
@@ -1133,6 +1145,18 @@ export async function updateHaikuResults(
   const acceptedCount = acceptedSet.size;
   const rejectedCount = allItems.length - acceptedCount;
   console.log(`[news_raw] Haiku結果反映: 採用${acceptedCount}件, 不採用${rejectedCount}件`);
+
+  // ── 採用率サマリーをD1に記録（NEWS_STAT）──
+  // console.logだけでは監視困難→SQLで集計・閾値超過を検出できるよう格上げ
+  if (acceptedCount + rejectedCount > 0) {
+    const rate = Math.round(acceptedCount / (acceptedCount + rejectedCount) * 100);
+    const level = rate > 40 ? 'ERROR' : rate > 25 ? 'WARN' : 'INFO';
+    await insertSystemLog(
+      db, level, 'NEWS_STAT',
+      `採用率 ${rate}%: ${acceptedCount}件採用 / ${acceptedCount + rejectedCount}件処理`,
+      JSON.stringify({ accepted: acceptedCount, rejected: rejectedCount, rate })
+    ).catch(() => {});
+  }
 }
 
 /**
