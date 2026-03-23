@@ -56,9 +56,9 @@ export const INSTRUMENTS: InstrumentConfig[] = [
     broker: 'oanda',
     oandaSymbol: 'JP225_USD',
     rateChangeTh: 15,
-    tpSlHint: '現在値から±80〜1500ポイント（SLは80pt以上確保。TPはSLの1.5倍以上）',
+    tpSlHint: '現在値から±80〜2000ポイント（SLは80pt以上確保。TPはSLの1.5倍以上）',
     tpSlMin: 80,     // H1-ATR≈100pt。80pt未満は拒否
-    tpSlMax: 1500,   // 1500pt超過は拒否（旧1200→実績1266・1303超過に対応）
+    tpSlMax: 2000,   // 2000pt超過は拒否（旧1500→高ボラ局面実績1655超過に対応）
     pnlUnit: '円',
     pnlMultiplier: 1,
     trailingActivation: 100,   // 旧150
