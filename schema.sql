@@ -70,10 +70,13 @@ CREATE TABLE IF NOT EXISTS news_raw (
   url            TEXT,
   fetched_at     TEXT    NOT NULL,            -- 取得日時（UTC）
   -- Haiku フィルタ結果
-  haiku_accepted INTEGER DEFAULT 0,           -- 0=未処理, 1=採用, -1=不採用
-  title_ja       TEXT,                        -- 採用時: 日本語タイトル
-  desc_ja        TEXT,                        -- 採用時: 日本語概要
-  reject_reason  TEXT                         -- 不採用時: 理由（「スポーツ」「重複」等）
+  haiku_accepted   INTEGER DEFAULT 0,           -- 0=未処理, 1=採用, -1=不採用
+  title_ja         TEXT,                        -- 採用時: 日本語タイトル
+  desc_ja          TEXT,                        -- 採用時: 日本語概要
+  reject_reason    TEXT,                        -- 不採用時: 理由（「スポーツ」「重複」等）
+  -- 多軸スコアリング（7軸評価）
+  scores           TEXT,                        -- JSON: {timeliness,uniqueness,relevance,credibility,sentiment,breadth,novelty,composite}
+  composite_score  REAL                         -- 加重合計スコア（0〜10）。閾値6.0以上で採用
 );
 
 CREATE INDEX IF NOT EXISTS idx_news_raw_fetched ON news_raw(fetched_at);
