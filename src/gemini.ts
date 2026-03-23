@@ -27,7 +27,7 @@ export interface GeminiDecision {
 }
 
 /** プロンプトバージョン: プロンプトを変更したらこの値を更新する */
-export const PROMPT_VERSION = 'v5'; // v5: buildSystemInstructionにtpSlMin明示追加
+export const PROMPT_VERSION = 'v6'; // v6: SL距離禁止例に境界付近の値（0.13,0.15,0.19等）追加・0.2未満全拒否を明示
 
 const GEMINI_ENDPOINT =
   'https://generativelanguage.googleapis.com/v1beta/models/gemini-3.1-pro-preview:generateContent';
@@ -668,7 +668,7 @@ export async function newsStage1(params: {
     '- [OP]マークの銘柄: 通常はtrade_signalsに含めない。ただしニュースが現在のポジション方向と明確に逆行し、かつ確信度が非常に高い場合のみ含めてよい（その場合reasoningの先頭に必ず"REVERSAL:"を付記すること）\n' +
     '- tp_rate/sl_rateは必ず数値で返す（nullは不可）\n' +
     '- 【RR比設定手順・必須・自動拒否回避】①SL距離を決める（最低tpSlMin以上必須・未満は即自動拒否。USD/JPYなら最低0.2円・推奨0.3〜0.8円）②TP距離=SL距離×1.5倍以上（最低1.5倍必須。RR<1.0は即自動拒否。例:SL=0.4円→TP最低0.6円以上・SL=0.3円→TP最低0.45円以上）③絶対価格に変換（BUY: sl=entry-SL距離【必ずentryより低い】, tp=entry+TP距離【必ずentryより高い】 / SELL: sl=entry+SL距離【必ずentryより高い】, tp=entry-TP距離【必ずentryより低い】）。例BUY entry=158.37→sl=157.97, tp=158.97（RR=1.5）。例SELL entry=158.37→sl=158.77, tp=157.77（RR=1.5）。RR<1.0は即自動拒否\n' +
-    '- 【SL距離の厳守・自動拒否回避】各銘柄名後の（）内のSL距離範囲を必ず守ること。例: USD/JPYは「SLは0.2〜1.2円」→ SL距離が0.08や0.16や1.24は自動拒否される\n' +
+    '- 【SL距離の厳守・自動拒否回避】各銘柄名後の（）内のSL距離範囲を必ず守ること。例: USD/JPYは「SLは0.2〜1.2円」→ 0.2円未満（0.08, 0.10, 0.13, 0.15, 0.16, 0.19など全て）・1.2円超（1.24など）は即自動拒否。必ず0.2以上1.2以下で設定すること\n' +
     '- 確信度が低いニュースはtrade_signalsに含めない\n' +
     '- attention:falseのニュースはimpact/affected_pairsを空にする';
 
@@ -876,7 +876,7 @@ async function newsStage1GPT(params: {
     'その他ルール:\n- trade_signalsはBUYまたはSELLのみ（HOLDは含めない）\n- [OP]マークの銘柄はtrade_signalsに含めない\n' +
     '- tp_rate/sl_rateは必ず数値で返す（nullは不可）\n' +
     '- 【RR比設定手順・必須・自動拒否回避】①SL距離を決める（最低tpSlMin以上必須・未満は即自動拒否。USD/JPYなら最低0.2円・推奨0.3〜0.8円）②TP距離=SL距離×1.5倍以上（最低1.5倍必須。RR<1.0は即自動拒否。例:SL=0.4円→TP最低0.6円以上・SL=0.3円→TP最低0.45円以上）③絶対価格に変換（BUY: sl=entry-SL距離【必ずentryより低い】, tp=entry+TP距離【必ずentryより高い】 / SELL: sl=entry+SL距離【必ずentryより高い】, tp=entry-TP距離【必ずentryより低い】）。例BUY entry=158.37→sl=157.97, tp=158.97（RR=1.5）。例SELL entry=158.37→sl=158.77, tp=157.77（RR=1.5）。RR<1.0は即自動拒否\n' +
-    '- 【SL距離の厳守・自動拒否回避】各銘柄名後の（）内のSL距離範囲を必ず守ること。例: USD/JPYは「SLは0.2〜1.2円」→ SL距離が0.08や0.16や1.24は自動拒否される\n' +
+    '- 【SL距離の厳守・自動拒否回避】各銘柄名後の（）内のSL距離範囲を必ず守ること。例: USD/JPYは「SLは0.2〜1.2円」→ 0.2円未満（0.08, 0.10, 0.13, 0.15, 0.16, 0.19など全て）・1.2円超（1.24など）は即自動拒否。必ず0.2以上1.2以下で設定すること\n' +
     '- 確信度が低いニュースはtrade_signalsに含めない';
 
   const res = await fetchWithTimeout('https://api.openai.com/v1/chat/completions', {
@@ -962,7 +962,7 @@ async function newsStage1Claude(params: {
     '- 例(USD/JPY SELL, rate=158.37): tp_rate=156.00(下), sl_rate=160.50(上) ← 大きい値でもSELLのSLは必ずentry(158.37)より上\n' +
     '- tp_rate/sl_rateは各銘柄の現在レートを起点にした絶対価格で返すこと\n' +
     '- 【RR比設定手順・必須・自動拒否回避】①SL距離を決める（最低tpSlMin以上必須・未満は即自動拒否。USD/JPYなら最低0.2円・推奨0.3〜0.8円）②TP距離=SL距離×1.5倍以上（最低1.5倍必須。RR<1.0は即自動拒否。例:SL=0.4円→TP最低0.6円以上・SL=0.3円→TP最低0.45円以上）③絶対価格に変換（BUY: sl=entry-SL距離【必ずentryより低い】, tp=entry+TP距離【必ずentryより高い】 / SELL: sl=entry+SL距離【必ずentryより高い】, tp=entry-TP距離【必ずentryより低い】）。例BUY entry=158.37→sl=157.97, tp=158.97（RR=1.5）。例SELL entry=158.37→sl=158.77, tp=157.77（RR=1.5）。RR<1.0は即自動拒否\n' +
-    '- 【SL距離の厳守・自動拒否回避】各銘柄名後の（）内のSL距離範囲を必ず守ること。例: USD/JPYは「SLは0.2〜1.2円」→ SL距離が0.08や0.16や1.24は自動拒否される';
+    '- 【SL距離の厳守・自動拒否回避】各銘柄名後の（）内のSL距離範囲を必ず守ること。例: USD/JPYは「SLは0.2〜1.2円」→ 0.2円未満（0.08, 0.10, 0.13, 0.15, 0.16, 0.19など全て）・1.2円超（1.24など）は即自動拒否。必ず0.2以上1.2以下で設定すること';
 
   const res = await fetchWithTimeout('https://api.anthropic.com/v1/messages', {
     method: 'POST',
