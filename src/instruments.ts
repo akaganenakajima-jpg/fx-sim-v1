@@ -17,8 +17,10 @@ export interface InstrumentConfig {
   tpSlHint: string;
   /** TP/SL距離の最小値（レート単位）— この値未満はサニティ拒否 */
   tpSlMin: number;
-  /** TP/SL距離の最大値（レート単位）— この値超過はサニティ拒否 */
+  /** SL距離の最大値（レート単位）— SLがこの値を超えるとサニティ拒否。TPには適用しない */
   tpSlMax: number;
+  /** TP/SL比（RR）の最大値 — TPはこの倍率までSLに対して自由に設定可能。AIの大きな予測を妨げない */
+  rrMax: number;
   /** PnL表示単位 */
   pnlUnit: string;
   /** PnL = (close - entry) * pnlMultiplier */
@@ -41,9 +43,10 @@ export const INSTRUMENTS: InstrumentConfig[] = [
     broker: 'oanda',
     oandaSymbol: 'USD_JPY',
     rateChangeTh: 0.015,
-    tpSlHint: '現在レートから±0.2〜1.2円（SLは0.2円以上確保。TPはSLの1.5倍以上）',
+    tpSlHint: 'SLは0.2〜1.2円（entry ATRの0.7〜4倍）、TPはSLの最大8倍まで自由（RR1.5以上推奨）',
     tpSlMin: 0.2,    // H1-ATR≈0.3円。0.2円未満は拒否
-    tpSlMax: 1.2,    // 1.2円超過は拒否
+    tpSlMax: 1.2,    // SLは1.2円以内（ATR×4）
+    rrMax: 8,        // RR最大8倍（TP上限 = SL × 8）
     pnlUnit: '円',
     pnlMultiplier: 100,
     trailingActivation: 0.2,   // 0.2円利益でトレイリング開始（旧0.3）
@@ -56,9 +59,10 @@ export const INSTRUMENTS: InstrumentConfig[] = [
     broker: 'oanda',
     oandaSymbol: 'JP225_USD',
     rateChangeTh: 15,
-    tpSlHint: '現在値から±80〜2000ポイント（SLは80pt以上確保。TPはSLの1.5倍以上）',
+    tpSlHint: 'SLは80〜500pt（ATRの0.8〜5倍）、TPはSLの最大12倍まで自由（RR1.5以上推奨）',
     tpSlMin: 80,     // H1-ATR≈100pt。80pt未満は拒否
-    tpSlMax: 2000,   // 2000pt超過は拒否（旧1500→高ボラ局面実績1655超過に対応）
+    tpSlMax: 500,    // SLは500pt以内（ATR×5）
+    rrMax: 12,       // RR最大12倍（高ボラ指数のため広めに設定）
     pnlUnit: '円',
     pnlMultiplier: 1,
     trailingActivation: 100,   // 旧150
@@ -71,9 +75,10 @@ export const INSTRUMENTS: InstrumentConfig[] = [
     broker: 'oanda',
     oandaSymbol: 'SPX500_USD',
     rateChangeTh: 1.5,
-    tpSlHint: '現在値から±15〜80ポイント（SLは15pt以上確保。TPはSLの1.5倍以上）',
+    tpSlHint: 'SLは15〜80pt（ATRの0.75〜4倍）、TPはSLの最大10倍まで自由（RR1.5以上推奨）',
     tpSlMin: 15,     // H1-ATR≈20pt。15pt未満は拒否
-    tpSlMax: 80,     // 80pt超過は拒否
+    tpSlMax: 80,     // SLは80pt以内（ATR×4）
+    rrMax: 10,       // RR最大10倍
     pnlUnit: '円',
     pnlMultiplier: 10,
     trailingActivation: 8,     // 旧15 — RR最悪銘柄のため大幅引き下げ
@@ -86,9 +91,10 @@ export const INSTRUMENTS: InstrumentConfig[] = [
     broker: 'oanda',
     oandaSymbol: 'USB10Y_USD',
     rateChangeTh: 0.015,
-    tpSlHint: '現在利回りから±0.05〜0.4%（SLは0.05%以上確保。TPはSLの1.5倍以上）',
+    tpSlHint: 'SLは0.05〜0.35%（ATRの0.6〜4倍）、TPはSLの最大6倍まで自由（RR1.5以上推奨）',
     tpSlMin: 0.05,   // H1-ATR≈0.08%。据置（妥当）
-    tpSlMax: 0.4,    // 0.4%超過は拒否
+    tpSlMax: 0.35,   // SLは0.35%以内（ATR×4）
+    rrMax: 6,        // RR最大6倍（債券は方向性が弱い）
     pnlUnit: '円',
     pnlMultiplier: 5000,
     trailingActivation: 0.05,  // 旧0.08
@@ -101,9 +107,10 @@ export const INSTRUMENTS: InstrumentConfig[] = [
     broker: 'paper',
     oandaSymbol: null,
     rateChangeTh: 25,
-    tpSlHint: '現在価格から±$400〜$2,000（SLは$400以上確保。TPはSLの1.5倍以上）',
+    tpSlHint: 'SLは$400〜$2500（ATRの0.7〜4倍）、TPはSLの最大8倍まで自由（RR1.5以上推奨）',
     tpSlMin: 400,    // H1-ATR≈$600。$400未満は拒否
-    tpSlMax: 2000,   // $2,000超過は拒否
+    tpSlMax: 2500,   // SLは$2500以内（ATR×4）
+    rrMax: 8,        // RR最大8倍
     pnlUnit: '円',
     pnlMultiplier: 1,
     trailingActivation: 280,   // 旧400
@@ -116,9 +123,10 @@ export const INSTRUMENTS: InstrumentConfig[] = [
     broker: 'oanda',
     oandaSymbol: 'XAU_USD',
     rateChangeTh: 1.5,
-    tpSlHint: '現在価格から±$15〜$150（SLは$15以上確保。TPはSLの1.5倍以上）',
+    tpSlHint: 'SLは$15〜$80（ATRの0.75〜4倍）、TPはSLの最大10倍まで自由（RR1.5以上推奨）',
     tpSlMin: 15,     // H1-ATR≈$20。$15未満は拒否
-    tpSlMax: 150,    // $150超過は拒否（旧$120→実績125-145超過に対応）
+    tpSlMax: 80,     // SLは$80以内（ATR×4）
+    rrMax: 10,       // RR最大10倍（地政学リスクで大きく動く）
     pnlUnit: '円',
     pnlMultiplier: 10,
     trailingActivation: 7,     // 旧10 — RR=0.55の改善
@@ -131,9 +139,10 @@ export const INSTRUMENTS: InstrumentConfig[] = [
     broker: 'oanda',
     oandaSymbol: 'EUR_USD',
     rateChangeTh: 0.001,
-    tpSlHint: '現在レートから±0.004〜0.025（SLは0.004以上確保。TPはSLの1.5倍以上）',
+    tpSlHint: 'SLは0.004〜0.025（ATRの0.7〜4倍）、TPはSLの最大8倍まで自由（RR1.5以上推奨）',
     tpSlMin: 0.004,  // H1-ATR≈0.006。0.004未満は拒否
-    tpSlMax: 0.025,  // 0.025超過は拒否（旧0.02→ボラ拡大局面対応）
+    tpSlMax: 0.025,  // SLは0.025以内（ATR×4）
+    rrMax: 8,        // RR最大8倍
     pnlUnit: '円',
     pnlMultiplier: 10000,
     trailingActivation: 0.003, // 旧0.004
@@ -146,9 +155,10 @@ export const INSTRUMENTS: InstrumentConfig[] = [
     broker: 'paper',
     oandaSymbol: null,
     rateChangeTh: 8,
-    tpSlHint: '現在価格から±$20〜$120（SLは$20以上確保。TPはSLの1.5倍以上）',
+    tpSlHint: 'SLは$20〜$120（ATRの0.7〜4倍）、TPはSLの最大8倍まで自由（RR1.5以上推奨）',
     tpSlMin: 20,     // H1-ATR≈$30。$20未満は拒否
-    tpSlMax: 120,    // $120超過は拒否
+    tpSlMax: 120,    // SLは$120以内（ATR×4）
+    rrMax: 8,        // RR最大8倍
     pnlUnit: '円',
     pnlMultiplier: 1,
     trailingActivation: 20,    // 旧30
@@ -161,9 +171,10 @@ export const INSTRUMENTS: InstrumentConfig[] = [
     broker: 'oanda',
     oandaSymbol: 'WTICO_USD',
     rateChangeTh: 0.15,
-    tpSlHint: '現在価格から±$0.5〜$3.0（SLは$0.5以上確保。TPはSLの1.5倍以上）',
+    tpSlHint: 'SLは$0.5〜$3.0（ATRの0.7〜4倍）、TPはSLの最大10倍まで自由（RR1.5以上推奨）',
     tpSlMin: 0.5,    // H1-ATR≈$0.7。$0.5未満は拒否
-    tpSlMax: 3.0,    // $3.0超過は拒否
+    tpSlMax: 3.0,    // SLは$3.0以内（ATR×4）
+    rrMax: 10,       // RR最大10倍
     pnlUnit: '円',
     pnlMultiplier: 100,
     trailingActivation: 0.5,   // 旧0.8
@@ -176,9 +187,10 @@ export const INSTRUMENTS: InstrumentConfig[] = [
     broker: 'oanda',
     oandaSymbol: 'NATGAS_USD',
     rateChangeTh: 0.015,
-    tpSlHint: '現在価格から±$0.04〜$0.4（SLは$0.04以上確保。TPはSLの1.5倍以上）',
+    tpSlHint: 'SLは$0.04〜$0.25（ATRの0.7〜4倍）、TPはSLの最大10倍まで自由（RR1.5以上推奨）',
     tpSlMin: 0.04,   // H1-ATR≈$0.06。$0.04未満は拒否
-    tpSlMax: 0.4,    // $0.4超過は拒否（旧$0.3→実績値0.327に対応）
+    tpSlMax: 0.25,   // SLは$0.25以内（ATR×4）
+    rrMax: 10,       // RR最大10倍
     pnlUnit: '円',
     pnlMultiplier: 1000,
     trailingActivation: 0.05,  // 旧0.08
@@ -191,9 +203,10 @@ export const INSTRUMENTS: InstrumentConfig[] = [
     broker: 'oanda',
     oandaSymbol: 'COPPER',
     rateChangeTh: 0.01,
-    tpSlHint: '現在価格から±$0.03〜$0.40（SLは$0.03以上確保。TPはSLの1.5倍以上）',
+    tpSlHint: 'SLは$0.03〜$0.20（ATRの0.75〜5倍）、TPはSLの最大10倍まで自由（RR1.5以上推奨）',
     tpSlMin: 0.03,   // H1-ATR≈$0.04。$0.03未満は拒否
-    tpSlMax: 0.40,   // $0.40超過は拒否（旧$0.30→実績値0.3445超過に対応）
+    tpSlMax: 0.20,   // SLは$0.20以内（ATR×5）
+    rrMax: 10,       // RR最大10倍
     pnlUnit: '円',
     pnlMultiplier: 1000,
     trailingActivation: 0.035, // 旧0.05
@@ -206,9 +219,10 @@ export const INSTRUMENTS: InstrumentConfig[] = [
     broker: 'oanda',
     oandaSymbol: 'XAG_USD',
     rateChangeTh: 0.08,
-    tpSlHint: '現在価格から±$0.25〜$2.0（SLは$0.25以上確保。TPはSLの1.5倍以上）',
+    tpSlHint: 'SLは$0.25〜$1.6（ATRの0.6〜4倍）、TPはSLの最大10倍まで自由（RR1.5以上推奨）',
     tpSlMin: 0.25,   // H1-ATR≈$0.4。$0.25未満は拒否
-    tpSlMax: 2.0,    // $2.0超過は拒否（旧$1.5→実績値1.75に合わせ上方修正）
+    tpSlMax: 1.6,    // SLは$1.6以内（ATR×4）
+    rrMax: 10,       // RR最大10倍
     pnlUnit: '円',
     pnlMultiplier: 100,
     trailingActivation: 0.28,  // 旧0.4
@@ -221,9 +235,10 @@ export const INSTRUMENTS: InstrumentConfig[] = [
     broker: 'oanda',
     oandaSymbol: 'GBP_USD',
     rateChangeTh: 0.001,
-    tpSlHint: '現在レートから±0.005〜0.028（SLは0.005以上確保。TPはSLの1.5倍以上）',
+    tpSlHint: 'SLは0.005〜0.028（ATRの0.7〜4倍）、TPはSLの最大8倍まで自由（RR1.5以上推奨）',
     tpSlMin: 0.005,  // H1-ATR≈0.007。0.005未満は拒否
-    tpSlMax: 0.028,  // 0.028超過は拒否（旧0.02→実績0.0206超過のため上方修正）
+    tpSlMax: 0.028,  // SLは0.028以内（ATR×4）
+    rrMax: 8,        // RR最大8倍（メジャーFXペア）
     pnlUnit: '円',
     pnlMultiplier: 10000,
     trailingActivation: 0.003,
@@ -236,9 +251,10 @@ export const INSTRUMENTS: InstrumentConfig[] = [
     broker: 'oanda',
     oandaSymbol: 'AUD_USD',
     rateChangeTh: 0.001,
-    tpSlHint: '現在レートから±0.004〜0.025（SLは0.004以上確保。TPはSLの1.5倍以上）',
+    tpSlHint: 'SLは0.004〜0.025（ATRの0.8〜5倍）、TPはSLの最大8倍まで自由（RR1.5以上推奨）',
     tpSlMin: 0.004,  // H1-ATR≈0.005。0.004未満は拒否
-    tpSlMax: 0.025,  // 0.025超過は拒否（旧0.02→ボラ拡大局面対応）
+    tpSlMax: 0.025,  // SLは0.025以内（ATR×5）
+    rrMax: 8,        // RR最大8倍（メジャーFXペア）
     pnlUnit: '円',
     pnlMultiplier: 10000,
     trailingActivation: 0.003,
@@ -251,9 +267,10 @@ export const INSTRUMENTS: InstrumentConfig[] = [
     broker: 'paper',
     oandaSymbol: null,
     rateChangeTh: 0.5,
-    tpSlHint: '現在価格から±$2〜$12（SLは$2以上確保。TPはSLの1.5倍以上）',
+    tpSlHint: 'SLは$2〜$12（ATRの0.7〜4倍）、TPはSLの最大8倍まで自由（RR1.5以上推奨）',
     tpSlMin: 2.0,    // H1-ATR≈$3。$2未満は拒否
-    tpSlMax: 12.0,   // $12超過は拒否
+    tpSlMax: 12.0,   // SLは$12以内（ATR×4）
+    rrMax: 8,        // RR最大8倍（高ボラ暗号資産）
     pnlUnit: '円',
     pnlMultiplier: 10,
     trailingActivation: 2,
@@ -266,9 +283,10 @@ export const INSTRUMENTS: InstrumentConfig[] = [
     broker: 'oanda',
     oandaSymbol: 'DE30_EUR',
     rateChangeTh: 15,
-    tpSlHint: '現在値から±50〜300ポイント（SLは50pt以上確保。TPはSLの1.5倍以上）',
+    tpSlHint: 'SLは50〜300pt（ATRの0.7〜4倍）、TPはSLの最大10倍まで自由（RR1.5以上推奨）',
     tpSlMin: 50,     // H1-ATR≈75pt。50pt未満は拒否
-    tpSlMax: 300,    // 300pt超過は拒否
+    tpSlMax: 300,    // SLは300pt以内（ATR×4）
+    rrMax: 10,       // RR最大10倍（欧州株価指数）
     pnlUnit: '円',
     pnlMultiplier: 1,
     trailingActivation: 55,
@@ -281,9 +299,10 @@ export const INSTRUMENTS: InstrumentConfig[] = [
     broker: 'oanda',
     oandaSymbol: 'NAS100_USD',
     rateChangeTh: 15,
-    tpSlHint: '現在値から±80〜500ポイント（SLは80pt以上確保。TPはSLの1.5倍以上）',
+    tpSlHint: 'SLは80〜500pt（ATRの0.8〜5倍）、TPはSLの最大12倍まで自由（RR1.5以上推奨）',
     tpSlMin: 80,     // H1-ATR≈100pt。80pt未満は拒否
-    tpSlMax: 500,    // 500pt超過は拒否
+    tpSlMax: 500,    // SLは500pt以内（ATR×5）
+    rrMax: 12,       // RR最大12倍（高ボラ指数）
     pnlUnit: '円',
     pnlMultiplier: 1,
     trailingActivation: 55,
@@ -297,9 +316,10 @@ export const INSTRUMENTS: InstrumentConfig[] = [
     broker: 'oanda',
     oandaSymbol: 'UK100_GBP',
     rateChangeTh: 10,
-    tpSlHint: '現在値から±30〜200ポイント（SLは30pt以上確保。TPはSLの1.5倍以上）',
+    tpSlHint: 'SLは30〜200pt（ATRの0.6〜4倍）、TPはSLの最大10倍まで自由（RR1.5以上推奨）',
     tpSlMin: 30,     // H1-ATR≈50pt。30pt未満は拒否
-    tpSlMax: 200,    // 200pt超過は拒否
+    tpSlMax: 200,    // SLは200pt以内（ATR×4）
+    rrMax: 10,       // RR最大10倍（欧州株価指数）
     pnlUnit: '円',
     pnlMultiplier: 1,
     trailingActivation: 40,
@@ -313,9 +333,10 @@ export const INSTRUMENTS: InstrumentConfig[] = [
     broker: 'oanda',
     oandaSymbol: 'HK33_HKD',
     rateChangeTh: 30,
-    tpSlHint: '現在値から±80〜500ポイント（SLは80pt以上確保。TPはSLの1.5倍以上）',
+    tpSlHint: 'SLは80〜500pt（ATRの0.8〜5倍）、TPはSLの最大12倍まで自由（RR1.5以上推奨）',
     tpSlMin: 80,     // H1-ATR≈100pt。80pt未満は拒否
-    tpSlMax: 500,    // 500pt超過は拒否
+    tpSlMax: 500,    // SLは500pt以内（ATR×5）
+    rrMax: 12,       // RR最大12倍（高ボラアジア指数）
     pnlUnit: '円',
     pnlMultiplier: 0.5,
     trailingActivation: 80,
