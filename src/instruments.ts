@@ -56,9 +56,9 @@ export const INSTRUMENTS: InstrumentConfig[] = [
     broker: 'oanda',
     oandaSymbol: 'JP225_USD',
     rateChangeTh: 15,
-    tpSlHint: '現在値から±80〜1000ポイント（SLは80pt以上確保。TPはSLの1.5倍以上）',
+    tpSlHint: '現在値から±80〜1200ポイント（SLは80pt以上確保。TPはSLの1.5倍以上）',
     tpSlMin: 80,     // H1-ATR≈100pt。80pt未満は拒否
-    tpSlMax: 1000,   // 1000pt超過は拒否（旧700→AI出力800-940ptに対応）
+    tpSlMax: 1200,   // 1200pt超過は拒否（旧1000→実績1154超過に対応）
     pnlUnit: '円',
     pnlMultiplier: 1,
     trailingActivation: 100,   // 旧150
@@ -191,9 +191,9 @@ export const INSTRUMENTS: InstrumentConfig[] = [
     broker: 'oanda',
     oandaSymbol: 'COPPER',
     rateChangeTh: 0.01,
-    tpSlHint: '現在価格から±$0.03〜$0.30（SLは$0.03以上確保。TPはSLの1.5倍以上）',
+    tpSlHint: '現在価格から±$0.03〜$0.40（SLは$0.03以上確保。TPはSLの1.5倍以上）',
     tpSlMin: 0.03,   // H1-ATR≈$0.04。$0.03未満は拒否
-    tpSlMax: 0.30,   // $0.30超過は拒否（旧$0.20→実績値0.2525超過に対応）
+    tpSlMax: 0.40,   // $0.40超過は拒否（旧$0.30→実績値0.3445超過に対応）
     pnlUnit: '円',
     pnlMultiplier: 1000,
     trailingActivation: 0.035, // 旧0.05
