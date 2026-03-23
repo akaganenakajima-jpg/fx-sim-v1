@@ -671,6 +671,7 @@ async function runAIDecisions(
             openaiApiKey2: env.OPENAI_API_KEY_2,
             anthropicApiKey: env.ANTHROPIC_API_KEY,
             keyIndex: _keyIndex,
+            db: env.DB,
           });
           geminiResult = hedgeResult.decision;
           if (hedgeResult.provider !== 'gemini') {
@@ -1000,6 +1001,7 @@ async function runPathB(
         news, indicators, instruments: instrumentList, apiKey,
         openaiApiKey: hedgeKeys?.openaiApiKey,
         anthropicApiKey: hedgeKeys?.anthropicApiKey,
+        db: env.DB,
       });
       stage1 = b1Result;
       if (b1Result.provider !== 'gemini') {
@@ -1096,7 +1098,7 @@ async function runPathB(
   } else {
     try {
       const tB2 = Date.now();
-      const stage2 = await newsStage2({ stage1Result: stage1, news, apiKey });
+      const stage2 = await newsStage2({ stage1Result: stage1, news, apiKey, db: env.DB });
       b2Ms = Date.now() - tB2;
       b2Corrections = stage2.corrections;
       console.log(`[fx-sim] Path B B2: ${b2Corrections.filter(c => c.action === 'CONFIRM').length}件CONFIRM, ${b2Corrections.filter(c => c.action === 'REVISE').length}件REVISE, ${b2Corrections.filter(c => c.action === 'REVERSE').length}件REVERSE (${b2Ms}ms)`);
