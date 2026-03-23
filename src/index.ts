@@ -1074,7 +1074,25 @@ async function runPathB(
 
     if (action === 'REVERSE') {
       reversals.push(signal.pair);
-      continue; // toCloseに追加、同サイクル再オープン禁止
+      continue; // B2 REVERSE: 既存ポジションをクローズ、同サイクル再オープン禁止
+    }
+
+    // B1 REVERSAL: reasoningが"REVERSAL:"で始まる場合、既存ポジションをクローズ→新規エントリー
+    // B2が429で失敗しているときでも逆行ニュースに反応できるフォールバック
+    if (signal.reasoning?.startsWith('REVERSAL:')) {
+      // reversalsリストに追加してクローズ後、同シグナルをdecisionsにも追加（再オープン）
+      reversals.push(signal.pair);
+      decisions.push({
+        pair: signal.pair,
+        decision: signal.decision,
+        tp_rate: signal.tp_rate,
+        sl_rate: signal.sl_rate,
+        reasoning: signal.reasoning + ' [B1_REVERSAL]',
+        rate: 0,
+        source: 'PATH_B',
+        news_analysis: stage1.news_analysis,
+      });
+      continue;
     }
 
     let tp = signal.tp_rate;
