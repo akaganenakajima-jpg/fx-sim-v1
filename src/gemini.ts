@@ -667,7 +667,7 @@ export async function newsStage1(params: {
     '- trade_signalsはBUYまたはSELLのみ（HOLDは含めない）\n' +
     '- [OP]マークの銘柄: 通常はtrade_signalsに含めない。ただしニュースが現在のポジション方向と明確に逆行し、かつ確信度が非常に高い場合のみ含めてよい（その場合reasoningの先頭に必ず"REVERSAL:"を付記すること）\n' +
     '- tp_rate/sl_rateは必ず数値で返す（nullは不可）\n' +
-    '- リスクリワード比は1.5以上\n' +
+    '- 【RR比厳守・自動拒否回避】TP距離はSL距離の1.5倍以上にすること（これ未満はシステムが自動拒否する）。例: SL=0.5円→TP≥0.75円, SL=1.0円→TP≥1.5円\n' +
     '- 【SL距離の厳守・自動拒否回避】各銘柄名後の（）内のSL距離範囲を必ず守ること。例: USD/JPYは「SLは0.2〜1.2円」→ SL距離が0.08や1.24は自動拒否される\n' +
     '- 確信度が低いニュースはtrade_signalsに含めない\n' +
     '- attention:falseのニュースはimpact/affected_pairsを空にする';
@@ -874,7 +874,8 @@ async function newsStage1GPT(params: {
     '- 例(USD/JPY SELL, rate=158.37): tp_rate=156.00(下), sl_rate=160.50(上) ← 大きい値でもSELLのSLは必ずentry(158.37)より上\n' +
     '- tp_rate/sl_rateは各銘柄の現在レートを起点にした絶対価格で返す\n\n' +
     'その他ルール:\n- trade_signalsはBUYまたはSELLのみ（HOLDは含めない）\n- [OP]マークの銘柄はtrade_signalsに含めない\n' +
-    '- tp_rate/sl_rateは必ず数値で返す（nullは不可）\n- リスクリワード比は1.5以上\n' +
+    '- tp_rate/sl_rateは必ず数値で返す（nullは不可）\n' +
+    '- 【RR比厳守・自動拒否回避】TP距離はSL距離の1.5倍以上にすること（これ未満はシステムが自動拒否する）。例: SL=0.5円→TP≥0.75円, SL=1.0円→TP≥1.5円\n' +
     '- 【SL距離の厳守・自動拒否回避】各銘柄名後の（）内のSL距離範囲を必ず守ること。例: USD/JPYは「SLは0.2〜1.2円」→ SL距離が0.08や1.24は自動拒否される\n' +
     '- 確信度が低いニュースはtrade_signalsに含めない';
 
@@ -960,6 +961,7 @@ async function newsStage1Claude(params: {
     '- 例(SELL, rate=1.33): tp_rate=1.30(下), sl_rate=1.36(上) ← SLは必ずentryより上\n' +
     '- 例(USD/JPY SELL, rate=158.37): tp_rate=156.00(下), sl_rate=160.50(上) ← 大きい値でもSELLのSLは必ずentry(158.37)より上\n' +
     '- tp_rate/sl_rateは各銘柄の現在レートを起点にした絶対価格で返すこと\n' +
+    '- 【RR比厳守・自動拒否回避】TP距離はSL距離の1.5倍以上にすること（これ未満はシステムが自動拒否する）。例: SL=0.5円→TP≥0.75円, SL=1.0円→TP≥1.5円\n' +
     '- 【SL距離の厳守・自動拒否回避】各銘柄名後の（）内のSL距離範囲を必ず守ること。例: USD/JPYは「SLは0.2〜1.2円」→ SL距離が0.08や1.24は自動拒否される';
 
   const res = await fetchWithTimeout('https://api.anthropic.com/v1/messages', {
