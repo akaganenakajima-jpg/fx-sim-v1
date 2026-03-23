@@ -26,7 +26,7 @@ export interface GeminiDecision {
 }
 
 /** プロンプトバージョン: プロンプトを変更したらこの値を更新する */
-export const PROMPT_VERSION = 'v4'; // 現在のバージョン
+export const PROMPT_VERSION = 'v5'; // v5: buildSystemInstructionにtpSlMin明示追加
 
 const GEMINI_ENDPOINT =
   'https://generativelanguage.googleapis.com/v1beta/models/gemini-3.1-pro-preview:generateContent';
@@ -52,7 +52,7 @@ function buildSystemInstruction(instrument: InstrumentConfig): string {
     `BUY の場合: tp_rate > 現在レート かつ sl_rate < 現在レート（価格上昇で利確、下落で損切り）。` +
     `SELL の場合: tp_rate < 現在レート かつ sl_rate > 現在レート（価格下落で利確、上昇で損切り）。` +
     `例: 現在レート=159.00でBUYなら tp_rate=160.50(上), sl_rate=158.00(下)。現在レート=159.00でSELLなら tp_rate=157.50(下), sl_rate=160.50(上)。` +
-    `【重要】リスクリワード比（TP距離÷SL距離）は必ず1.5以上にすること。SLは少なくとも通常の時間足ボラティリティ（ATR）1本分の幅を確保せよ。ATR以下のSLは通常のノイズで損切りされるため禁止。確信度が低い場合はHOLDを返すこと。` +
+    `【重要・SL距離の絶対下限】SL距離は最低 ${instrument.tpSlMin} 以上を確保すること（これ未満はシステムが自動拒否する）。推奨SL距離: ${instrument.tpSlMin} の1.5〜2.5倍。リスクリワード比（TP距離÷SL距離）は必ず1.5以上にすること。ATR以下のSLは通常のノイズで損切りされるため禁止。確信度が低い場合はHOLDを返すこと。` +
     `\n【手法分類】"strategy"フィールドで判断手法を分類せよ: trend_follow(トレンド順張り), mean_reversion(逆張り), breakout(ブレイクアウト), news_driven(ニュース起因), range_trade(レンジ売買)` +
     `\n【確信度】"confidence"フィールドで確信度を0-100で示せ。40未満ならHOLDを推奨。` +
     `\n必ず以下のフォーマットのみで返答してください:\n` +
