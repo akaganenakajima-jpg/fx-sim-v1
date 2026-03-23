@@ -147,8 +147,9 @@ const MIGRATIONS: Array<{ version: number; description: string; sql: string }> =
   },
   {
     version: 208,
-    description: 'positions に trigger カラム追加（RATE/SCHED/NEWS トリガー識別）',
-    sql: 'ALTER TABLE positions ADD COLUMN trigger TEXT',
+    description: 'decisions に skip_reason カラム追加（未実行理由表示用）',
+    // NOTE: v208 は本番DBで旧定義（skip_reason）で適用済み。trigger は v211 で追加。
+    sql: `CREATE TABLE IF NOT EXISTS _dummy_v208 (id INTEGER PRIMARY KEY)`,
   },
   {
     version: 209,
@@ -167,6 +168,11 @@ const MIGRATIONS: Array<{ version: number; description: string; sql: string }> =
     version: 210,
     description: 'token_usage インデックス追加',
     sql: `CREATE INDEX IF NOT EXISTS idx_token_usage_created ON token_usage(created_at DESC)`,
+  },
+  {
+    version: 211,
+    description: 'positions に trigger カラム追加（RATE/SCHED/NEWS トリガー識別）※v208の再適用対策',
+    sql: 'ALTER TABLE positions ADD COLUMN trigger TEXT',
   },
 ];
 
