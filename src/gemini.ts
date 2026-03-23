@@ -3,6 +3,7 @@
 import type { MarketIndicators } from './indicators';
 import type { NewsItem } from './news';
 import type { InstrumentConfig } from './instruments';
+import { insertTokenUsage } from './db';
 
 // ── 429 Rate Limit エラー（キー別クールダウン用）──
 export class RateLimitError extends Error {
@@ -26,7 +27,7 @@ export interface GeminiDecision {
 }
 
 /** プロンプトバージョン: プロンプトを変更したらこの値を更新する */
-export const PROMPT_VERSION = 'v4'; // 現在のバージョン
+export const PROMPT_VERSION = 'v5'; // v5: buildSystemInstructionにtpSlMin明示追加
 
 const GEMINI_ENDPOINT =
   'https://generativelanguage.googleapis.com/v1beta/models/gemini-3.1-pro-preview:generateContent';
@@ -52,7 +53,7 @@ function buildSystemInstruction(instrument: InstrumentConfig): string {
     `BUY の場合: tp_rate > 現在レート かつ sl_rate < 現在レート（価格上昇で利確、下落で損切り）。` +
     `SELL の場合: tp_rate < 現在レート かつ sl_rate > 現在レート（価格下落で利確、上昇で損切り）。` +
     `例: 現在レート=159.00でBUYなら tp_rate=160.50(上), sl_rate=158.00(下)。現在レート=159.00でSELLなら tp_rate=157.50(下), sl_rate=160.50(上)。` +
-    `【重要】リスクリワード比（TP距離÷SL距離）は必ず1.5以上にすること。SLは少なくとも通常の時間足ボラティリティ（ATR）1本分の幅を確保せよ。ATR以下のSLは通常のノイズで損切りされるため禁止。確信度が低い場合はHOLDを返すこと。` +
+    `【重要・SL距離の絶対下限】SL距離は最低 ${instrument.tpSlMin} 以上を確保すること（これ未満はシステムが自動拒否する）。推奨SL距離: ${instrument.tpSlMin} の1.5〜2.5倍。リスクリワード比（TP距離÷SL距離）は必ず1.5以上にすること。ATR以下のSLは通常のノイズで損切りされるため禁止。確信度が低い場合はHOLDを返すこと。` +
     `\n【手法分類】"strategy"フィールドで判断手法を分類せよ: trend_follow(トレンド順張り), mean_reversion(逆張り), breakout(ブレイクアウト), news_driven(ニュース起因), range_trade(レンジ売買)` +
     `\n【確信度】"confidence"フィールドで確信度を0-100で示せ。40未満ならHOLDを推奨。` +
     `\n必ず以下のフォーマットのみで返答してください:\n` +
@@ -145,6 +146,11 @@ interface GeminiResponse {
   candidates: Array<{
     content: { parts: Array<{ text: string }> };
   }>;
+  usageMetadata?: {
+    promptTokenCount?: number;
+    candidatesTokenCount?: number;
+    totalTokenCount?: number;
+  };
 }
 
 
@@ -161,8 +167,9 @@ export async function getDecision(params: {
   technicalText?: string;
   regimeProhibitions?: string;
   apiKey: string;
+  db?: D1Database;
 }): Promise<GeminiDecision> {
-  const { apiKey, instrument, ...rest } = params;
+  const { apiKey, instrument, db, ...rest } = params;
   const userMessage = buildUserMessage({ instrument, ...rest });
 
   const res = await fetchWithTimeout(`${GEMINI_ENDPOINT}?key=${apiKey}`, {
@@ -192,6 +199,14 @@ export async function getDecision(params: {
   const text = data.candidates[0].content.parts[0].text;
   const parsed = JSON.parse(text) as GeminiDecision;
 
+  // トークン使用量記録
+  if (db && data.usageMetadata) {
+    void insertTokenUsage(db, 'gemini-3.1-pro-preview', 'PATH_A_GEMINI',
+      data.usageMetadata.promptTokenCount ?? 0,
+      data.usageMetadata.candidatesTokenCount ?? 0,
+      instrument.pair);
+  }
+
   const decision = (['BUY', 'SELL', 'HOLD'] as const).includes(
     parsed.decision as 'BUY' | 'SELL' | 'HOLD'
   )
@@ -217,9 +232,10 @@ export async function getDecisionGPT(params: {
   allPositionDirections?: string[];
   sparkRates?: number[];
   regime?: string;
+  db?: D1Database;
   apiKey: string;
 }): Promise<GeminiDecision> {
-  const { apiKey, instrument, ...rest } = params;
+  const { apiKey, instrument, db, ...rest } = params;
   const userMessage = buildUserMessage({ instrument, ...rest });
   const systemPrompt = buildSystemInstruction(instrument);
 
@@ -245,9 +261,20 @@ export async function getDecisionGPT(params: {
     throw new Error(`OpenAI API error ${res.status}: ${body}`);
   }
 
-  const data = await res.json<{ choices: Array<{ message: { content: string } }> }>();
+  const data = await res.json<{
+    choices: Array<{ message: { content: string } }>;
+    usage?: { prompt_tokens?: number; completion_tokens?: number };
+  }>();
   const text = data.choices[0].message.content;
   const parsed = JSON.parse(text) as GeminiDecision;
+
+  // トークン使用量記録
+  if (db && data.usage) {
+    void insertTokenUsage(db, 'gpt-4.1-mini', 'PATH_A_GPT',
+      data.usage.prompt_tokens ?? 0,
+      data.usage.completion_tokens ?? 0,
+      instrument.pair);
+  }
 
   return {
     decision: (['BUY', 'SELL', 'HOLD'] as const).includes(parsed.decision as 'BUY' | 'SELL' | 'HOLD') ? parsed.decision : 'HOLD',
@@ -269,8 +296,9 @@ export async function getDecisionClaude(params: {
   sparkRates?: number[];
   regime?: string;
   apiKey: string;
+  db?: D1Database;
 }): Promise<GeminiDecision> {
-  const { apiKey, instrument, ...rest } = params;
+  const { apiKey, instrument, db, ...rest } = params;
   const userMessage = buildUserMessage({ instrument, ...rest });
   const systemPrompt = buildSystemInstruction(instrument);
 
@@ -297,8 +325,20 @@ export async function getDecisionClaude(params: {
     throw new Error(`Anthropic API error ${res.status}: ${body}`);
   }
 
-  const data = await res.json<{ content: Array<{ type: string; text: string }> }>();
+  const data = await res.json<{
+    content: Array<{ type: string; text: string }>;
+    usage?: { input_tokens?: number; output_tokens?: number };
+  }>();
   const text = data.content[0].text;
+
+  // トークン使用量記録
+  if (db && data.usage) {
+    void insertTokenUsage(db, 'claude-sonnet-4-20250514', 'PATH_A_CLAUDE',
+      data.usage.input_tokens ?? 0,
+      data.usage.output_tokens ?? 0,
+      instrument.pair);
+  }
+
   // JSON部分を抽出（Claudeはマークダウンで囲む場合がある）
   const jsonMatch = text.match(/\{[\s\S]*\}/);
   if (!jsonMatch) throw new Error('Claude response has no JSON');
@@ -336,11 +376,12 @@ export async function getDecisionWithHedge(params: {
   openaiApiKey2?: string;
   anthropicApiKey?: string;
   keyIndex?: number;
+  db?: D1Database;
 }): Promise<HedgeResult> {
-  const { geminiApiKey, openaiApiKey, openaiApiKey2, anthropicApiKey, keyIndex, ...common } = params;
+  const { geminiApiKey, openaiApiKey, openaiApiKey2, anthropicApiKey, keyIndex, db, ...common } = params;
 
   // Geminiを即座に開始
-  const geminiPromise = getDecision({ ...common, apiKey: geminiApiKey })
+  const geminiPromise = getDecision({ ...common, apiKey: geminiApiKey, db })
     .then(d => ({ decision: d, provider: 'gemini' as const }));
 
   // 4秒後にGPTをヘッジとして開始（Geminiがまだ返ってなければ）
@@ -349,20 +390,20 @@ export async function getDecisionWithHedge(params: {
       if (openaiApiKey) {
         try {
           const oaiKey = (keyIndex !== undefined && keyIndex % 2 === 0 ? openaiApiKey : openaiApiKey2) || openaiApiKey;
-          const d = await getDecisionGPT({ ...common, apiKey: oaiKey });
+          const d = await getDecisionGPT({ ...common, apiKey: oaiKey, db });
           resolve({ decision: d, provider: 'gpt' });
         } catch (gptErr) {
           // GPTも失敗 → Claude
           if (anthropicApiKey) {
             try {
-              const d = await getDecisionClaude({ ...common, apiKey: anthropicApiKey });
+              const d = await getDecisionClaude({ ...common, apiKey: anthropicApiKey, db });
               resolve({ decision: d, provider: 'claude' });
             } catch { reject(new Error('All hedge providers failed')); }
           } else { reject(gptErr); }
         }
       } else if (anthropicApiKey) {
         try {
-          const d = await getDecisionClaude({ ...common, apiKey: anthropicApiKey });
+          const d = await getDecisionClaude({ ...common, apiKey: anthropicApiKey, db });
           resolve({ decision: d, provider: 'claude' });
         } catch (e) { reject(e); }
       } else { reject(new Error('No hedge provider')); }
@@ -578,8 +619,9 @@ export async function newsStage1(params: {
   indicators: MarketIndicators;
   instruments: Array<{ pair: string; hasOpenPosition: boolean; tpSlHint?: string }>;
   apiKey: string;
+  db?: D1Database;
 }): Promise<NewsStage1Result> {
-  const { news, indicators, instruments, apiKey } = params;
+  const { news, indicators, instruments, apiKey, db } = params;
 
   const newsList = news.slice(0, 20).map((n, i) =>
     `[${i}] ${n.title_ja || n.title}${(n as any).source ? ` (${(n as any).source})` : ''}`
@@ -649,6 +691,14 @@ export async function newsStage1(params: {
 
   const data = await res.json<GeminiResponse>();
   const text = data.candidates[0].content.parts[0].text;
+
+  // トークン使用量記録
+  if (db && data.usageMetadata) {
+    void insertTokenUsage(db, 'gemini-3.1-pro-preview', 'PATH_B1_GEMINI',
+      data.usageMetadata.promptTokenCount ?? 0,
+      data.usageMetadata.candidatesTokenCount ?? 0);
+  }
+
   return JSON.parse(text) as NewsStage1Result;
 }
 
@@ -664,8 +714,9 @@ export async function newsStage2(params: {
   stage1Result: NewsStage1Result;
   news: NewsItem[];
   apiKey: string;
+  db?: D1Database;
 }): Promise<NewsStage2Result> {
-  const { stage1Result, news, apiKey } = params;
+  const { stage1Result, news, apiKey, db } = params;
 
   const signalList = stage1Result.trade_signals.map(s =>
     `${s.pair}: ${s.decision} TP=${s.tp_rate} SL=${s.sl_rate} / ${s.reasoning}`
@@ -721,6 +772,14 @@ export async function newsStage2(params: {
 
   const data = await res.json<GeminiResponse>();
   const text = data.candidates[0].content.parts[0].text;
+
+  // トークン使用量記録
+  if (db && data.usageMetadata) {
+    void insertTokenUsage(db, 'gemini-3.1-pro-preview', 'PATH_B2_GEMINI',
+      data.usageMetadata.promptTokenCount ?? 0,
+      data.usageMetadata.candidatesTokenCount ?? 0);
+  }
+
   return JSON.parse(text) as NewsStage2Result;
 }
 
@@ -734,12 +793,13 @@ export async function newsStage1WithHedge(params: {
   apiKey: string;
   openaiApiKey?: string;
   anthropicApiKey?: string;
+  db?: D1Database;
 }): Promise<NewsStage1Result & { provider: string }> {
-  const { openaiApiKey, anthropicApiKey, ...geminiParams } = params;
+  const { openaiApiKey, anthropicApiKey, db, ...geminiParams } = params;
 
   // 1. Gemini を試行
   try {
-    const result = await newsStage1(geminiParams);
+    const result = await newsStage1({ ...geminiParams, db });
     return { ...result, provider: 'gemini' };
   } catch (geminiErr) {
     console.warn(`[fx-sim] B1 Gemini failed: ${String(geminiErr).split('\n')[0].slice(0, 80)}`);
@@ -747,7 +807,7 @@ export async function newsStage1WithHedge(params: {
     // 2. GPT フォールバック
     if (openaiApiKey) {
       try {
-        const result = await newsStage1GPT({ ...params, apiKey: openaiApiKey });
+        const result = await newsStage1GPT({ ...params, apiKey: openaiApiKey, db } as any);
         return { ...result, provider: 'gpt' };
       } catch (gptErr) {
         console.warn(`[fx-sim] B1 GPT failed: ${String(gptErr).split('\n')[0].slice(0, 80)}`);
@@ -757,7 +817,7 @@ export async function newsStage1WithHedge(params: {
     // 3. Claude フォールバック
     if (anthropicApiKey) {
       try {
-        const result = await newsStage1Claude({ ...params, apiKey: anthropicApiKey });
+        const result = await newsStage1Claude({ ...params, apiKey: anthropicApiKey, db });
         return { ...result, provider: 'claude' };
       } catch (claudeErr) {
         console.warn(`[fx-sim] B1 Claude failed: ${String(claudeErr).split('\n')[0].slice(0, 80)}`);
@@ -830,9 +890,20 @@ async function newsStage1GPT(params: {
     throw new Error(`GPT newsStage1 error ${res.status}: ${body.slice(0, 200)}`);
   }
 
-  const data = await res.json<{ choices: Array<{ message: { content: string } }> }>();
+  const data = await res.json<{
+    choices: Array<{ message: { content: string } }>;
+    usage?: { prompt_tokens?: number; completion_tokens?: number };
+  }>();
   const text = data.choices[0].message.content;
   const parsed = JSON.parse(text);
+
+  // トークン使用量記録（newsStage1GPTはdbをparams経由で受け取る）
+  if ((params as any).db && data.usage) {
+    void insertTokenUsage((params as any).db, 'gpt-4.1-mini', 'PATH_B1_GPT',
+      data.usage.prompt_tokens ?? 0,
+      data.usage.completion_tokens ?? 0);
+  }
+
   // GPTはルートオブジェクトまたはネストで返す可能性がある
   return {
     news_analysis: parsed.news_analysis ?? [],
@@ -846,6 +917,7 @@ async function newsStage1Claude(params: {
   indicators: MarketIndicators;
   instruments: Array<{ pair: string; hasOpenPosition: boolean; tpSlHint?: string }>;
   apiKey: string;
+  db?: D1Database;
 }): Promise<NewsStage1Result> {
   const { news, indicators, instruments, apiKey } = params;
 
@@ -902,8 +974,19 @@ async function newsStage1Claude(params: {
     throw new Error(`Claude newsStage1 error ${res.status}: ${body.slice(0, 200)}`);
   }
 
-  const data = await res.json<{ content: Array<{ type: string; text: string }> }>();
+  const data = await res.json<{
+    content: Array<{ type: string; text: string }>;
+    usage?: { input_tokens?: number; output_tokens?: number };
+  }>();
   const text = data.content[0].text;
+
+  // トークン使用量記録
+  if (params.db && data.usage) {
+    void insertTokenUsage(params.db, 'claude-sonnet-4-20250514', 'PATH_B1_CLAUDE',
+      data.usage.input_tokens ?? 0,
+      data.usage.output_tokens ?? 0);
+  }
+
   const jsonMatch = text.match(/\{[\s\S]*\}/);
   if (!jsonMatch) throw new Error('Claude newsStage1: no JSON object found');
   const parsed = JSON.parse(jsonMatch[0]);

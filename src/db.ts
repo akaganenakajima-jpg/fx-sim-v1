@@ -23,6 +23,8 @@ export interface Position {
   partial_closed_lot?: number | null;
   original_lot?: number | null;
   tp1_hit?: number | null;
+  // トリガー識別子（'RATE'=レート変動, 'SCHED'=定期30m, 'NEWS'=ニュース）
+  trigger?: string | null;
 }
 
 export interface DecisionRecord {
@@ -186,5 +188,33 @@ export async function updateDecisionOutcome(
       .run();
   } catch {
     // outcomeカラムが未作成（マイグレーション前）の場合は無視
+  }
+}
+
+/**
+ * トークン使用量を記録（token_usage テーブル）
+ * call_type: 'PATH_A_GEMINI' | 'PATH_A_GPT' | 'PATH_A_CLAUDE'
+ *          | 'PATH_B1_GEMINI' | 'PATH_B1_GPT' | 'PATH_B1_CLAUDE'
+ *          | 'PATH_B2_GEMINI' | 'PATH_B2_GPT'
+ *          | 'NEWS_FILTER'
+ */
+export async function insertTokenUsage(
+  db: D1Database,
+  model: string,
+  callType: string,
+  inputTok: number,
+  outputTok: number,
+  pair?: string | null,
+): Promise<void> {
+  try {
+    await db
+      .prepare(
+        `INSERT INTO token_usage (model, call_type, pair, input_tok, output_tok, created_at)
+         VALUES (?, ?, ?, ?, ?, ?)`
+      )
+      .bind(model, callType, pair ?? null, inputTok, outputTok, new Date().toISOString())
+      .run();
+  } catch {
+    // token_usage テーブル未作成（マイグレーション前）の場合は無視
   }
 }

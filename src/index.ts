@@ -27,6 +27,7 @@ import { checkTpSlSanity } from './sanity';
 import {
   getDrawdownLevel, updateHWM, getCurrentBalance,
   applyDrawdownControl, checkCorrelationGuard,
+  evaluateRecovery,
 } from './risk-manager';
 import { runMigrations } from './migration';
 import { sendNotification, getWebhookUrl, buildDailySummaryMessage } from './notify';
@@ -670,6 +671,7 @@ async function runAIDecisions(
             openaiApiKey2: env.OPENAI_API_KEY_2,
             anthropicApiKey: env.ANTHROPIC_API_KEY,
             keyIndex: _keyIndex,
+            db: env.DB,
           });
           geminiResult = hedgeResult.decision;
           if (hedgeResult.provider !== 'gemini') {
@@ -791,8 +793,20 @@ async function runAIDecisions(
               const ddResult = await getDrawdownLevel(env.DB);
               const balance = await getCurrentBalance(env.DB);
               await updateHWM(env.DB, balance);
-              if (ddResult.level === 'HALT' || ddResult.level === 'STOP') {
-                await applyDrawdownControl(env.DB, ddResult);
+              // SPRT回復判定（DD>=5%時に自動実行）
+              if (ddResult.level !== 'NORMAL') {
+                const sprtResult = await evaluateRecovery(env.DB);
+                if (sprtResult !== 'CONTINUE') {
+                  await insertSystemLog(env.DB, 'INFO', 'RISK',
+                    `SPRT ${sprtResult}: DD ${ddResult.level} (${ddResult.ddPct.toFixed(1)}%)`,
+                    `lotMult=${ddResult.lotMultiplier}`);
+                }
+              }
+
+              await applyDrawdownControl(env.DB, ddResult);
+
+              if (ddResult.level === 'STOP') {
+                // 完全停止（>=15%）のみブロック
                 console.warn(`[fx-sim] DD ${ddResult.level}: ${instrument.pair} blocked (DD ${ddResult.ddPct.toFixed(1)}%)`);
                 await insertSystemLog(env.DB, 'WARN', 'RISK',
                   `DD制御: ${instrument.pair} ${ddResult.level}`,
@@ -856,7 +870,11 @@ async function runAIDecisions(
                 source,
                 oandaTradeId,
                 getWebhookUrl(env),
-                { strategy: validStrategy, regime: regimeName, session: currentSession, confidence: validConfidence, pnlMultiplier: instrument.pnlMultiplier },
+                {
+                  strategy: validStrategy, regime: regimeName, session: currentSession,
+                  confidence: validConfidence, pnlMultiplier: instrument.pnlMultiplier,
+                  trigger: triggerPrefix.includes('RATE') ? 'RATE' : 'SCHED',
+                },
               );
               await insertSystemLog(
                 env.DB, 'INFO', 'POSITION',
@@ -983,6 +1001,7 @@ async function runPathB(
         news, indicators, instruments: instrumentList, apiKey,
         openaiApiKey: hedgeKeys?.openaiApiKey,
         anthropicApiKey: hedgeKeys?.anthropicApiKey,
+        db: env.DB,
       });
       stage1 = b1Result;
       if (b1Result.provider !== 'gemini') {
@@ -1063,32 +1082,54 @@ async function runPathB(
     return { decisions: [], reversals: [], newsAnalysis: stage1.news_analysis };
   }
 
-  // B2: og:desc付きで補正（タイムアウト8秒）
+  // B2: og:desc付きで補正（タイムアウト8秒）+ サーキットブレーカー
   let b2Corrections: { pair: string; action: 'CONFIRM' | 'REVISE' | 'REVERSE'; new_tp_rate?: number; new_sl_rate?: number; reasoning: string }[] = [];
-  try {
-    const tB2 = Date.now();
-    const stage2 = await newsStage2({ stage1Result: stage1, news, apiKey });
-    b2Ms = Date.now() - tB2;
-    b2Corrections = stage2.corrections;
-    console.log(`[fx-sim] Path B B2: ${b2Corrections.filter(c => c.action === 'CONFIRM').length}件CONFIRM, ${b2Corrections.filter(c => c.action === 'REVISE').length}件REVISE, ${b2Corrections.filter(c => c.action === 'REVERSE').length}件REVERSE (${b2Ms}ms)`);
-    // B2成功 → 連続失敗カウンターをリセット
-    await setCacheValue(env.DB, 'b2_consecutive_fails', '0').catch(() => {});
-  } catch (e) {
-    // B2タイムアウト/失敗 → B1シグナルをそのまま採用
-    console.warn(`[fx-sim] Path B B2 failed/timeout → B1採用: ${String(e).split('\n')[0].slice(0, 80)}`);
-    await insertSystemLog(env.DB, 'WARN', 'PATH_B', 'B2失敗→B1シグナルそのまま採用', String(e).split('\n')[0].slice(0, 120));
 
-    // ── B2連続失敗カウンター ──
-    // 10回ごとにERRORに格上げ（個別WARNでは埋もれてしまう問題の対策）
-    const prevFails = parseInt(await getCacheValue(env.DB, 'b2_consecutive_fails').catch(() => '0') ?? '0');
-    const newFails = prevFails + 1;
-    await setCacheValue(env.DB, 'b2_consecutive_fails', String(newFails)).catch(() => {});
-    if (newFails % 10 === 0) {
-      await insertSystemLog(
-        env.DB, 'ERROR', 'B2_OUTAGE',
-        `B2 ${newFails}回連続失敗 — APIレート制限またはキー問題の可能性`,
-        JSON.stringify({ consecutiveFails: newFails, lastError: String(e).split('\n')[0].slice(0, 100) })
-      ).catch(() => {});
+  // サーキットブレーカー: 連続5回失敗→30分クールダウン
+  const B2_CB_THRESHOLD = 5;
+  const B2_CB_COOLDOWN_MS = 30 * 60 * 1000; // 30分
+  const b2PrevFails = parseInt(await getCacheValue(env.DB, 'b2_consecutive_fails').catch(() => '0') ?? '0');
+  const b2CbUntil = await getCacheValue(env.DB, 'b2_circuit_breaker_until').catch(() => null);
+  const b2CbActive = b2CbUntil ? new Date(b2CbUntil) > new Date() : false;
+
+  if (b2CbActive) {
+    // サーキットブレーカー発動中 → B2スキップ、B1シグナルをそのまま採用
+    console.log(`[fx-sim] Path B B2: サーキットブレーカー発動中 (until ${b2CbUntil}) → B1採用`);
+  } else {
+    try {
+      const tB2 = Date.now();
+      const stage2 = await newsStage2({ stage1Result: stage1, news, apiKey, db: env.DB });
+      b2Ms = Date.now() - tB2;
+      b2Corrections = stage2.corrections;
+      console.log(`[fx-sim] Path B B2: ${b2Corrections.filter(c => c.action === 'CONFIRM').length}件CONFIRM, ${b2Corrections.filter(c => c.action === 'REVISE').length}件REVISE, ${b2Corrections.filter(c => c.action === 'REVERSE').length}件REVERSE (${b2Ms}ms)`);
+      // B2成功 → 連続失敗カウンター・サーキットブレーカーをリセット
+      await setCacheValue(env.DB, 'b2_consecutive_fails', '0').catch(() => {});
+      await setCacheValue(env.DB, 'b2_circuit_breaker_until', '').catch(() => {});
+    } catch (e) {
+      // B2タイムアウト/失敗 → B1シグナルをそのまま採用
+      console.warn(`[fx-sim] Path B B2 failed/timeout → B1採用: ${String(e).split('\n')[0].slice(0, 80)}`);
+      await insertSystemLog(env.DB, 'WARN', 'PATH_B', 'B2失敗→B1シグナルそのまま採用', String(e).split('\n')[0].slice(0, 120));
+
+      // ── B2連続失敗カウンター + サーキットブレーカー ──
+      const newFails = b2PrevFails + 1;
+      await setCacheValue(env.DB, 'b2_consecutive_fails', String(newFails)).catch(() => {});
+
+      // 5回連続失敗 → サーキットブレーカー発動（30分クールダウン）
+      if (newFails >= B2_CB_THRESHOLD && !b2CbActive) {
+        const cbUntil = new Date(Date.now() + B2_CB_COOLDOWN_MS).toISOString();
+        await setCacheValue(env.DB, 'b2_circuit_breaker_until', cbUntil).catch(() => {});
+        await insertSystemLog(
+          env.DB, 'ERROR', 'B2_OUTAGE',
+          `B2 ${newFails}回連続失敗 → サーキットブレーカー発動 (until ${cbUntil})`,
+          JSON.stringify({ consecutiveFails: newFails, cooldownMin: 30, lastError: String(e).split('\n')[0].slice(0, 100) })
+        ).catch(() => {});
+      } else if (newFails % 10 === 0) {
+        await insertSystemLog(
+          env.DB, 'ERROR', 'B2_OUTAGE',
+          `B2 ${newFails}回連続失敗 — APIレート制限またはキー問題の可能性`,
+          JSON.stringify({ consecutiveFails: newFails, lastError: String(e).split('\n')[0].slice(0, 100) })
+        ).catch(() => {});
+      }
     }
   }
 
@@ -1351,7 +1392,7 @@ async function run(env: Env): Promise<void> {
             }
             const pathBInstr = INSTRUMENTS.find(i => i.pair === dec.pair);
             await openPosition(env.DB, dec.pair, dec.decision as 'BUY' | 'SELL', currentRate, finalTp, finalSl, 'paper', null, getWebhookUrl(env),
-              { pnlMultiplier: pathBInstr?.pnlMultiplier });
+              { pnlMultiplier: pathBInstr?.pnlMultiplier, trigger: 'NEWS' });
             pathBNewEntries++; // W005: 成功したらカウント増加
             await insertSystemLog(env.DB, 'INFO', 'PATH_B', `ポジション開設: ${dec.pair} ${dec.decision} @ ${currentRate}`, JSON.stringify({ tp: finalTp, sl: finalSl }));
           } catch (e) {
