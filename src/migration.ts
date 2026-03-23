@@ -150,6 +150,24 @@ const MIGRATIONS: Array<{ version: number; description: string; sql: string }> =
     description: 'positions に trigger カラム追加（RATE/SCHED/NEWS トリガー識別）',
     sql: 'ALTER TABLE positions ADD COLUMN trigger TEXT',
   },
+  {
+    version: 209,
+    description: 'token_usage テーブル新設（モデル別トークン使用量記録）',
+    sql: `CREATE TABLE IF NOT EXISTS token_usage (
+      id         INTEGER PRIMARY KEY AUTOINCREMENT,
+      model      TEXT    NOT NULL,
+      call_type  TEXT    NOT NULL,
+      pair       TEXT,
+      input_tok  INTEGER NOT NULL DEFAULT 0,
+      output_tok INTEGER NOT NULL DEFAULT 0,
+      created_at TEXT    NOT NULL
+    )`,
+  },
+  {
+    version: 210,
+    description: 'token_usage インデックス追加',
+    sql: `CREATE INDEX IF NOT EXISTS idx_token_usage_created ON token_usage(created_at DESC)`,
+  },
 ];
 
 export async function runMigrations(db: D1Database): Promise<void> {

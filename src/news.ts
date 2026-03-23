@@ -3,7 +3,7 @@
 // v3: JSON API ソース追加（Polygon / Finnhub / MarketAux / CryptoPanic）
 //     各ソースに enabled フラグ追加（false でスキップ）
 
-import { insertSystemLog } from './db';
+import { insertSystemLog, insertTokenUsage } from './db';
 
 export interface NewsItem {
   title: string;
@@ -466,7 +466,12 @@ JSON配列のみを返し、他の文字は一切含めないでください。`
 
     const data = await res.json() as {
       content: Array<{ type: string; text?: string }>;
+      usage?: { input_tokens?: number; output_tokens?: number };
     };
+    if (data.usage) {
+      void insertTokenUsage(db, 'claude-sonnet-4-5', 'NEWS_FILTER',
+        data.usage.input_tokens ?? 0, data.usage.output_tokens ?? 0);
+    }
     const text = data.content?.[0]?.text ?? '[]';
     const relevantIndices: number[] = JSON.parse(text);
 
