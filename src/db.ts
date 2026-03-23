@@ -23,6 +23,8 @@ export interface Position {
   partial_closed_lot?: number | null;
   original_lot?: number | null;
   tp1_hit?: number | null;
+  // トリガー識別子（'RATE'=レート変動, 'SCHED'=定期30m, 'NEWS'=ニュース）
+  trigger?: string | null;
 }
 
 export interface DecisionRecord {

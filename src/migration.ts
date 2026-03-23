@@ -145,6 +145,11 @@ const MIGRATIONS: Array<{ version: number; description: string; sql: string }> =
     description: 'trade_logs pair インデックス追加',
     sql: `CREATE INDEX IF NOT EXISTS idx_trade_logs_pair ON trade_logs(pair, closed_at DESC)`,
   },
+  {
+    version: 208,
+    description: 'positions に trigger カラム追加（RATE/SCHED/NEWS トリガー識別）',
+    sql: 'ALTER TABLE positions ADD COLUMN trigger TEXT',
+  },
 ];
 
 export async function runMigrations(db: D1Database): Promise<void> {
