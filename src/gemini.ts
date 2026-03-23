@@ -576,7 +576,7 @@ const STAGE1_TIMEOUT_MS = 10_000;
 export async function newsStage1(params: {
   news: NewsItem[];
   indicators: MarketIndicators;
-  instruments: Array<{ pair: string; hasOpenPosition: boolean }>;
+  instruments: Array<{ pair: string; hasOpenPosition: boolean; tpSlHint?: string }>;
   apiKey: string;
 }): Promise<NewsStage1Result> {
   const { news, indicators, instruments, apiKey } = params;
@@ -585,9 +585,10 @@ export async function newsStage1(params: {
     `[${i}] ${n.title_ja || n.title}${(n as any).source ? ` (${(n as any).source})` : ''}`
   ).join('\n');
 
-  const instrumentList = instruments.map(inst =>
-    inst.hasOpenPosition ? `${inst.pair}[OP]` : inst.pair
-  ).join(', ');
+  const instrumentList = instruments.map(inst => {
+    const base = inst.hasOpenPosition ? `${inst.pair}[OP]` : inst.pair;
+    return inst.tpSlHint ? `${base}(${inst.tpSlHint})` : base;
+  }).join('\n');
 
   const userMessage = [
     `【ニュース一覧】`,
@@ -727,7 +728,7 @@ export async function newsStage2(params: {
 export async function newsStage1WithHedge(params: {
   news: NewsItem[];
   indicators: MarketIndicators;
-  instruments: Array<{ pair: string; hasOpenPosition: boolean }>;
+  instruments: Array<{ pair: string; hasOpenPosition: boolean; tpSlHint?: string }>;
   apiKey: string;
   openaiApiKey?: string;
   anthropicApiKey?: string;
@@ -769,7 +770,7 @@ export async function newsStage1WithHedge(params: {
 async function newsStage1GPT(params: {
   news: NewsItem[];
   indicators: MarketIndicators;
-  instruments: Array<{ pair: string; hasOpenPosition: boolean }>;
+  instruments: Array<{ pair: string; hasOpenPosition: boolean; tpSlHint?: string }>;
   apiKey: string;
 }): Promise<NewsStage1Result> {
   const { news, indicators, instruments, apiKey } = params;
@@ -778,9 +779,10 @@ async function newsStage1GPT(params: {
     `[${i}] ${n.title_ja || n.title}${(n as any).source ? ` (${(n as any).source})` : ''}`
   ).join('\n');
 
-  const instrumentList = instruments.map(inst =>
-    inst.hasOpenPosition ? `${inst.pair}[OP]` : inst.pair
-  ).join(', ');
+  const instrumentList = instruments.map(inst => {
+    const base = inst.hasOpenPosition ? `${inst.pair}[OP]` : inst.pair;
+    return inst.tpSlHint ? `${base}(${inst.tpSlHint})` : base;
+  }).join('\n');
 
   const userMessage = [
     `【ニュース一覧】`, newsList, ``,
@@ -840,7 +842,7 @@ async function newsStage1GPT(params: {
 async function newsStage1Claude(params: {
   news: NewsItem[];
   indicators: MarketIndicators;
-  instruments: Array<{ pair: string; hasOpenPosition: boolean }>;
+  instruments: Array<{ pair: string; hasOpenPosition: boolean; tpSlHint?: string }>;
   apiKey: string;
 }): Promise<NewsStage1Result> {
   const { news, indicators, instruments, apiKey } = params;
@@ -849,9 +851,10 @@ async function newsStage1Claude(params: {
     `[${i}] ${n.title_ja || n.title}${(n as any).source ? ` (${(n as any).source})` : ''}`
   ).join('\n');
 
-  const instrumentList = instruments.map(inst =>
-    inst.hasOpenPosition ? `${inst.pair}[OP]` : inst.pair
-  ).join(', ');
+  const instrumentList = instruments.map(inst => {
+    const base = inst.hasOpenPosition ? `${inst.pair}[OP]` : inst.pair;
+    return inst.tpSlHint ? `${base}(${inst.tpSlHint})` : base;
+  }).join('\n');
 
   const userMessage = [
     `【ニュース一覧】`, newsList, ``,
