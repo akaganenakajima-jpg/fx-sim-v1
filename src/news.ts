@@ -652,22 +652,62 @@ export async function filterAndTranslateWithHaiku(
 
     if (cached) {
       const results: HaikuTranslatedItem[] = JSON.parse(cached.value);
+
+      // キャッシュヒット時も7軸スコアリングを適用する（スコアチェックをスキップしない）
+      const COMPOSITE_THRESHOLD_CACHE = 6.5;
+      const scoresMapCached = new Map<number, {
+        timeliness: number; uniqueness: number;
+        relevance: number; credibility: number;
+        sentiment: number; breadth: number; novelty: number;
+        composite: number;
+      }>();
+      const rejectMapCached = new Map<number, string>();
+
+      // 過去トピックキャッシュ（ユニーク性スコア算出に使用）
+      let recentTopicsCached: string[] = [];
+      try {
+        const topicCache = await db.prepare(
+          "SELECT value FROM market_cache WHERE key = 'recent_topics' AND updated_at > datetime('now', '-2 hours')"
+        ).first<{ value: string }>();
+        if (topicCache) recentTopicsCached = JSON.parse(topicCache.value);
+      } catch { /* キャッシュ読み取り失敗は無視 */ }
+
+      for (const r of results) {
+        if (r.index < 0 || r.index >= items.length) continue;
+        if (r.accepted === false) {
+          rejectMapCached.set(r.index, r.reject_reason ?? '除外（理由不明）');
+          continue;
+        }
+        const item = items[r.index];
+        const t = scoreTimeliness(item.freshnessMin);
+        const u = scoreUniqueness(r.topic, recentTopicsCached);
+        const credBase = scoreCredibility(item.source);
+        const ai = r.scores ?? { r: 6, c: credBase, s: 5, b: 5, n: 6 };
+        const composite = computeComposite(t, u, ai.r, ai.c, ai.s, ai.b, ai.n);
+        const rounded = Math.round(composite * 10) / 10;
+        scoresMapCached.set(r.index, {
+          timeliness: t, uniqueness: u,
+          relevance: ai.r, credibility: ai.c,
+          sentiment: ai.s, breadth: ai.b, novelty: ai.n,
+          composite: rounded,
+        });
+        if (composite < COMPOSITE_THRESHOLD_CACHE) {
+          rejectMapCached.set(r.index, `スコア不足(${rounded})`);
+        }
+      }
+
       const acceptedCached = results.filter(r =>
-        r.index >= 0 && r.index < items.length && (r.accepted !== false)
+        r.index >= 0 && r.index < items.length &&
+        r.accepted !== false &&
+        !rejectMapCached.has(r.index)
       );
       const filteredItems = acceptedCached
         .map(r => ({ ...items[r.index], title_ja: r.title_ja, desc_ja: r.desc_ja }));
 
-      // キャッシュヒット時も news_raw のフラグを更新（未処理→採用/不採用）
-      const rejectMapCached = new Map<number, string>();
-      for (const r of results) {
-        if (r.accepted === false && r.reject_reason) {
-          rejectMapCached.set(r.index, r.reject_reason);
-        }
-      }
-      updateHaikuResults(items, acceptedCached, rejectMapCached, new Map(), db).catch(() => {});
+      updateHaikuResults(items, acceptedCached, rejectMapCached, scoresMapCached, db).catch(() => {});
 
-      console.log(`[news] filter+translate: キャッシュヒット (${filteredItems.length}/${items.length}件通過)`);
+      const scoringRejected = [...rejectMapCached.entries()].filter(([, v]) => v.startsWith('スコア不足')).length;
+      console.log(`[news] filter+translate: キャッシュヒット(スコアリング適用) ${filteredItems.length}/${items.length}件通過(うちスコア不足${scoringRejected}件)`);
       await _updateLatestNewsCache(filteredItems, db);
       return filteredItems;
     }
@@ -775,9 +815,9 @@ JSON配列のみを返し、他の文字は一切含めないでください。`
     } catch { /* キャッシュ書き込み失敗は無視 */ }
 
     // ── 7軸スコアリング ──────────────────────────────────────────
-    // Haikuが「accepted=false」と判定した記事は無条件除外（理由保持）
-    // Haikuが「accepted=true」の記事にさらに複合スコアでフィルタを掛ける
-    const COMPOSITE_THRESHOLD = 6.0;
+    // AIが「accepted=false」と判定した記事は無条件除外（理由保持）
+    // AIが「accepted=true」の記事にさらに複合スコアでフィルタを掛ける
+    const COMPOSITE_THRESHOLD = 6.5;  // 旧6.0→6.5: 採用率15-20%目標（目標採用率=15〜20%）
     const scoresMap = new Map<number, {
       timeliness: number; uniqueness: number;
       relevance: number; credibility: number;
