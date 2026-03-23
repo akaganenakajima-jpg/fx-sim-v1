@@ -56,9 +56,9 @@ export const INSTRUMENTS: InstrumentConfig[] = [
     broker: 'oanda',
     oandaSymbol: 'JP225_USD',
     rateChangeTh: 15,
-    tpSlHint: '現在値から±80〜500ポイント（SLは80pt以上確保。TPはSLの1.5倍以上）',
+    tpSlHint: '現在値から±80〜700ポイント（SLは80pt以上確保。TPはSLの1.5倍以上）',
     tpSlMin: 80,     // H1-ATR≈100pt。80pt未満は拒否
-    tpSlMax: 500,    // 500pt超過は拒否
+    tpSlMax: 700,    // 700pt超過は拒否（旧500→戦争リスク局面のATR拡大に対応）
     pnlUnit: '円',
     pnlMultiplier: 1,
     trailingActivation: 100,   // 旧150
@@ -116,9 +116,9 @@ export const INSTRUMENTS: InstrumentConfig[] = [
     broker: 'oanda',
     oandaSymbol: 'XAU_USD',
     rateChangeTh: 1.5,
-    tpSlHint: '現在価格から±$15〜$80（SLは$15以上確保。TPはSLの1.5倍以上）',
+    tpSlHint: '現在価格から±$15〜$120（SLは$15以上確保。TPはSLの1.5倍以上）',
     tpSlMin: 15,     // H1-ATR≈$20。$15未満は拒否
-    tpSlMax: 80,     // $80超過は拒否
+    tpSlMax: 120,    // $120超過は拒否（旧$80→地政学リスク局面のボラ拡大に対応）
     pnlUnit: '円',
     pnlMultiplier: 10,
     trailingActivation: 7,     // 旧10 — RR=0.55の改善
@@ -191,9 +191,9 @@ export const INSTRUMENTS: InstrumentConfig[] = [
     broker: 'oanda',
     oandaSymbol: 'COPPER',
     rateChangeTh: 0.01,
-    tpSlHint: '現在価格から±$0.03〜$0.15（SLは$0.03以上確保。TPはSLの1.5倍以上）',
+    tpSlHint: '現在価格から±$0.03〜$0.20（SLは$0.03以上確保。TPはSLの1.5倍以上）',
     tpSlMin: 0.03,   // H1-ATR≈$0.04。$0.03未満は拒否
-    tpSlMax: 0.15,   // $0.15超過は拒否
+    tpSlMax: 0.20,   // $0.20超過は拒否（旧$0.15→実績値0.18に合わせ上方修正）
     pnlUnit: '円',
     pnlMultiplier: 1000,
     trailingActivation: 0.035, // 旧0.05
@@ -206,9 +206,9 @@ export const INSTRUMENTS: InstrumentConfig[] = [
     broker: 'oanda',
     oandaSymbol: 'XAG_USD',
     rateChangeTh: 0.08,
-    tpSlHint: '現在価格から±$0.25〜$1.5（SLは$0.25以上確保。TPはSLの1.5倍以上）',
+    tpSlHint: '現在価格から±$0.25〜$2.0（SLは$0.25以上確保。TPはSLの1.5倍以上）',
     tpSlMin: 0.25,   // H1-ATR≈$0.4。$0.25未満は拒否
-    tpSlMax: 1.5,    // $1.5超過は拒否
+    tpSlMax: 2.0,    // $2.0超過は拒否（旧$1.5→実績値1.75に合わせ上方修正）
     pnlUnit: '円',
     pnlMultiplier: 100,
     trailingActivation: 0.28,  // 旧0.4
