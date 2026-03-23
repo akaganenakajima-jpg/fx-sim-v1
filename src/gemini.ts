@@ -622,7 +622,7 @@ export async function newsStage1(params: {
     '- tp_rate/sl_rateは各銘柄の現在レートを起点にした絶対価格で返す\n\n' +
     'その他ルール:\n' +
     '- trade_signalsはBUYまたはSELLのみ（HOLDは含めない）\n' +
-    '- [OP]マークの銘柄はtrade_signalsに含めない\n' +
+    '- [OP]マークの銘柄: 通常はtrade_signalsに含めない。ただしニュースが現在のポジション方向と明確に逆行し、かつ確信度が非常に高い場合のみ含めてよい（その場合reasoningの先頭に必ず"REVERSAL:"を付記すること）\n' +
     '- tp_rate/sl_rateは必ず数値で返す（nullは不可）\n' +
     '- リスクリワード比は1.5以上\n' +
     '- 確信度が低いニュースはtrade_signalsに含めない\n' +
