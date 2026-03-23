@@ -1047,6 +1047,19 @@ async function runPathB(
         await setCacheValue(env.DB, 'news_analysis_failed_at', '0');
       } catch {}
     })();
+
+    // ── B1全スキップ「詰み」検出 ──
+    // OPポジション多数 + シグナル0件 = [OP]スキップで全銘柄HOLDになった可能性
+    // （PR#46で修正したREVERSAL不能状態の再発を検出するため）
+    if (openPairs.size >= 8) {
+      const attentionCount = stage1.news_analysis.filter((a: NewsAnalysisItem) => a.attention).length;
+      await insertSystemLog(
+        env.DB, 'WARN', 'PATH_B',
+        `B1シグナル0件（詰み疑惑）: ${openPairs.size}銘柄OPENで[OP]全スキップの可能性`,
+        JSON.stringify({ opCount: openPairs.size, attention: attentionCount })
+      ).catch(() => {});
+    }
+
     return { decisions: [], reversals: [], newsAnalysis: stage1.news_analysis };
   }
 
@@ -1058,10 +1071,25 @@ async function runPathB(
     b2Ms = Date.now() - tB2;
     b2Corrections = stage2.corrections;
     console.log(`[fx-sim] Path B B2: ${b2Corrections.filter(c => c.action === 'CONFIRM').length}件CONFIRM, ${b2Corrections.filter(c => c.action === 'REVISE').length}件REVISE, ${b2Corrections.filter(c => c.action === 'REVERSE').length}件REVERSE (${b2Ms}ms)`);
+    // B2成功 → 連続失敗カウンターをリセット
+    await setCacheValue(env.DB, 'b2_consecutive_fails', '0').catch(() => {});
   } catch (e) {
     // B2タイムアウト/失敗 → B1シグナルをそのまま採用
     console.warn(`[fx-sim] Path B B2 failed/timeout → B1採用: ${String(e).split('\n')[0].slice(0, 80)}`);
     await insertSystemLog(env.DB, 'WARN', 'PATH_B', 'B2失敗→B1シグナルそのまま採用', String(e).split('\n')[0].slice(0, 120));
+
+    // ── B2連続失敗カウンター ──
+    // 10回ごとにERRORに格上げ（個別WARNでは埋もれてしまう問題の対策）
+    const prevFails = parseInt(await getCacheValue(env.DB, 'b2_consecutive_fails').catch(() => '0') ?? '0');
+    const newFails = prevFails + 1;
+    await setCacheValue(env.DB, 'b2_consecutive_fails', String(newFails)).catch(() => {});
+    if (newFails % 10 === 0) {
+      await insertSystemLog(
+        env.DB, 'ERROR', 'B2_OUTAGE',
+        `B2 ${newFails}回連続失敗 — APIレート制限またはキー問題の可能性`,
+        JSON.stringify({ consecutiveFails: newFails, lastError: String(e).split('\n')[0].slice(0, 100) })
+      ).catch(() => {});
+    }
   }
 
   // B2補正適用
