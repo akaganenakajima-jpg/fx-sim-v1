@@ -56,9 +56,9 @@ export const INSTRUMENTS: InstrumentConfig[] = [
     broker: 'oanda',
     oandaSymbol: 'JP225_USD',
     rateChangeTh: 15,
-    tpSlHint: '現在値から±80〜700ポイント（SLは80pt以上確保。TPはSLの1.5倍以上）',
+    tpSlHint: '現在値から±80〜1000ポイント（SLは80pt以上確保。TPはSLの1.5倍以上）',
     tpSlMin: 80,     // H1-ATR≈100pt。80pt未満は拒否
-    tpSlMax: 700,    // 700pt超過は拒否（旧500→戦争リスク局面のATR拡大に対応）
+    tpSlMax: 1000,   // 1000pt超過は拒否（旧700→AI出力800-940ptに対応）
     pnlUnit: '円',
     pnlMultiplier: 1,
     trailingActivation: 100,   // 旧150
@@ -176,9 +176,9 @@ export const INSTRUMENTS: InstrumentConfig[] = [
     broker: 'oanda',
     oandaSymbol: 'NATGAS_USD',
     rateChangeTh: 0.015,
-    tpSlHint: '現在価格から±$0.04〜$0.3（SLは$0.04以上確保。TPはSLの1.5倍以上）',
+    tpSlHint: '現在価格から±$0.04〜$0.4（SLは$0.04以上確保。TPはSLの1.5倍以上）',
     tpSlMin: 0.04,   // H1-ATR≈$0.06。$0.04未満は拒否
-    tpSlMax: 0.3,    // $0.3超過は拒否
+    tpSlMax: 0.4,    // $0.4超過は拒否（旧$0.3→実績値0.327に対応）
     pnlUnit: '円',
     pnlMultiplier: 1000,
     trailingActivation: 0.05,  // 旧0.08

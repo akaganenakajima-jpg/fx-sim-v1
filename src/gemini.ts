@@ -615,8 +615,10 @@ export async function newsStage1(params: {
     '{"news_analysis":[{"index":0,"attention":true,"impact":"円安要因（50文字以内）","affected_pairs":["USD/JPY"]}],' +
     '"trade_signals":[{"pair":"USD/JPY","decision":"BUY","tp_rate":160.50,"sl_rate":158.00,"reasoning":"日本語100文字以内"}]}\n\n' +
     'TP/SL方向の絶対ルール（違反はシステムが自動拒否）:\n' +
-    '- BUY → tp_rate > 現在レート かつ sl_rate < 現在レート（上が利確・下が損切）\n' +
-    '- SELL → tp_rate < 現在レート かつ sl_rate > 現在レート（下が利確・上が損切）\n' +
+    '- BUY: tp_rate は現在レートより【高い】価格 / sl_rate は現在レートより【低い】価格\n' +
+    '- SELL: tp_rate は現在レートより【低い】価格 / sl_rate は現在レートより【高い】価格\n' +
+    '- 例(BUY, rate=5.29): tp_rate=5.55(上), sl_rate=5.15(下) ← SLは必ずentryより下\n' +
+    '- 例(SELL, rate=1.33): tp_rate=1.30(下), sl_rate=1.36(上) ← SLは必ずentryより上\n' +
     '- tp_rate/sl_rateは各銘柄の現在レートを起点にした絶対価格で返す\n\n' +
     'その他ルール:\n' +
     '- trade_signalsはBUYまたはSELLのみ（HOLDは含めない）\n' +
@@ -873,8 +875,10 @@ async function newsStage1Claude(params: {
     '{"news_analysis":[{"index":0,"attention":true,"impact":"50文字以内","affected_pairs":["USD/JPY"]}],' +
     '"trade_signals":[{"pair":"USD/JPY","decision":"BUY","tp_rate":160.50,"sl_rate":158.00,"reasoning":"100文字以内"}]}\n\n' +
     'TP/SL方向の絶対ルール（違反はシステムが自動拒否）:\n' +
-    '- BUY → tp_rate > 現在レート かつ sl_rate < 現在レート（上が利確・下が損切）\n' +
-    '- SELL → tp_rate < 現在レート かつ sl_rate > 現在レート（下が利確・上が損切）\n' +
+    '- BUY: tp_rate は現在レートより【高い】価格 / sl_rate は現在レートより【低い】価格\n' +
+    '- SELL: tp_rate は現在レートより【低い】価格 / sl_rate は現在レートより【高い】価格\n' +
+    '- 例(BUY, rate=5.29): tp_rate=5.55(上), sl_rate=5.15(下) ← SLは必ずentryより下\n' +
+    '- 例(SELL, rate=1.33): tp_rate=1.30(下), sl_rate=1.36(上) ← SLは必ずentryより上\n' +
     '- tp_rate/sl_rateは各銘柄の現在レートを起点にした絶対価格で返すこと';
 
   const res = await fetchWithTimeout('https://api.anthropic.com/v1/messages', {
