@@ -98,7 +98,13 @@ function normalizeTpSl(params: {
   return { tp, sl, corrected: false };
 }
 
-/** 絶対値として方向・距離が妥当か簡易判定 */
+/**
+ * 絶対値として方向・距離が妥当か簡易判定
+ *
+ * TP制限: tpSlMaxではなくrrMax（RR比上限）で判定。
+ * SLが大きければTPも広がる自然なトレンド対応。
+ * tpSlMax は SL専用キャップとして残す。
+ */
 function isPlausibleAbsolute(
   isBuy: boolean, rate: number, tp: number, sl: number, instrument: InstrumentConfig
 ): boolean {
@@ -106,10 +112,13 @@ function isPlausibleAbsolute(
   if (!isBuy && (tp >= rate || sl <= rate)) return false;
   const tpDist = Math.abs(tp - rate);
   const slDist = Math.abs(sl - rate);
-  const { tpSlMin, tpSlMax } = instrument;
+  const { tpSlMin, tpSlMax, rrMax } = instrument;
   const tolerance = tpSlMin * 0.01; // 浮動小数点丸め誤差許容
-  if (tpDist < tpSlMin - tolerance || tpDist > tpSlMax) return false;
+  // SL: tpSlMin〜tpSlMax の範囲（絶対キャップ）
   if (slDist < tpSlMin - tolerance || slDist > tpSlMax) return false;
+  // TP: tpSlMin以上 かつ RR比 ≤ rrMax（AIの大きな予測を妨げない）
+  if (tpDist < tpSlMin - tolerance) return false;
+  if (slDist > 0 && tpDist / slDist > rrMax) return false;
   return true;
 }
 
@@ -142,20 +151,25 @@ export function checkTpSlSanity(params: {
     return { valid: false, reason: `方向不整合: SELL rate=${rate} TP=${finalTp} SL=${finalSl}` };
   }
 
-  const { tpSlMin, tpSlMax } = instrument;
+  const { tpSlMin, tpSlMax, rrMax } = instrument;
   const tpDist = Math.abs(finalTp - rate);
   const slDist = Math.abs(finalSl - rate);
   // 浮動小数点丸め誤差を吸収（tpSlMinの1%を許容）
   const minTolerance = tpSlMin * 0.01;
 
-  if (tpDist < tpSlMin - minTolerance || tpDist > tpSlMax) {
-    return { valid: false, reason: `TP距離(${tpDist.toFixed(4)}) 範囲外 [${tpSlMin}, ${tpSlMax}]` };
-  }
+  // SL: tpSlMin〜tpSlMax（絶対キャップ）
   if (slDist < tpSlMin - minTolerance || slDist > tpSlMax) {
     return { valid: false, reason: `SL距離(${slDist.toFixed(4)}) 範囲外 [${tpSlMin}, ${tpSlMax}]` };
   }
+  // TP: tpSlMin以上 かつ RR比 ≤ rrMax（絶対上限ではなくSL比で判定）
+  if (tpDist < tpSlMin - minTolerance) {
+    return { valid: false, reason: `TP距離(${tpDist.toFixed(4)}) 最小値 ${tpSlMin} 未満` };
+  }
 
   const rr = slDist > 0 ? tpDist / slDist : 0;
+  if (rr > rrMax) {
+    return { valid: false, reason: `TP距離過大: RR=${rr.toFixed(1)} > max ${rrMax}（TP=${tpDist.toFixed(2)}, SL=${slDist.toFixed(2)}）` };
+  }
 
   // テスタ施策3: RR比段階制御
   // ≧1.5 → NORMAL（通常ロット）
@@ -203,9 +217,11 @@ export function calcAtrBasedTpSl(params: {
   let slDist = atr * mult.sl;
   let tpDist = atr * mult.tp;
 
-  // instrument の tpSlMin/tpSlMax でクランプ
+  // SL: tpSlMin〜tpSlMaxでクランプ（絶対キャップ）
   slDist = Math.max(instrument.tpSlMin, Math.min(slDist, instrument.tpSlMax));
-  tpDist = Math.max(instrument.tpSlMin, Math.min(tpDist, instrument.tpSlMax));
+  // TP: tpSlMin以上 かつ SL比でrrMaxを超えないようクランプ
+  const tpDistMax = slDist * instrument.rrMax;
+  tpDist = Math.max(instrument.tpSlMin, Math.min(tpDist, tpDistMax));
 
   const isBuy = direction === 'BUY';
   const tp = isBuy ? rate + tpDist : rate - tpDist;
