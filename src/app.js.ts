@@ -734,8 +734,10 @@ export const JS = `
       if (isExpanded) collapse(); else expand();
     });
 
-    // ドラッグ操作
+    // ドラッグ操作（ヘッダー/ハンドル起点のみ。ボディタッチはスクロール優先）
     drawer.addEventListener('touchstart', function(e) {
+      var bodyEl = el('news-drawer-body');
+      if (isExpanded && bodyEl && bodyEl.contains(e.target)) return;
       startY = e.touches[0].clientY;
       startTranslate = isExpanded ? 0 : (drawer.offsetHeight - PEEK_H);
       dragging = true;

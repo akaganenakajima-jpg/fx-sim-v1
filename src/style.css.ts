@@ -727,7 +727,7 @@ body, #app {
   transform: translateY(calc(100% - 68px));
   transition: transform 0.42s cubic-bezier(0.34, 1.56, 0.64, 1);
   will-change: transform;
-  touch-action: none;
+  touch-action: pan-y;
   display: none;
   flex-direction: column;
 }
@@ -742,6 +742,7 @@ body, #app {
   -webkit-overflow-scrolling: touch;
   flex: 1;
   min-height: 0;
+  touch-action: pan-y;
 }
 
 .news-drawer-handle {

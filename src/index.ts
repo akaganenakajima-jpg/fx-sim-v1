@@ -951,6 +951,7 @@ async function runPathB(
   const instrumentList = INSTRUMENTS.map(i => ({
     pair: i.pair,
     hasOpenPosition: openPairs.has(i.pair),
+    tpSlHint: i.tpSlHint,
   }));
 
   // B1: タイトル即断（タイムアウト10秒）— キャッシュ付き
