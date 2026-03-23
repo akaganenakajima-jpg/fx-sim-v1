@@ -47,7 +47,11 @@ function buildSystemInstruction(instrument: InstrumentConfig): string {
     `以下のデータを分析し ${instrument.pair} の売買判断を JSON で返してください。` +
     `既にオープンポジションがある場合は原則 HOLD を返すこと。` +
     `TP/SL は${instrument.tpSlHint}の範囲で設定すること。` +
-    `【絶対価格必須】tp_rate・sl_rate は現在レートに近い絶対価格で返すこと。差分・Pips・パーセント・オフセットで返すのは厳禁。例: 現在レート=69277なら TP=68000、SL=70000 のように現在値に近い実際の価格を返せ。` +
+    `【絶対価格必須】tp_rate・sl_rate は現在レートに近い絶対価格で返すこと。差分・Pips・パーセント・オフセットで返すのは厳禁。` +
+    `【TP/SL方向の絶対ルール（違反するとシステムが自動拒否）】` +
+    `BUY の場合: tp_rate > 現在レート かつ sl_rate < 現在レート（価格上昇で利確、下落で損切り）。` +
+    `SELL の場合: tp_rate < 現在レート かつ sl_rate > 現在レート（価格下落で利確、上昇で損切り）。` +
+    `例: 現在レート=159.00でBUYなら tp_rate=160.50(上), sl_rate=158.00(下)。現在レート=159.00でSELLなら tp_rate=157.50(下), sl_rate=160.50(上)。` +
     `【重要】リスクリワード比（TP距離÷SL距離）は必ず1.5以上にすること。SLは少なくとも通常の時間足ボラティリティ（ATR）1本分の幅を確保せよ。ATR以下のSLは通常のノイズで損切りされるため禁止。確信度が低い場合はHOLDを返すこと。` +
     `\n【手法分類】"strategy"フィールドで判断手法を分類せよ: trend_follow(トレンド順張り), mean_reversion(逆張り), breakout(ブレイクアウト), news_driven(ニュース起因), range_trade(レンジ売買)` +
     `\n【確信度】"confidence"フィールドで確信度を0-100で示せ。40未満ならHOLDを推奨。` +
@@ -608,8 +612,12 @@ export async function newsStage1(params: {
     '2. ニュースに基づいた売買シグナル（trade_signals）\n\n' +
     '必ず以下のJSON形式のみで返答してください:\n' +
     '{"news_analysis":[{"index":0,"attention":true,"impact":"円安要因（50文字以内）","affected_pairs":["USD/JPY"]}],' +
-    '"trade_signals":[{"pair":"USD/JPY","decision":"BUY","tp_rate":150.50,"sl_rate":149.80,"reasoning":"日本語100文字以内"}]}\n\n' +
-    'ルール:\n' +
+    '"trade_signals":[{"pair":"USD/JPY","decision":"BUY","tp_rate":160.50,"sl_rate":158.00,"reasoning":"日本語100文字以内"}]}\n\n' +
+    'TP/SL方向の絶対ルール（違反はシステムが自動拒否）:\n' +
+    '- BUY → tp_rate > 現在レート かつ sl_rate < 現在レート（上が利確・下が損切）\n' +
+    '- SELL → tp_rate < 現在レート かつ sl_rate > 現在レート（下が利確・上が損切）\n' +
+    '- tp_rate/sl_rateは各銘柄の現在レートを起点にした絶対価格で返す\n\n' +
+    'その他ルール:\n' +
     '- trade_signalsはBUYまたはSELLのみ（HOLDは含めない）\n' +
     '- [OP]マークの銘柄はtrade_signalsに含めない\n' +
     '- tp_rate/sl_rateは必ず数値で返す（nullは不可）\n' +
@@ -791,8 +799,12 @@ async function newsStage1GPT(params: {
     '2. ニュースに基づいた売買シグナル（trade_signals）\n\n' +
     '必ず以下のJSON形式のみで返答してください:\n' +
     '{"news_analysis":[{"index":0,"attention":true,"impact":"円安要因（50文字以内）","affected_pairs":["USD/JPY"]}],' +
-    '"trade_signals":[{"pair":"USD/JPY","decision":"BUY","tp_rate":150.50,"sl_rate":149.80,"reasoning":"日本語100文字以内"}]}\n\n' +
-    'ルール:\n- trade_signalsはBUYまたはSELLのみ（HOLDは含めない）\n- [OP]マークの銘柄はtrade_signalsに含めない\n' +
+    '"trade_signals":[{"pair":"USD/JPY","decision":"BUY","tp_rate":160.50,"sl_rate":158.00,"reasoning":"日本語100文字以内"}]}\n\n' +
+    'TP/SL方向の絶対ルール（違反はシステムが自動拒否）:\n' +
+    '- BUY → tp_rate > 現在レート かつ sl_rate < 現在レート（上が利確・下が損切）\n' +
+    '- SELL → tp_rate < 現在レート かつ sl_rate > 現在レート（下が利確・上が損切）\n' +
+    '- tp_rate/sl_rateは各銘柄の現在レートを起点にした絶対価格で返す\n\n' +
+    'その他ルール:\n- trade_signalsはBUYまたはSELLのみ（HOLDは含めない）\n- [OP]マークの銘柄はtrade_signalsに含めない\n' +
     '- tp_rate/sl_rateは必ず数値で返す（nullは不可）\n- リスクリワード比は1.5以上\n- 確信度が低いニュースはtrade_signalsに含めない';
 
   const res = await fetchWithTimeout('https://api.openai.com/v1/chat/completions', {
@@ -856,7 +868,11 @@ async function newsStage1Claude(params: {
     'ニュース一覧（日本語翻訳済み）と市場状況を分析し、news_analysisとtrade_signalsを返してください。\n' +
     '必ずJSON形式で返答:\n' +
     '{"news_analysis":[{"index":0,"attention":true,"impact":"50文字以内","affected_pairs":["USD/JPY"]}],' +
-    '"trade_signals":[{"pair":"USD/JPY","decision":"BUY","tp_rate":150.50,"sl_rate":149.80,"reasoning":"100文字以内"}]}';
+    '"trade_signals":[{"pair":"USD/JPY","decision":"BUY","tp_rate":160.50,"sl_rate":158.00,"reasoning":"100文字以内"}]}\n\n' +
+    'TP/SL方向の絶対ルール（違反はシステムが自動拒否）:\n' +
+    '- BUY → tp_rate > 現在レート かつ sl_rate < 現在レート（上が利確・下が損切）\n' +
+    '- SELL → tp_rate < 現在レート かつ sl_rate > 現在レート（下が利確・上が損切）\n' +
+    '- tp_rate/sl_rateは各銘柄の現在レートを起点にした絶対価格で返すこと';
 
   const res = await fetchWithTimeout('https://api.anthropic.com/v1/messages', {
     method: 'POST',
