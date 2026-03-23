@@ -131,9 +131,9 @@ export const INSTRUMENTS: InstrumentConfig[] = [
     broker: 'oanda',
     oandaSymbol: 'EUR_USD',
     rateChangeTh: 0.001,
-    tpSlHint: '現在レートから±0.004〜0.02（SLは0.004以上確保。TPはSLの1.5倍以上）',
+    tpSlHint: '現在レートから±0.004〜0.025（SLは0.004以上確保。TPはSLの1.5倍以上）',
     tpSlMin: 0.004,  // H1-ATR≈0.006。0.004未満は拒否
-    tpSlMax: 0.02,   // 0.02超過は拒否
+    tpSlMax: 0.025,  // 0.025超過は拒否（旧0.02→ボラ拡大局面対応）
     pnlUnit: '円',
     pnlMultiplier: 10000,
     trailingActivation: 0.003, // 旧0.004
@@ -221,9 +221,9 @@ export const INSTRUMENTS: InstrumentConfig[] = [
     broker: 'oanda',
     oandaSymbol: 'GBP_USD',
     rateChangeTh: 0.001,
-    tpSlHint: '現在レートから±0.005〜0.02（SLは0.005以上確保。TPはSLの1.5倍以上）',
+    tpSlHint: '現在レートから±0.005〜0.028（SLは0.005以上確保。TPはSLの1.5倍以上）',
     tpSlMin: 0.005,  // H1-ATR≈0.007。0.005未満は拒否
-    tpSlMax: 0.02,   // 0.02超過は拒否
+    tpSlMax: 0.028,  // 0.028超過は拒否（旧0.02→実績0.0206超過のため上方修正）
     pnlUnit: '円',
     pnlMultiplier: 10000,
     trailingActivation: 0.003,
@@ -236,9 +236,9 @@ export const INSTRUMENTS: InstrumentConfig[] = [
     broker: 'oanda',
     oandaSymbol: 'AUD_USD',
     rateChangeTh: 0.001,
-    tpSlHint: '現在レートから±0.004〜0.02（SLは0.004以上確保。TPはSLの1.5倍以上）',
+    tpSlHint: '現在レートから±0.004〜0.025（SLは0.004以上確保。TPはSLの1.5倍以上）',
     tpSlMin: 0.004,  // H1-ATR≈0.005。0.004未満は拒否
-    tpSlMax: 0.02,   // 0.02超過は拒否
+    tpSlMax: 0.025,  // 0.025超過は拒否（旧0.02→ボラ拡大局面対応）
     pnlUnit: '円',
     pnlMultiplier: 10000,
     trailingActivation: 0.003,
