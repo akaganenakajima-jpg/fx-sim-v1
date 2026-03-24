@@ -1,4 +1,4 @@
-// GET / — ダッシュボード HTML（3タブ構造）
+// GET / — ダッシュボード HTML（v7 Liquid Glass 6タブ構造）
 
 export function getDashboardHtml(): string {
   return `<!DOCTYPE html>
@@ -11,413 +11,329 @@ export function getDashboardHtml(): string {
   <meta name="theme-color" content="#000000" media="(prefers-color-scheme: dark)">
   <meta name="theme-color" content="#F2F2F7" media="(prefers-color-scheme: light)">
   <title>FX Sim</title>
-  <link rel="stylesheet" href="/style.css?v=13">
+  <link rel="stylesheet" href="/style.css?v=14">
 </head>
 <body>
-  <div id="alert-banner-container" class="alert-banner-container"></div>
-  <div id="app">
 
-    <!-- PC: 左サイドバー -->
-    <nav class="pc-sidebar" aria-label="メインナビゲーション">
-      <div class="sidebar-logo">FX</div>
-      <button class="sidebar-tab active" data-tab="tab-portfolio" aria-label="ダッシュボード">
-        <svg viewBox="0 0 24 24"><path d="M3 9l9-6 9 6v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V9z"/><path d="M9 22V12h6v10"/></svg>
-        <span>ダッシュボード</span>
-      </button>
-      <button class="sidebar-tab" data-tab="tab-stats" aria-label="統計">
-        <svg viewBox="0 0 24 24"><path d="M18 20V10M12 20V4M6 20v-6"/></svg>
-        <span>統計</span>
-      </button>
-      <button class="sidebar-tab" data-tab="tab-ai" aria-label="AI・ニュース">
-        <svg viewBox="0 0 24 24"><circle cx="12" cy="8" r="4"/><path d="M8 14h8a4 4 0 0 1 4 4v2H4v-2a4 4 0 0 1 4-4z"/></svg>
-        <span>AI・ニュース</span>
-      </button>
-      <button class="sidebar-tab" data-tab="tab-strategy" aria-label="戦略">
-        <svg viewBox="0 0 24 24"><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/></svg>
-        <span>戦略</span>
-      </button>
-      <button class="sidebar-tab" data-tab="tab-log" aria-label="システム">
-        <svg viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/><path d="M8 13h8M8 17h5"/></svg>
-        <span>システム</span>
-      </button>
-      <div class="sidebar-spacer"></div>
-      <button class="sidebar-tab sidebar-bottom" id="sidebar-settings" aria-label="設定">
-        <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
-        <span>設定</span>
-      </button>
-    </nav>
+<!-- ═══ Glass sticky header ═══ -->
+<header class="sbar">
+  <div class="sbar-left"><div class="dot ok" id="health-dot"></div><span class="sbar-status" id="sbar-status">正常稼働</span></div>
+  <span class="sbar-time" id="sbar-time">--:--</span>
+</header>
 
-    <!-- PC: タブレット用水平タブバー -->
-    <nav class="pc-tabbar" aria-label="タブナビゲーション">
-      <button class="pc-tabbar-item active" data-tab="tab-portfolio">
-        <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M3 9l9-6 9 6v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V9z"/><path d="M9 22V12h6v10"/></svg>
-        ダッシュボード
-      </button>
-      <button class="pc-tabbar-item" data-tab="tab-stats">
-        <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 20V10M12 20V4M6 20v-6"/></svg>
-        統計
-      </button>
-      <button class="pc-tabbar-item" data-tab="tab-ai">
-        <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="8" r="4"/><path d="M8 14h8a4 4 0 0 1 4 4v2H4v-2a4 4 0 0 1 4-4z"/></svg>
-        AI・ニュース
-      </button>
-      <button class="pc-tabbar-item" data-tab="tab-strategy">
-        <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/></svg>
-        戦略
-      </button>
-      <button class="pc-tabbar-item" data-tab="tab-log">
-        <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/><path d="M8 13h8M8 17h5"/></svg>
-        システム
-      </button>
-    </nav>
+<!-- ═══ 緊急バナー ═══ -->
+<div class="emergency-bar" id="emergency-bar" style="display:none"></div>
 
-    <!-- ヘッダー -->
-    <header class="header" role="banner">
-      <h1 class="header-title">FX Sim <span id="mode-badge" class="mode-badge" style="display:none"></span></h1>
-      <div class="header-right">
-        <span id="last-updated" class="header-time" aria-live="polite">—</span>
-        <button id="theme-btn" class="refresh-btn" aria-label="テーマ切替" title="テーマ切替">
-          <svg id="theme-icon-sun" width="18" height="18" viewBox="0 0 18 18" fill="none" aria-hidden="true">
-            <circle cx="9" cy="9" r="3.5" stroke="currentColor" stroke-width="1.6"/>
-            <path d="M9 1.5v2M9 14.5v2M1.5 9h2M14.5 9h2M3.7 3.7l1.4 1.4M12.9 12.9l1.4 1.4M14.3 3.7l-1.4 1.4M5.1 12.9l-1.4 1.4" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/>
-          </svg>
-          <svg id="theme-icon-moon" width="18" height="18" viewBox="0 0 18 18" fill="none" aria-hidden="true" style="display:none">
-            <path d="M15.1 10.4A6.5 6.5 0 0 1 7.6 2.9 6.5 6.5 0 1 0 15.1 10.4Z" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/>
-          </svg>
-        </button>
-        <button id="refresh-btn" class="refresh-btn" aria-label="今すぐ更新" title="更新">
-          <svg width="18" height="18" viewBox="0 0 18 18" fill="none" aria-hidden="true">
-            <path d="M9 2.5A6.5 6.5 0 1 1 3.5 8" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
-            <path d="M3.5 4.5V8H7" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
-          </svg>
-        </button>
-      </div>
-    </header>
+<!-- ═══════════ TAB 1: 今 (tab-portfolio) ═══════════ -->
+<div class="tab-panel active" id="tab-portfolio">
 
-    <!-- TP/SL バナー（全画面透明オーバーレイ + 内側アニメーション） -->
-    <div id="tp-banner" class="tp-banner" role="alert" aria-live="assertive">
-      <div class="tp-banner-inner">
-        <div class="tp-banner-icon"><svg width="22" height="22" viewBox="0 0 22 22" fill="none"><circle cx="11" cy="11" r="9.5" stroke="currentColor" stroke-width="1.5"/><path d="M6.5 11l3 3 6-6" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg></div>
-        <div class="tp-banner-text">
-          <div class="tp-banner-title" id="tp-banner-title">利確成功</div>
-          <div class="tp-banner-sub"   id="tp-banner-sub">—</div>
-        </div>
-      </div>
-    </div>
+  <!-- PnL ヒーロー -->
+  <section class="hero">
+    <div class="pnl" id="pnl-today">--</div>
+    <div class="pnl-sub" id="pnl-sub">今日の損益</div>
+  </section>
 
-    <!-- ─── ポートフォリオ タブ ─── -->
-    <main id="tab-portfolio" class="content tab-panel active" role="main">
-
-      <!-- ニュース展開時コンパクトサマリー -->
-      <!-- ニュース展開時ティッカーバー（横スクロール） -->
-      <div id="compact-summary" class="compact-summary" aria-hidden="true">
-        <div id="ticker-scroll" class="ticker-scroll"></div>
-      </div>
-
-      <!-- PnL HERO -->
-      <section class="card card-hero" aria-label="損益サマリー">
-        <div class="hero-label">資産残高</div>
-        <div id="hero-pnl" class="hero-pnl neutral" aria-live="polite">
-          <span class="skeleton-line" style="width:140px;height:52px"></span>
-        </div>
-        <div class="hero-sub">
-          <span class="hero-sub-item">
-            <span class="hero-sub-label">損益</span>
-            <span id="today-pnl" class="hero-sub-value neutral">—</span>
-          </span>
-          <span class="hero-divider"></span>
-          <span class="hero-sub-item">
-            <span class="hero-sub-label">含み</span>
-            <span id="unrealized-pnl" class="hero-sub-value neutral">—</span>
-          </span>
-          <span class="hero-divider"></span>
-          <span class="hero-sub-item">
-            <span class="hero-sub-label">ROI</span>
-            <span id="roi-value" class="hero-sub-value">—</span>
-          </span>
-          <span class="hero-divider"></span>
-          <span class="hero-sub-item">
-            <span class="hero-sub-label">勝率</span>
-            <span id="win-rate" class="hero-sub-value">—</span>
-          </span>
-          <span class="hero-divider"></span>
-          <span class="hero-sub-item">
-            <span class="hero-sub-label">取引</span>
-            <span id="total-trades" class="hero-sub-value">—</span>
-          </span>
-        </div>
-        <div class="power-progress-wrap" id="power-progress-wrap">
-          <div class="power-progress-header">
-            <span class="power-progress-label">統計的有意性まで</span>
-            <span class="power-progress-pct" id="power-progress-pct">—</span>
-          </div>
-          <div class="power-progress-track">
-            <div class="power-progress-fill" id="power-progress-fill" style="width:0%">
-              <div class="power-progress-dot"></div>
-            </div>
-          </div>
-          <div class="power-progress-sub" id="power-progress-sub"></div>
-        </div>
-      </section>
-
-      <!-- 因果サマリー -->
-      <section id="causal-summary" class="causal-summary" style="display:none">
-        <div id="causal-narrative" class="causal-narrative"></div>
-        <div class="causal-drivers">
-          <div id="causal-profit-top" class="driver-card driver-profit"></div>
-          <div id="causal-loss-top" class="driver-card driver-loss"></div>
-        </div>
-        <div id="causal-factors" class="causal-factors"></div>
-        <div id="causal-heatmap" class="causal-heatmap"></div>
-      </section>
-
-      <!-- 市場状態サマリーバー -->
-      <div id="market-state-bar" class="market-state-bar" style="display:none"></div>
-
-      <!-- 銘柄ウォッチリスト -->
-      <section class="card card-watchlist" aria-label="銘柄一覧">
-        <div class="section-title" style="margin-bottom:4px">保有中</div>
-        <div id="watchlist" class="watchlist" role="list">
-          <div class="watchlist-skeleton">
-            <span class="skeleton-line" style="width:100%;height:64px;border-radius:8px"></span>
-            <span class="skeleton-line" style="width:100%;height:64px;border-radius:8px"></span>
-            <span class="skeleton-line" style="width:100%;height:64px;border-radius:8px"></span>
-            <span class="skeleton-line" style="width:100%;height:64px;border-radius:8px"></span>
-          </div>
-        </div>
-      </section>
-
-    </main>
-
-    <!-- ─── AI判断 タブ ─── -->
-    <div id="tab-ai" class="content tab-panel" role="region" aria-label="AI判断">
-
-      <div class="scroll" style="padding: 16px 16px 24px">
-
-        <!-- KPIグリッド (2×2) -->
-        <div class="ai-kpi-grid" role="group" aria-label="今日のサマリー">
-          <!-- 今日の判断 -->
-          <div class="kpi-card">
-            <div class="kpi-label">今日の判断</div>
-            <div class="kpi-val" id="ai-kpi-today-val">—</div>
-            <div class="kpi-sub" id="ai-kpi-today-sub">BUY — · SELL —</div>
-          </div>
-          <!-- AI的中率 -->
-          <div class="kpi-card">
-            <div class="kpi-label">AI的中率</div>
-            <div class="kpi-val" style="color:var(--orange)" id="ai-kpi-acc-val">—</div>
-            <div class="kpi-sub" id="ai-kpi-acc-sub">n=— · Brier —</div>
-          </div>
-          <!-- 今日の損益 -->
-          <div class="kpi-card">
-            <div class="kpi-label">今日の損益</div>
-            <div class="kpi-val" id="ai-kpi-pnl-val">—</div>
-            <div class="kpi-sub" id="ai-kpi-pnl-sub">— 勝 — 敗</div>
-          </div>
-          <!-- 最新判断 -->
-          <div class="kpi-card">
-            <div class="kpi-label">最新判断</div>
-            <div class="kpi-latest-body">
-              <span class="dir-badge" id="ai-kpi-latest-badge">—</span>
-              <span class="kpi-sub" id="ai-kpi-latest-pair">—</span>
-            </div>
-            <div class="kpi-sub" id="ai-kpi-latest-time">—</div>
-          </div>
-        </div>
-
-        <!-- トリガーカウントグリッド (3列) -->
-        <div class="trigger-grid" role="group" aria-label="今日のトリガー内訳">
-          <div class="trigger-cell news">
-            <div class="trigger-count" id="ai-trigger-news">—</div>
-            <div class="trigger-label">ニュース起動</div>
-          </div>
-          <div class="trigger-cell rate">
-            <div class="trigger-count" id="ai-trigger-rate">—</div>
-            <div class="trigger-label">レート変動</div>
-          </div>
-          <div class="trigger-cell cron">
-            <div class="trigger-count" id="ai-trigger-cron">—</div>
-            <div class="trigger-label">定期 30m</div>
-          </div>
-        </div>
-
-        <!-- タイムラインセクション -->
-        <div class="ai-sec-header">
-          <span class="ai-sec-title">判断タイムライン</span>
-          <span class="ai-sec-filter" aria-label="BUY/SELLのみ表示中">BUY/SELL のみ ›</span>
-        </div>
-
-        <!-- タイムラインリスト（JSが書き込む） -->
-        <div id="ai-timeline-list" class="tl-list" role="list"></div>
-
-        <!-- HOLDセパレーター（静的） -->
-        <div class="hold-sep" aria-hidden="true">
-          <div class="hold-sep-line"></div>
-          <div class="hold-sep-label">HOLD · 統計タブで確認</div>
-          <div class="hold-sep-line"></div>
-        </div>
-
-      </div>
-    </div>
-
-    <!-- ─── 統計 タブ ─── -->
-    <div id="tab-stats" class="content tab-panel" role="region" aria-label="統計">
-
-      <!-- 資産推移グラフ -->
-      <div class="card" style="padding:16px 16px 12px">
-        <div class="section-title" style="margin-bottom:12px">資産推移</div>
-        <div id="equity-chart" style="height:180px;position:relative"></div>
-      </div>
-
-      <!-- パフォーマンスサマリー -->
-      <!-- 統計ナラティブ（JSが書き込む） -->
-      <div id="stats-narrative"></div>
-
-      <div id="stats-pairs" class="stats-section"></div>
-
-      <!-- システムフッター -->
-      <footer class="system-footer" role="contentinfo">
-        <span class="sys-item"><span class="status-dot" aria-hidden="true"></span>稼働中</span>
-        <span class="sys-sep"></span>
-        <span class="sys-item sys-muted">最終実行 <span id="last-run">—</span></span>
-        <span class="sys-sep"></span>
-        <span class="sys-item sys-muted"><span id="total-runs">—</span> 回</span>
-      </footer>
-
-    </div>
-
-    <!-- ─── ログ タブ ─── -->
-    <div id="tab-log" class="content tab-panel" role="region" aria-label="ログ">
-      <div id="risk-status" style="display:none"></div>
-      <div id="log-stats-grid" class="stat-grid"></div>
-      <div class="card" style="margin-top:4px">
-        <div id="log-list"></div>
-      </div>
-    </div>
-
-    <!-- ─── 戦略 タブ ─── -->
-    <div id="tab-strategy" class="content tab-panel" role="region" aria-label="戦略">
-      <div class="stat-grid" id="strategy-tiers"></div>
-      <div class="card" style="margin-top:8px">
-        <h3 style="font-size:13px;font-weight:600;margin:0 0 8px;color:var(--text)">手法 × 環境 マトリクス</h3>
-        <div id="strategy-matrix"></div>
-      </div>
-
-      <!-- ─── パラメーター管理セクション ─── -->
-      <div class="card" style="margin-top:8px">
-        <!-- 緊急ニュースバナー（EMERGENCY検出10分以内に表示） -->
-        <div id="emergency-news-banner" class="emergency-news-banner" role="alert" aria-live="assertive">
-          <span>⚡</span>
-          <span class="emergency-news-title" style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">—</span>
-        </div>
-        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">
-          <h3 style="font-size:13px;font-weight:600;margin:0;color:var(--text)">ロジックパラメーター</h3>
-          <div style="display:flex;gap:6px">
-            <button id="params-tab-current" class="params-tab-btn active" onclick="showParamsTab('current')">現在値</button>
-            <button id="params-tab-history" class="params-tab-btn" onclick="showParamsTab('history')">変更履歴</button>
-          </div>
-        </div>
-        <div id="params-loading" style="color:var(--label-secondary);font-size:12px;padding:8px 0">読み込み中…</div>
-        <!-- 現在のパラメーター一覧 -->
-        <div id="params-current" style="display:block">
-          <div id="params-table-wrap" style="overflow-x:auto;-webkit-overflow-scrolling:touch"></div>
-        </div>
-        <!-- 変更履歴 -->
-        <div id="params-history" style="display:none">
-          <div id="params-history-list"></div>
-        </div>
-      </div>
-    </div>
-
-    <!-- ─── タブバー ─── -->
-    <nav class="tab-bar" role="tablist" aria-label="メインナビゲーション">
-      <button class="tab-item active" role="tab" aria-selected="true"  data-tab="tab-portfolio" aria-controls="tab-portfolio">
-        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-          <path d="M3 9l9-6 9 6v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V9z" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
-          <path d="M9 22V12h6v10" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
-        </svg>
-        ダッシュボード
-      </button>
-      <button class="tab-item" role="tab" aria-selected="false" data-tab="tab-stats" aria-controls="tab-stats">
-        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-          <path d="M18 20V10M12 20V4M6 20v-6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
-        </svg>
-        統計
-      </button>
-      <button class="tab-item" role="tab" aria-selected="false" data-tab="tab-ai" aria-controls="tab-ai">
-        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-          <path d="M12 2a4 4 0 0 1 4 4c0 1.5-.8 2.8-2 3.5V11h3a3 3 0 0 1 3 3v1.5a2.5 2.5 0 0 1-2.5 2.5H17v2a2 2 0 0 1-2 2H9a2 2 0 0 1-2-2v-2h-.5A2.5 2.5 0 0 1 4 15.5V14a3 3 0 0 1 3-3h3V9.5A4 4 0 0 1 12 2z" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/>
-          <circle cx="9.5" cy="15" r="1" fill="currentColor"/>
-          <circle cx="14.5" cy="15" r="1" fill="currentColor"/>
-        </svg>
-        AI・ニュース
-      </button>
-      <button class="tab-item" role="tab" aria-selected="false" data-tab="tab-strategy" aria-controls="tab-strategy">
-        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-          <path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/>
-          <path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/>
-        </svg>
-        戦略
-      </button>
-      <button class="tab-item" role="tab" aria-selected="false" data-tab="tab-log" aria-controls="tab-log">
-        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-          <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/>
-          <path d="M14 2v6h6" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
-          <path d="M8 13h8M8 17h5" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>
-        </svg>
-        システム
-      </button>
-    </nav>
-
-    <!-- ─── ニュースドロワー ─── -->
-    <div id="news-drawer" class="news-drawer" aria-label="ニュース">
-      <div id="news-drawer-handle" class="news-drawer-handle" aria-hidden="true"></div>
-      <div class="news-drawer-header">
-        <span class="news-drawer-title">ビジネスニュース</span>
-      </div>
-      <div id="news-drawer-body" class="news-drawer-body"></div>
-    </div>
-
-    <!-- PC: 右サイドパネル -->
-    <aside class="pc-panel" id="pc-panel" aria-label="サイドパネル">
-      <div class="panel-content active" data-panel="tab-portfolio">
-        <div class="panel-section">
-          <div class="label">マーケット概況</div>
-          <div id="panel-market" style="display:flex;gap:16px;margin-top:6px"></div>
-        </div>
-        <div class="panel-header">📰 ニュース</div>
-        <div id="panel-news"></div>
-      </div>
-      <div class="panel-content" data-panel="tab-ai">
-        <div class="panel-header">📋 判定履歴</div>
-        <div id="panel-decisions"></div>
-      </div>
-      <div class="panel-content" data-panel="tab-stats">
-        <div class="panel-header">📊 銘柄詳細</div>
-        <div id="panel-stats-detail">
-          <p style="padding:16px;color:var(--label-secondary);font-size:13px">銘柄をクリックして詳細を表示</p>
-        </div>
-      </div>
-      <div class="panel-content" data-panel="tab-log">
-        <div class="panel-header">🛡️ RiskGuard</div>
-        <div id="panel-riskguard"></div>
-      </div>
-      <div class="panel-content" data-panel="tab-strategy">
-        <div class="panel-header">🔬 最新レビュー</div>
-        <div id="panel-params-review"></div>
-      </div>
-    </aside>
-
-    <!-- ─── ボトムシート（ポジション詳細） ─── -->
-    <div id="sheet-backdrop" class="sheet-backdrop" role="presentation"></div>
-    <div id="sheet" class="sheet" role="dialog" aria-modal="true" aria-label="ポジション詳細">
-      <div class="sheet-handle" aria-hidden="true"></div>
-      <div class="sheet-title" id="sheet-title">—</div>
-      <div class="sheet-body" id="sheet-body"></div>
-    </div>
-
+  <!-- 5メトリクスストリップ -->
+  <div class="metrics" id="metrics-strip">
+    <div class="m"><div class="m-val" id="m-balance">--</div><div class="m-lbl">残高</div></div>
+    <div class="m"><div class="m-val" id="m-roi">--</div><div class="m-lbl">ROI</div></div>
+    <div class="m"><div class="m-val" id="m-winrate">--</div><div class="m-lbl">勝率</div></div>
+    <div class="m"><div class="m-val" id="m-pf">--</div><div class="m-lbl">PF</div></div>
+    <div class="m"><div class="m-val" id="m-trades">--</div><div class="m-lbl">取引</div></div>
   </div>
-  <script src="/app.js?v=13"></script>
+
+  <!-- 有意性バー -->
+  <div class="sig">
+    <div class="sig-track"><div class="sig-fill" id="sig-fill" style="width:0%"></div></div>
+    <span class="sig-lbl" id="sig-label">有意性 --%</span>
+  </div>
+
+  <!-- ストーリーカード -->
+  <div class="story" id="story-card" style="display:none">
+    <div class="story-text" id="story-text"></div>
+    <div class="drivers" id="causal-drivers"></div>
+    <div class="chips" id="causal-chips"></div>
+  </div>
+
+  <!-- ヒートマップ -->
+  <div class="hm" id="causal-heatmap" style="display:none">
+    <div class="hm-g" id="heatmap-grid"></div>
+  </div>
+
+  <!-- ニュース速報セクション -->
+  <div class="sec">ニュース速報</div>
+  <div class="news-feed" id="news-feed-now"></div>
+
+  <!-- 保有ポジション -->
+  <div class="sec" id="positions-header">保有中</div>
+  <div class="positions" id="positions-list"></div>
+
+  <!-- 市場指標バー -->
+  <div class="sec">市場</div>
+  <div class="mkt-bar" id="market-bar"></div>
+
+  <!-- 待機銘柄グリッド -->
+  <div class="sec" id="wait-header">待機</div>
+  <div class="wait-grid" id="wait-grid"></div>
+
+  <!-- クロスリンク -->
+  <div style="padding:16px;text-align:center">
+    <span class="cross-link" onclick="switchTab('tab-stats')">→ 学びタブで変更の効果を確認</span>
+  </div>
+
+</div>
+
+<!-- ═══════════ TAB 2: ニュース (tab-news) ═══════════ -->
+<div class="tab-panel" id="tab-news">
+
+  <!-- ニュースKPI -->
+  <div class="sec">ニュース概況</div>
+  <div class="kpi-grid" id="news-kpi" style="margin:0 16px 8px">
+    <div class="kpi"><div class="kpi-val" id="nk-total">--</div><div class="kpi-lbl">取得件数</div></div>
+    <div class="kpi"><div class="kpi-val" style="color:var(--blue)" id="nk-analyzed">--</div><div class="kpi-lbl">AI分析済</div></div>
+    <div class="kpi"><div class="kpi-val" style="color:var(--green)" id="nk-triggered">--</div><div class="kpi-lbl">取引発動</div></div>
+    <div class="kpi"><div class="kpi-val" style="color:var(--red)" id="nk-emergency">--</div><div class="kpi-lbl">緊急</div></div>
+  </div>
+
+  <!-- 取引に影響したニュース -->
+  <div class="sec">取引に影響したニュース</div>
+  <div class="news-feed" id="news-feed-impacted"></div>
+
+  <!-- 分析済み・影響なし -->
+  <div class="sec">分析済み · 影響なし</div>
+  <div class="news-feed" id="news-feed-analyzed"></div>
+
+  <!-- 未分析ニュースリスト -->
+  <div class="sec" id="news-unanalyzed-header">未分析ニュース</div>
+  <div id="news-feed-unanalyzed" style="margin:0 16px"></div>
+
+  <!-- ソース別統計 -->
+  <div class="sec">ソース別</div>
+  <div id="news-sources" style="margin:0 16px 16px"></div>
+
+  <!-- クロスリンク -->
+  <div style="padding:16px;text-align:center">
+    <span class="cross-link" onclick="switchTab('tab-portfolio')">→ 今タブでポジション確認</span>
+    <span class="cross-link" style="margin-left:16px" onclick="switchTab('tab-ai')">→ AIタブで判定確認</span>
+  </div>
+
+</div>
+
+<!-- ═══════════ TAB 3: 学び (tab-stats) ═══════════ -->
+<div class="tab-panel" id="tab-stats">
+
+  <!-- KPI 6つ -->
+  <div class="sec">全体パフォーマンス</div>
+  <div class="kpi-grid" id="stats-kpi">
+    <div class="kpi"><div class="kpi-val" id="sk-winrate">--</div><div class="kpi-lbl">勝率</div></div>
+    <div class="kpi"><div class="kpi-val" id="sk-pf">--</div><div class="kpi-lbl">PF</div></div>
+    <div class="kpi"><div class="kpi-val" id="sk-sharpe">--</div><div class="kpi-lbl">シャープ</div></div>
+    <div class="kpi"><div class="kpi-val" id="sk-maxdd">--</div><div class="kpi-lbl">最大DD</div></div>
+    <div class="kpi"><div class="kpi-val" id="sk-rr">--</div><div class="kpi-lbl">平均RR</div></div>
+    <div class="kpi"><div class="kpi-val" id="sk-total">--</div><div class="kpi-lbl">総取引</div></div>
+  </div>
+
+  <!-- エクイティカーブ -->
+  <div style="margin:12px 16px 0;background:var(--surface);border-radius:var(--rs);padding:12px">
+    <div style="font-size:11px;color:var(--tertiary);margin-bottom:8px;font-weight:600">エクイティカーブ</div>
+    <div id="equity-chart" style="height:60px;position:relative">
+      <svg viewBox="0 0 320 60" style="width:100%;height:100%"></svg>
+    </div>
+  </div>
+
+  <!-- 手法×環境マトリクス -->
+  <div class="sec">手法 × 環境マトリクス</div>
+  <div class="matrix-grid" id="strategy-matrix"></div>
+
+  <!-- 結論 -->
+  <div class="sec">全体の結論</div>
+  <div class="verdict-strip" id="stats-verdict">
+    <div class="verdict-box"><div class="verdict-num" id="sv-worked">--</div><div class="verdict-lbl">効いた変更</div></div>
+    <div class="verdict-box"><div class="verdict-num" id="sv-didnt">--</div><div class="verdict-lbl">効かなかった</div></div>
+    <div class="verdict-box"><div class="verdict-num" id="sv-pending">--</div><div class="verdict-lbl">判定中</div></div>
+  </div>
+
+  <!-- 銘柄別 Before/After カード -->
+  <div class="sec">銘柄別: 変更 → 結果（Why×5付き）</div>
+  <div id="evo-cards"></div>
+
+  <!-- クロスリンク -->
+  <div style="padding:16px;text-align:center">
+    <span class="cross-link" onclick="switchTab('tab-ai')">→ AIタブで全判断の正解率を確認</span>
+  </div>
+
+</div>
+
+<!-- ═══════════ TAB 4: AI (tab-ai) ═══════════ -->
+<div class="tab-panel" id="tab-ai">
+
+  <!-- ヒーロー正解率 -->
+  <div class="ai-score" id="ai-score">
+    <div class="ai-score-num" id="ai-score-num">--%</div>
+    <div class="ai-score-label">AIの正解率</div>
+    <div class="ai-score-sub" id="ai-score-sub">--</div>
+  </div>
+
+  <!-- ニュース分析/Param Review別の内訳 -->
+  <div class="ai-breakdown" id="ai-breakdown">
+    <div class="ai-brk"><div class="ai-brk-type">ニュース分析</div><div class="ai-brk-val" id="ai-brk-news-val">--</div><div class="ai-brk-sub" id="ai-brk-news-sub">--</div></div>
+    <div class="ai-brk"><div class="ai-brk-type">Param Review</div><div class="ai-brk-val" id="ai-brk-pr-val">--</div><div class="ai-brk-sub" id="ai-brk-pr-sub">--</div></div>
+  </div>
+
+  <!-- Brierスコアスパークライン -->
+  <div class="brier-row" id="ai-brier">
+    <span class="brier-label">Brierスコア</span>
+    <svg width="80" height="20" viewBox="0 0 80 20" class="spark-mini" id="ai-brier-spark"></svg>
+    <span class="brier-val" id="ai-brier-val">--</span>
+    <span style="font-size:11px;color:var(--tertiary)" id="ai-brier-trend"></span>
+  </div>
+
+  <!-- 正解/不正解/判定中 カウント -->
+  <div class="verdict-strip" id="ai-verdict-strip">
+    <div class="verdict-box"><div class="verdict-num" id="ai-v-correct">--</div><div class="verdict-lbl">正解</div></div>
+    <div class="verdict-box"><div class="verdict-num" id="ai-v-wrong">--</div><div class="verdict-lbl">不正解</div></div>
+    <div class="verdict-box"><div class="verdict-num" id="ai-v-pending">--</div><div class="verdict-lbl">判定中</div></div>
+  </div>
+
+  <!-- PARAM REVIEW セクション -->
+  <div class="sec" id="ai-pr-section">Param Review</div>
+  <div id="ai-pr-cards"></div>
+
+  <!-- ニュース分析セクション -->
+  <div class="sec" id="ai-news-section">ニュース分析</div>
+  <div id="ai-news-cards"></div>
+
+  <!-- AI判断タイムライン -->
+  <div id="ai-timeline"></div>
+
+  <!-- クロスリンク -->
+  <div style="padding:16px;text-align:center">
+    <span class="cross-link" onclick="switchTab('tab-stats')">→ 学びタブで全体の効果を確認</span>
+  </div>
+
+</div>
+
+<!-- ═══════════ TAB 5: 戦略 (tab-strategy) ═══════════ -->
+<div class="tab-panel" id="tab-strategy">
+
+  <!-- ティア分類 -->
+  <div class="sec">各銘柄の進化</div>
+
+  <!-- 各銘柄ジャーニーカード -->
+  <div id="journey-cards"></div>
+
+  <!-- クロスリンク -->
+  <div style="padding:16px;text-align:center">
+    <span class="cross-link" onclick="switchTab('tab-ai')">→ AIタブで判断の正確性を確認</span>
+  </div>
+
+</div>
+
+<!-- ═══════════ TAB 6: 系統 (tab-log) ═══════════ -->
+<div class="tab-panel" id="tab-log">
+
+  <!-- ヘルスヒーロー -->
+  <div class="health-hero" id="health-hero">
+    <div class="health-icon">
+      <svg width="64" height="64" viewBox="0 0 64 64" fill="none">
+        <circle cx="32" cy="32" r="28" fill="rgba(48,209,88,0.15)" stroke="#30D158" stroke-width="2"/>
+        <path d="M20 32l8 8 16-16" stroke="#30D158" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+      </svg>
+    </div>
+    <div class="health-text" id="health-text" style="color:var(--green)">全システム正常</div>
+    <div class="health-sub" id="health-sub">--</div>
+  </div>
+
+  <!-- DD段階バー -->
+  <div class="sec">ドローダウン段階</div>
+  <div class="dd-bar" id="dd-bar">
+    <div class="dd-seg" style="width:40%;background:var(--green)" title="NORMAL"></div>
+    <div class="dd-seg" style="width:20%;background:var(--orange);opacity:0.3" title="CAUTION"></div>
+    <div class="dd-seg" style="width:15%;background:var(--orange);opacity:0.15" title="WARNING"></div>
+    <div class="dd-seg" style="width:15%;background:var(--red);opacity:0.1" title="HALT"></div>
+    <div class="dd-seg" style="width:10%;background:var(--red);opacity:0.05" title="STOP"></div>
+  </div>
+  <div style="display:flex;justify-content:space-between;margin:0 16px 8px;font-size:11px;color:var(--tertiary)" id="dd-labels">
+    <span id="dd-current" style="color:var(--green);font-weight:600">--</span>
+    <span>NORMAL</span><span>CAUTION</span><span>WARN</span><span>HALT</span><span>STOP</span>
+  </div>
+
+  <!-- 稼働率/エラー率 -->
+  <div style="display:flex;gap:4px;margin:0 16px 8px" id="sys-uptime-grid">
+    <div style="flex:1;padding:12px 8px;background:var(--surface);border-radius:var(--rs);text-align:center">
+      <div style="font-size:18px;font-weight:700" id="sys-uptime">--</div>
+      <div style="font-size:11px;color:var(--tertiary);margin-top:2px">稼働率 24h</div>
+    </div>
+    <div style="flex:1;padding:12px 8px;background:var(--surface);border-radius:var(--rs);text-align:center">
+      <div style="font-size:18px;font-weight:700" id="sys-error-rate">--</div>
+      <div style="font-size:11px;color:var(--tertiary);margin-top:2px">エラー率 24h</div>
+    </div>
+  </div>
+
+  <!-- ヘルスチェック6項目 -->
+  <div class="sec">ヘルスチェック（タップで詳細）</div>
+  <div class="health-checks" id="health-checks"></div>
+
+  <!-- 直近ログ（異常のみ） -->
+  <div class="sec">直近ログ（異常のみ）</div>
+  <div class="log-section" id="log-list" style="margin:0 16px"></div>
+
+  <!-- 全ログ表示（折りたたみ） -->
+  <div style="text-align:center;padding:24px 0">
+    <button style="font-size:12px;color:var(--tertiary);cursor:pointer;background:none;border:none;padding:8px 16px;min-height:44px" onclick="var el=document.getElementById('all-logs');el.style.display=el.style.display==='none'?'block':'none'">全ログを表示 ▼</button>
+  </div>
+  <div id="all-logs" style="display:none;margin:0 16px"></div>
+
+  <div style="padding:16px;text-align:center;font-size:12px;color:var(--tertiary)" id="sys-next-review"></div>
+
+</div>
+
+<!-- ═══ Floating Liquid Glass タブバー ═══ -->
+<nav class="tabs" id="main-tabs">
+  <div class="tab on" data-tab="tab-portfolio" onclick="switchTab('tab-portfolio')">
+    <svg class="tab-icon" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12l9-8 9 8"/><path d="M5 10v9a1 1 0 001 1h3v-5h6v5h3a1 1 0 001-1v-9"/></svg>
+    <span class="tab-t">今</span>
+  </div>
+  <div class="tab" data-tab="tab-news" onclick="switchTab('tab-news')">
+    <svg class="tab-icon" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M7 8h4"/><path d="M7 12h10"/><path d="M7 16h10"/></svg>
+    <span class="tab-t">ニュース</span>
+  </div>
+  <div class="tab" data-tab="tab-stats" onclick="switchTab('tab-stats')">
+    <svg class="tab-icon" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M3 20l5-8 4 4 5-9 4 5"/></svg>
+    <span class="tab-t">学び</span>
+  </div>
+  <div class="tab" data-tab="tab-ai" onclick="switchTab('tab-ai')">
+    <svg class="tab-icon" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="6" y="6" width="12" height="12" rx="2"/><path d="M9 2v4M15 2v4M9 18v4M15 18v4M2 9h4M2 15h4M18 9h4M18 15h4"/></svg>
+    <span class="tab-t">AI</span>
+  </div>
+  <div class="tab" data-tab="tab-strategy" onclick="switchTab('tab-strategy')">
+    <svg class="tab-icon" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M4 8h4m4 0h8M4 16h8m4 0h4"/><circle cx="10" cy="8" r="2"/><circle cx="14" cy="16" r="2"/></svg>
+    <span class="tab-t">戦略</span>
+  </div>
+  <div class="tab" data-tab="tab-log" onclick="switchTab('tab-log')">
+    <svg class="tab-icon" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M12 1v2m0 18v2m-9-11h2m18 0h2m-4.2-6.8l-1.4 1.4M6.6 17.4l-1.4 1.4m0-12.8l1.4 1.4m10.8 10.8l1.4 1.4"/></svg>
+    <span class="tab-t">系統</span>
+  </div>
+</nav>
+
+<!-- ═══ ボトムシート ═══ -->
+<div id="sheet-overlay" class="sheet-backdrop" role="presentation"></div>
+<div id="bottom-sheet" class="sheet" role="dialog" aria-modal="true" aria-label="詳細">
+  <div class="sheet-handle" aria-hidden="true"></div>
+  <div class="sheet-title" id="sheet-title">--</div>
+  <div class="sheet-body" id="sheet-body"></div>
+</div>
+
+<!-- ═══ ニュースドロワー ═══ -->
+<div id="news-drawer" class="news-drawer" aria-label="ニュース">
+  <div id="news-drawer-handle" class="news-drawer-handle" aria-hidden="true"></div>
+  <div class="news-drawer-header">
+    <span class="news-drawer-title">ビジネスニュース</span>
+  </div>
+  <div id="news-drawer-body" class="news-drawer-body"></div>
+</div>
+
+<script src="/app.js?v=14"></script>
 </body>
 </html>`;
 }
