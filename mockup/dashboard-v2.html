@@ -1,0 +1,467 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>FX Sim — Dashboard Mockup v2</title>
+<style>
+/* ═══ Reset & System ═══ */
+*{margin:0;padding:0;box-sizing:border-box}
+:root{
+  --bg:#000;--surface:#1C1C1E;--card:#2C2C2E;--elevated:#3A3A3C;
+  --text:#F5F5F7;--secondary:#8E8E93;--tertiary:#48484A;
+  --green:#30D158;--red:#FF453A;--orange:#FF9F0A;--blue:#0A84FF;--yellow:#FFD60A;
+  --teal:#64D2FF;--purple:#BF5AF2;
+  --radius:12px;--radius-sm:8px;--radius-xs:6px;
+  --safe-top:env(safe-area-inset-top,0px);
+  --safe-bottom:env(safe-area-inset-bottom,0px);
+  font-family:-apple-system,BlinkMacSystemFont,'SF Pro Display','Hiragino Sans',sans-serif;
+  -webkit-font-smoothing:antialiased;
+}
+body{background:var(--bg);color:var(--text);font-size:15px;line-height:1.5;
+  padding-top:var(--safe-top);padding-bottom:calc(64px + var(--safe-bottom));
+  overflow-x:hidden;
+}
+
+/* ═══ Header ═══ */
+.header{
+  position:sticky;top:0;z-index:100;
+  padding:12px 20px 8px;
+  background:rgba(0,0,0,0.85);backdrop-filter:blur(20px);-webkit-backdrop-filter:blur(20px);
+  display:flex;justify-content:space-between;align-items:center;
+}
+.header-title{font-size:17px;font-weight:700;letter-spacing:-0.3px}
+.header-time{font-size:13px;color:var(--secondary)}
+.header-actions{display:flex;gap:12px}
+.header-btn{width:32px;height:32px;border-radius:50%;background:var(--surface);border:none;
+  color:var(--secondary);font-size:16px;cursor:pointer;display:grid;place-items:center}
+
+/* ═══ Alert Banner ═══ */
+.alert-banner{display:none;padding:10px 20px;font-size:13px;font-weight:600;text-align:center}
+.alert-banner.active{display:block}
+.alert-banner.red{background:var(--red);color:#fff}
+.alert-banner.orange{background:var(--orange);color:#fff}
+
+/* ═══ Phase 1: Result Hero ═══ */
+.hero{padding:20px 20px 16px}
+.hero-balance{font-size:42px;font-weight:700;letter-spacing:-1.5px;line-height:1.1}
+.hero-balance.positive{color:var(--green)}
+.hero-balance.negative{color:var(--red)}
+.hero-subtitle{font-size:13px;color:var(--secondary);margin-top:4px}
+.hero-metrics{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-top:16px}
+.metric{text-align:center}
+.metric-value{font-size:17px;font-weight:600;font-variant-numeric:tabular-nums}
+.metric-label{font-size:10px;color:var(--secondary);text-transform:uppercase;letter-spacing:0.5px;margin-top:2px}
+.metric-value.positive{color:var(--green)}
+.metric-value.negative{color:var(--red)}
+
+/* ═══ Progress Bar (Statistical Significance) ═══ */
+.progress-wrap{margin:12px 20px 0;padding:10px 14px;background:var(--surface);border-radius:var(--radius-sm)}
+.progress-label{font-size:11px;color:var(--secondary);display:flex;justify-content:space-between}
+.progress-bar{height:4px;background:var(--tertiary);border-radius:2px;margin-top:6px;overflow:hidden}
+.progress-fill{height:100%;border-radius:2px;
+  background:linear-gradient(90deg,var(--red) 0%,var(--orange) 40%,var(--green) 100%)}
+
+/* ═══ Phase 2: Causal Summary ═══ */
+.causal{margin:16px 20px 0}
+.causal-narrative{
+  font-size:14px;line-height:1.6;color:var(--secondary);
+  padding:12px 16px;background:var(--surface);border-radius:var(--radius);
+  border-left:3px solid var(--blue);
+}
+.drivers{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:10px}
+.driver{padding:12px;background:var(--surface);border-radius:var(--radius-sm);cursor:pointer;
+  transition:transform 0.15s}
+.driver:active{transform:scale(0.97)}
+.driver-header{display:flex;justify-content:space-between;align-items:center;margin-bottom:4px}
+.driver-tag{font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:0.5px;
+  padding:2px 6px;border-radius:4px}
+.driver-tag.profit{background:rgba(48,209,88,0.15);color:var(--green)}
+.driver-tag.loss{background:rgba(255,69,58,0.15);color:var(--red)}
+.driver-pair{font-size:15px;font-weight:600}
+.driver-pnl{font-size:22px;font-weight:700;margin:2px 0}
+.driver-reason{font-size:11px;color:var(--secondary)}
+.factors{display:flex;flex-wrap:wrap;gap:6px;margin-top:10px}
+.factor{padding:4px 10px;border-radius:12px;font-size:11px;font-weight:500;cursor:pointer;
+  transition:opacity 0.15s}
+.factor:active{opacity:0.7}
+.factor.high{background:rgba(255,69,58,0.15);color:var(--red)}
+.factor.medium{background:rgba(255,159,10,0.15);color:var(--orange)}
+.factor.low{background:rgba(142,142,147,0.15);color:var(--secondary)}
+
+/* ═══ Heatmap ═══ */
+.heatmap{margin-top:12px;background:var(--surface);border-radius:var(--radius-sm);padding:10px;overflow-x:auto}
+.hm-grid{display:grid;grid-template-columns:80px repeat(4,1fr);gap:1px;font-size:11px;min-width:300px}
+.hm-header{padding:4px 6px;color:var(--secondary);font-weight:600;font-size:10px;text-align:center}
+.hm-header:first-child{text-align:left}
+.hm-pair{padding:5px 6px;font-weight:500;white-space:nowrap}
+.hm-cell{padding:5px 6px;text-align:center;border-radius:3px;font-variant-numeric:tabular-nums}
+
+/* ═══ Phase 3: Situation Overview ═══ */
+.section-header{
+  font-size:13px;font-weight:600;color:var(--secondary);text-transform:uppercase;letter-spacing:0.5px;
+  padding:20px 20px 8px;
+}
+.positions{margin:0 20px}
+.pos-card{
+  display:flex;align-items:center;justify-content:space-between;
+  padding:14px 16px;background:var(--surface);border-radius:var(--radius-sm);margin-bottom:6px;
+  cursor:pointer;transition:transform 0.15s;
+}
+.pos-card:active{transform:scale(0.98)}
+.pos-left{display:flex;align-items:center;gap:12px}
+.pos-icon{width:36px;height:36px;border-radius:10px;display:grid;place-items:center;
+  font-size:13px;font-weight:700}
+.pos-icon.buy{background:rgba(48,209,88,0.15);color:var(--green)}
+.pos-icon.sell{background:rgba(255,69,58,0.15);color:var(--red)}
+.pos-pair{font-size:15px;font-weight:600}
+.pos-detail{font-size:12px;color:var(--secondary)}
+.pos-right{text-align:right}
+.pos-pnl{font-size:17px;font-weight:600;font-variant-numeric:tabular-nums}
+.pos-spark{height:24px;margin-top:4px}
+.pos-spark svg{display:block}
+
+/* Market Indicators */
+.market-bar{display:grid;grid-template-columns:repeat(4,1fr);gap:6px;margin:8px 20px 0}
+.mkt{padding:10px 8px;background:var(--surface);border-radius:var(--radius-xs);text-align:center}
+.mkt-value{font-size:15px;font-weight:600;font-variant-numeric:tabular-nums}
+.mkt-label{font-size:10px;color:var(--secondary);margin-top:2px}
+.mkt-change{font-size:11px}
+.mkt-change.up{color:var(--green)}
+.mkt-change.down{color:var(--red)}
+
+/* Waiting instruments */
+.waiting{margin:12px 20px 0}
+.wait-row{display:flex;justify-content:space-between;padding:10px 0;
+  border-bottom:1px solid var(--tertiary)}
+.wait-row:last-child{border-bottom:none}
+.wait-pair{font-size:14px;font-weight:500}
+.wait-price{font-size:14px;color:var(--secondary);font-variant-numeric:tabular-nums}
+
+/* ═══ News Drawer Handle ═══ */
+.news-handle{
+  position:fixed;bottom:calc(64px + var(--safe-bottom));left:0;right:0;
+  text-align:center;padding:8px 0 4px;
+  background:linear-gradient(transparent,rgba(0,0,0,0.9));pointer-events:none;
+}
+.news-pill{
+  display:inline-flex;align-items:center;gap:6px;
+  padding:6px 14px;background:var(--surface);border-radius:20px;
+  font-size:12px;font-weight:500;color:var(--secondary);
+  pointer-events:auto;cursor:pointer;
+  transition:transform 0.15s;
+}
+.news-pill:active{transform:scale(0.95)}
+.news-dot{width:6px;height:6px;border-radius:50%;background:var(--blue)}
+
+/* ═══ Tab Bar ═══ */
+.tab-bar{
+  position:fixed;bottom:0;left:0;right:0;
+  padding:6px 0 calc(6px + var(--safe-bottom));
+  background:rgba(28,28,30,0.92);backdrop-filter:blur(20px);-webkit-backdrop-filter:blur(20px);
+  border-top:0.5px solid rgba(255,255,255,0.08);
+  display:flex;justify-content:space-around;z-index:100;
+}
+.tab{display:flex;flex-direction:column;align-items:center;gap:2px;
+  padding:4px 0;min-width:56px;cursor:pointer;
+  -webkit-tap-highlight-color:transparent}
+.tab-icon{font-size:20px;opacity:0.4;transition:opacity 0.2s}
+.tab-label{font-size:10px;color:var(--secondary);font-weight:500;transition:color 0.2s}
+.tab.active .tab-icon{opacity:1}
+.tab.active .tab-label{color:var(--blue)}
+
+/* ═══ Utilities ═══ */
+.green{color:var(--green)}.red{color:var(--red)}.orange{color:var(--orange)}.blue{color:var(--blue)}
+.text-secondary{color:var(--secondary)}
+</style>
+</head>
+<body>
+
+<!-- Alert Banner (hidden when normal) -->
+<!-- <div class="alert-banner red active">⚠️ DD STOP — 日次損失上限超過。新規エントリー停止中</div> -->
+
+<!-- Header -->
+<header class="header">
+  <div>
+    <div class="header-title">FX Sim</div>
+  </div>
+  <div style="display:flex;align-items:center;gap:12px">
+    <span class="header-time">20:58 更新</span>
+    <div class="header-actions">
+      <button class="header-btn">☀</button>
+      <button class="header-btn">↻</button>
+    </div>
+  </div>
+</header>
+
+<!-- ═══ Phase 1: Result + Alert ═══ -->
+<section class="hero">
+  <div class="hero-balance positive">¥9,792</div>
+  <div class="hero-subtitle">資産残高 · 初期 ¥10,000</div>
+  <div class="hero-metrics">
+    <div class="metric">
+      <div class="metric-value negative">-¥208</div>
+      <div class="metric-label">本日損益</div>
+    </div>
+    <div class="metric">
+      <div class="metric-value negative">-2.08%</div>
+      <div class="metric-label">ROI</div>
+    </div>
+    <div class="metric">
+      <div class="metric-value">52.1%</div>
+      <div class="metric-label">勝率</div>
+    </div>
+    <div class="metric">
+      <div class="metric-value">499</div>
+      <div class="metric-label">取引</div>
+    </div>
+  </div>
+</section>
+
+<!-- Statistical Significance Progress -->
+<div class="progress-wrap">
+  <div class="progress-label">
+    <span>統計的有意性まで</span>
+    <span class="green">48% 達成</span>
+  </div>
+  <div class="progress-bar">
+    <div class="progress-fill" style="width:48%"></div>
+  </div>
+  <div style="font-size:10px;color:var(--secondary);margin-top:4px">#499 / 1,036 件</div>
+</div>
+
+<!-- ═══ Phase 2: Causal Summary ═══ -->
+<section class="causal">
+  <div class="causal-narrative">
+    Nikkei225が+801円(TP到達)が利益の柱。Goldが-479円(SL)で損失最大。VIX=27で警戒中、PR3件実行。
+  </div>
+
+  <div class="drivers">
+    <div class="driver" onclick="alert('→ 統計タブ Nikkei225')">
+      <div class="driver-header">
+        <span class="driver-tag profit">利益 TOP</span>
+        <span style="font-size:11px;color:var(--secondary)">TP</span>
+      </div>
+      <div class="driver-pair">Nikkei225</div>
+      <div class="driver-pnl green">+801円</div>
+      <div class="driver-reason">ATR×3.3 TP到達</div>
+    </div>
+    <div class="driver" onclick="alert('→ 統計タブ Gold')">
+      <div class="driver-header">
+        <span class="driver-tag loss">損失 TOP</span>
+        <span style="font-size:11px;color:var(--secondary)">SL</span>
+      </div>
+      <div class="driver-pair">Gold</div>
+      <div class="driver-pnl red">-479円</div>
+      <div class="driver-reason">SL到達 (VIX警戒中)</div>
+    </div>
+  </div>
+
+  <div class="factors">
+    <span class="factor high" onclick="alert('→ 戦略タブ VIX')">VIX=27 高水準</span>
+    <span class="factor medium" onclick="alert('→ 戦略タブ PR')">PR 3件 (CrudeOil,Silver,Gold)</span>
+    <span class="factor medium" onclick="alert('→ AI・ニュースタブ')">緊急ニュース 2件</span>
+  </div>
+
+  <!-- Heatmap -->
+  <div class="heatmap">
+    <div class="hm-grid">
+      <div class="hm-header">銘柄</div>
+      <div class="hm-header">PnL</div>
+      <div class="hm-header">VIX</div>
+      <div class="hm-header">PR</div>
+      <div class="hm-header">ニュース</div>
+
+      <div class="hm-pair">Nikkei225</div>
+      <div class="hm-cell" style="background:rgba(48,209,88,0.35)">+686</div>
+      <div class="hm-cell" style="background:rgba(255,159,10,0.25)">0.5</div>
+      <div class="hm-cell">—</div>
+      <div class="hm-cell" style="background:rgba(10,132,255,0.2)">9</div>
+
+      <div class="hm-pair">Gold</div>
+      <div class="hm-cell" style="background:rgba(255,69,58,0.4)">-2053</div>
+      <div class="hm-cell" style="background:rgba(255,159,10,0.25)">0.5</div>
+      <div class="hm-cell" style="background:rgba(10,132,255,0.3)">✓</div>
+      <div class="hm-cell" style="background:rgba(10,132,255,0.2)">9</div>
+
+      <div class="hm-pair">Silver</div>
+      <div class="hm-cell" style="background:rgba(48,209,88,0.2)">+253</div>
+      <div class="hm-cell" style="background:rgba(255,159,10,0.25)">0.5</div>
+      <div class="hm-cell" style="background:rgba(10,132,255,0.3)">✓</div>
+      <div class="hm-cell" style="background:rgba(10,132,255,0.2)">9</div>
+
+      <div class="hm-pair">CrudeOil</div>
+      <div class="hm-cell" style="background:rgba(48,209,88,0.15)">+96</div>
+      <div class="hm-cell" style="background:rgba(255,159,10,0.25)">0.5</div>
+      <div class="hm-cell" style="background:rgba(10,132,255,0.3)">✓</div>
+      <div class="hm-cell" style="background:rgba(255,69,58,0.25)">9</div>
+
+      <div class="hm-pair">AUD/USD</div>
+      <div class="hm-cell" style="background:rgba(48,209,88,0.1)">+22</div>
+      <div class="hm-cell" style="background:rgba(255,159,10,0.25)">0.5</div>
+      <div class="hm-cell">—</div>
+      <div class="hm-cell">—</div>
+    </div>
+  </div>
+</section>
+
+<!-- ═══ Phase 3: Situation Overview ═══ -->
+<div class="section-header">保有中 · 5ポジション</div>
+<div class="positions">
+  <div class="pos-card" onclick="alert('→ USD/JPY ボトムシート')">
+    <div class="pos-left">
+      <div class="pos-icon sell">S</div>
+      <div>
+        <div class="pos-pair">USD/JPY</div>
+        <div class="pos-detail">SELL @ 158.299</div>
+      </div>
+    </div>
+    <div class="pos-right">
+      <div class="pos-pnl red">-¥13</div>
+      <svg class="pos-spark" width="60" height="24" viewBox="0 0 60 24">
+        <polyline points="0,18 10,12 20,16 30,8 40,14 50,6 60,4" fill="none" stroke="#FF453A" stroke-width="1.5"/>
+      </svg>
+    </div>
+  </div>
+
+  <div class="pos-card">
+    <div class="pos-left">
+      <div class="pos-icon sell">S</div>
+      <div>
+        <div class="pos-pair">S&P 500</div>
+        <div class="pos-detail">SELL @ 6,576</div>
+      </div>
+    </div>
+    <div class="pos-right">
+      <div class="pos-pnl red">-¥7</div>
+      <svg class="pos-spark" width="60" height="24" viewBox="0 0 60 24">
+        <polyline points="0,12 15,12 30,12 45,12 60,12" fill="none" stroke="#48484A" stroke-width="1.5"/>
+      </svg>
+    </div>
+  </div>
+
+  <div class="pos-card">
+    <div class="pos-left">
+      <div class="pos-icon buy">B</div>
+      <div>
+        <div class="pos-pair">日経225</div>
+        <div class="pos-detail">BUY @ 51,911</div>
+      </div>
+    </div>
+    <div class="pos-right">
+      <div class="pos-pnl green">+¥24</div>
+      <svg class="pos-spark" width="60" height="24" viewBox="0 0 60 24">
+        <polyline points="0,20 15,16 30,12 45,8 60,4" fill="none" stroke="#30D158" stroke-width="1.5"/>
+      </svg>
+    </div>
+  </div>
+
+  <div class="pos-card">
+    <div class="pos-left">
+      <div class="pos-icon buy">B</div>
+      <div>
+        <div class="pos-pair">SOL</div>
+        <div class="pos-detail">BUY @ $91.26</div>
+      </div>
+    </div>
+    <div class="pos-right">
+      <div class="pos-pnl red">-¥1</div>
+      <svg class="pos-spark" width="60" height="24" viewBox="0 0 60 24">
+        <polyline points="0,8 15,12 30,18 45,14 60,16" fill="none" stroke="#FF453A" stroke-width="1.5"/>
+      </svg>
+    </div>
+  </div>
+
+  <div class="pos-card">
+    <div class="pos-left">
+      <div class="pos-icon sell">S</div>
+      <div>
+        <div class="pos-pair">銅</div>
+        <div class="pos-detail">SELL @ $5.42</div>
+      </div>
+    </div>
+    <div class="pos-right">
+      <div class="pos-pnl green">+¥6</div>
+      <svg class="pos-spark" width="60" height="24" viewBox="0 0 60 24">
+        <polyline points="0,6 15,10 30,8 45,14 60,18" fill="none" stroke="#30D158" stroke-width="1.5"/>
+      </svg>
+    </div>
+  </div>
+</div>
+
+<!-- Market Indicators -->
+<div class="section-header">市場指標</div>
+<div class="market-bar">
+  <div class="mkt">
+    <div class="mkt-value orange">27.3</div>
+    <div class="mkt-label">VIX</div>
+    <div class="mkt-change up">↑2.1</div>
+  </div>
+  <div class="mkt">
+    <div class="mkt-value">4.33%</div>
+    <div class="mkt-label">米10年債</div>
+    <div class="mkt-change down">↓0.02</div>
+  </div>
+  <div class="mkt">
+    <div class="mkt-value">52,252</div>
+    <div class="mkt-label">日経</div>
+    <div class="mkt-change up">+0.3%</div>
+  </div>
+  <div class="mkt">
+    <div class="mkt-value">6,581</div>
+    <div class="mkt-label">S&P500</div>
+    <div class="mkt-change down">-0.1%</div>
+  </div>
+</div>
+
+<!-- Waiting instruments -->
+<div class="section-header">待機銘柄</div>
+<div class="waiting">
+  <div class="wait-row"><span class="wait-pair">EUR/USD</span><span class="wait-price">1.160</span></div>
+  <div class="wait-row"><span class="wait-pair">GBP/USD</span><span class="wait-price">1.343</span></div>
+  <div class="wait-row"><span class="wait-pair">AUD/USD</span><span class="wait-price">0.699</span></div>
+  <div class="wait-row"><span class="wait-pair">NASDAQ</span><span class="wait-price">21,947</span></div>
+  <div class="wait-row"><span class="wait-pair">DAX</span><span class="wait-price">22,654</span></div>
+  <div class="wait-row"><span class="wait-pair">Gold</span><span class="wait-price">$4,408.8</span></div>
+  <div class="wait-row"><span class="wait-pair">Silver</span><span class="wait-price">$69.56</span></div>
+  <div class="wait-row"><span class="wait-pair">原油</span><span class="wait-price">$90.88</span></div>
+  <div class="wait-row"><span class="wait-pair">天然ガス</span><span class="wait-price">$2.93</span></div>
+</div>
+
+<div style="height:80px"></div>
+
+<!-- News Drawer Handle -->
+<div class="news-handle">
+  <div class="news-pill">
+    <span class="news-dot"></span>
+    ニュース · 30件
+    <span style="font-size:14px">↑</span>
+  </div>
+</div>
+
+<!-- Tab Bar -->
+<nav class="tab-bar">
+  <div class="tab active">
+    <span class="tab-icon">🏠</span>
+    <span class="tab-label" style="color:var(--blue)">ダッシュボード</span>
+  </div>
+  <div class="tab">
+    <span class="tab-icon">📊</span>
+    <span class="tab-label">統計</span>
+  </div>
+  <div class="tab">
+    <span class="tab-icon">🤖</span>
+    <span class="tab-label">AI・ニュース</span>
+  </div>
+  <div class="tab">
+    <span class="tab-icon">⚙️</span>
+    <span class="tab-label">戦略</span>
+  </div>
+  <div class="tab">
+    <span class="tab-icon">🔧</span>
+    <span class="tab-label">システム</span>
+  </div>
+</nav>
+
+</body>
+</html>

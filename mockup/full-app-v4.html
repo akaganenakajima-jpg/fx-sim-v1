@@ -1,0 +1,431 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>FX Sim v4 — Full App</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+:root{
+  --bg:#000;--surface:#1C1C1E;--card:#2C2C2E;--elevated:#3A3A3C;
+  --text:#F5F5F7;--secondary:#8E8E93;--tertiary:#48484A;
+  --green:#30D158;--red:#FF453A;--orange:#FF9F0A;--blue:#0A84FF;--yellow:#FFD60A;
+  --teal:#64D2FF;--purple:#BF5AF2;
+  --r:12px;--rs:8px;
+  font-family:-apple-system,BlinkMacSystemFont,'SF Pro Display','Hiragino Sans',sans-serif;
+  -webkit-font-smoothing:antialiased;
+}
+body{background:var(--bg);color:var(--text);font-size:15px;line-height:1.47;
+  padding-bottom:calc(72px + env(safe-area-inset-bottom,0px));overflow-x:hidden}
+
+/* ═══ Common ═══ */
+.sbar{display:flex;justify-content:space-between;align-items:center;padding:12px 16px 0;min-height:44px}
+.sbar-left{display:flex;align-items:center;gap:8px}
+.dot{width:8px;height:8px;border-radius:50%;box-shadow:0 0 6px currentColor}
+.dot.ok{background:var(--green);color:var(--green)}
+.sbar-status{font-size:11px;color:var(--secondary)}
+.sbar-time{font-size:13px;color:var(--tertiary)}
+.sec{font-size:11px;font-weight:600;color:var(--tertiary);text-transform:uppercase;letter-spacing:0.4px;padding:16px 16px 8px}
+.tab-panel{display:none}.tab-panel.active{display:block}
+
+/* ═══ Tab Bar ═══ */
+.tabs{position:fixed;bottom:0;left:0;right:0;
+  padding:8px 0 calc(8px + env(safe-area-inset-bottom,0px));
+  background:rgba(0,0,0,0.92);backdrop-filter:blur(24px);-webkit-backdrop-filter:blur(24px);
+  border-top:0.5px solid rgba(255,255,255,0.06);
+  display:flex;justify-content:space-around;z-index:100}
+.tab{display:flex;flex-direction:column;align-items:center;gap:2px;
+  padding:4px 0;min-width:48px;min-height:44px;justify-content:center;cursor:pointer;
+  -webkit-tap-highlight-color:transparent}
+.tab-i{font-size:20px;opacity:0.3;transition:opacity 0.2s}
+.tab-t{font-size:10px;color:var(--tertiary);font-weight:500;transition:color 0.2s}
+.tab.on .tab-i{opacity:1}.tab.on .tab-t{color:var(--blue)}
+
+/* ═══ Cards & Utilities ═══ */
+.card{margin:0 16px 8px;padding:16px;background:var(--surface);border-radius:var(--r)}
+.card-title{font-size:13px;font-weight:600;color:var(--secondary);margin-bottom:10px;text-transform:uppercase;letter-spacing:0.3px}
+.row{display:flex;justify-content:space-between;align-items:center;padding:10px 0;border-bottom:1px solid rgba(255,255,255,0.04)}
+.row:last-child{border-bottom:none}
+.row-label{font-size:13px;color:var(--secondary)}
+.row-value{font-size:14px;font-weight:600;font-variant-numeric:tabular-nums}
+.grid2{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.grid3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px}
+.stat-cell{padding:12px;background:var(--surface);border-radius:var(--rs);text-align:center}
+.stat-val{font-size:18px;font-weight:700;font-variant-numeric:tabular-nums}
+.stat-lbl{font-size:10px;color:var(--tertiary);margin-top:2px;text-transform:uppercase;letter-spacing:0.3px}
+.badge{display:inline-block;padding:2px 8px;border-radius:4px;font-size:10px;font-weight:600}
+.badge-green{background:rgba(48,209,88,0.15);color:var(--green)}
+.badge-red{background:rgba(255,69,58,0.15);color:var(--red)}
+.badge-blue{background:rgba(10,132,255,0.15);color:var(--blue)}
+.badge-orange{background:rgba(255,159,10,0.15);color:var(--orange)}
+.badge-gray{background:rgba(142,142,147,0.15);color:var(--secondary)}
+
+/* ═══ TAB 1: 今 ═══ */
+.hero{text-align:center;padding:24px 16px 0}
+.pnl{font-size:48px;font-weight:800;letter-spacing:-2px;line-height:1;font-variant-numeric:tabular-nums}
+.pnl.pos{color:var(--green)}.pnl.neg{color:var(--red);text-shadow:0 0 40px rgba(255,69,58,0.15)}
+.pnl-sub{font-size:13px;color:var(--secondary);margin-top:4px}
+.metrics{display:flex;gap:1px;margin:16px 16px 0}
+.m{flex:1;text-align:center;padding:8px 0;background:var(--surface)}
+.m:first-child{border-radius:var(--rs) 0 0 var(--rs)}.m:last-child{border-radius:0 var(--rs) var(--rs) 0}
+.m-val{font-size:14px;font-weight:600;font-variant-numeric:tabular-nums}
+.m-lbl{font-size:10px;color:var(--tertiary);text-transform:uppercase;letter-spacing:0.4px;margin-top:2px}
+.sig{margin:8px 16px 0;display:flex;align-items:center;gap:8px}
+.sig-track{flex:1;height:3px;background:var(--tertiary);border-radius:2px;overflow:hidden}
+.sig-fill{height:100%;border-radius:2px;background:linear-gradient(90deg,var(--orange),var(--green))}
+.sig-lbl{font-size:11px;color:var(--tertiary);white-space:nowrap}
+.story{margin:16px 16px 0;padding:16px;background:var(--surface);border-radius:var(--r);border-left:3px solid var(--blue)}
+.story-text{font-size:14px;line-height:1.6;color:var(--secondary)}
+.story-text b{color:var(--text);font-weight:600}
+.story-text .g{color:var(--green)}.story-text .r{color:var(--red)}.story-text .o{color:var(--orange)}
+.drivers{display:flex;gap:8px;margin-top:12px}
+.drv{flex:1;padding:10px 12px;background:var(--bg);border-radius:var(--rs);cursor:pointer;min-height:44px}
+.drv-tag{font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:0.5px;margin-bottom:2px}
+.drv-tag.profit{color:var(--green)}.drv-tag.loss{color:var(--red)}
+.drv-pair{font-size:13px;font-weight:600}.drv-pnl{font-size:18px;font-weight:700;font-variant-numeric:tabular-nums;margin:2px 0}
+.drv-reason{font-size:11px;color:var(--tertiary)}
+.chips{display:flex;flex-wrap:wrap;gap:6px;margin-top:10px}
+.chip{padding:6px 12px;border-radius:14px;font-size:11px;font-weight:500;cursor:pointer;min-height:28px;display:inline-flex;align-items:center}
+.chip.w{background:rgba(255,159,10,0.1);color:var(--orange)}.chip.i{background:rgba(10,132,255,0.1);color:var(--blue)}
+.hm{margin:12px 16px 0;background:var(--surface);border-radius:var(--rs);padding:8px;overflow-x:auto}
+.hm-g{display:grid;grid-template-columns:72px repeat(4,1fr);gap:2px;font-size:11px}
+.hm-h{padding:4px 6px;color:var(--tertiary);font-weight:600;text-align:center;font-size:10px}.hm-h:first-child{text-align:left}
+.hm-p{padding:4px 6px;font-weight:500;white-space:nowrap}.hm-c{padding:4px 6px;text-align:center;border-radius:3px;font-variant-numeric:tabular-nums}
+/* News feed */
+.news-feed{margin:0 16px}
+.nf-item{padding:14px 16px;background:var(--surface);border-radius:var(--rs);margin-bottom:8px;border-left:3px solid var(--tertiary);cursor:pointer}
+.nf-item.nf-emergency{border-left-color:var(--red)}.nf-item.nf-trend{border-left-color:var(--orange)}.nf-item.nf-info{border-left-color:var(--tertiary)}
+.nf-header{display:flex;justify-content:space-between;align-items:center;margin-bottom:6px}
+.nf-badge{font-size:10px;font-weight:700;padding:2px 8px;border-radius:4px}
+.nf-badge-emergency{background:rgba(255,69,58,0.15);color:var(--red)}.nf-badge-trend{background:rgba(255,159,10,0.15);color:var(--orange)}.nf-badge-info{background:rgba(142,142,147,0.15);color:var(--secondary)}
+.nf-time{font-size:11px;color:var(--tertiary)}
+.nf-headline{font-size:14px;font-weight:600;line-height:1.4;margin-bottom:8px}
+.nf-ai{display:flex;gap:6px;align-items:flex-start;margin-bottom:6px;padding:8px 10px;background:rgba(10,132,255,0.06);border-radius:6px}
+.nf-ai-label{font-size:11px;color:var(--blue);white-space:nowrap;font-weight:600;flex-shrink:0}
+.nf-ai-text{font-size:12px;color:var(--secondary);line-height:1.5}
+.nf-action{display:flex;gap:6px;align-items:center}.nf-action-icon{font-size:12px;color:var(--tertiary)}.nf-action-text{font-size:12px;color:var(--secondary)}.nf-action-text b{font-weight:600}
+/* Positions */
+.positions{margin:0 16px}
+.pos{display:flex;align-items:center;gap:12px;padding:12px 16px;background:var(--surface);border-radius:var(--rs);margin-bottom:8px;cursor:pointer;position:relative;overflow:hidden;min-height:56px}
+.pos::before{content:'';position:absolute;left:0;top:0;bottom:0;width:3px}
+.pos.win::before{background:var(--green)}.pos.lose::before{background:var(--red)}
+.pos-dir{width:32px;height:32px;border-radius:8px;display:grid;place-items:center;font-size:12px;font-weight:800;flex-shrink:0}
+.pos-dir.b{background:rgba(48,209,88,0.12);color:var(--green)}.pos-dir.s{background:rgba(255,69,58,0.12);color:var(--red)}
+.pos-body{flex:1;min-width:0}
+.pos-top{display:flex;justify-content:space-between;align-items:baseline}
+.pos-pair{font-size:15px;font-weight:600}
+.pos-pnl{font-size:17px;font-weight:700;font-variant-numeric:tabular-nums}.pos-pnl.pos{color:var(--green)}.pos-pnl.neg{color:var(--red)}
+.pos-bot{display:flex;justify-content:space-between;align-items:center;margin-top:3px}
+.pos-meta{font-size:11px;color:var(--tertiary)}.pos-meta .time-warn{color:var(--orange)}
+/* Market + Waiting */
+.mkt-bar{display:grid;grid-template-columns:repeat(4,1fr);gap:4px;margin:0 16px}
+.mkt{padding:8px;background:var(--surface);border-radius:var(--rs);text-align:center}
+.mkt-v{font-size:14px;font-weight:600;font-variant-numeric:tabular-nums}.mkt-l{font-size:10px;color:var(--tertiary);margin-top:2px}
+.mkt-d{font-size:11px}.mkt-d.up{color:var(--green)}.mkt-d.dn{color:var(--red)}
+.wait-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:4px;margin:8px 16px 0}
+.wt{padding:8px;background:var(--surface);border-radius:var(--rs)}.wt-pair{font-size:12px;font-weight:500}.wt-price{font-size:11px;color:var(--secondary);font-variant-numeric:tabular-nums;margin-top:2px}
+
+/* ═══ TAB 2: 統計 ═══ */
+.chart-wrap{margin:8px 16px;padding:16px;background:var(--surface);border-radius:var(--r);min-height:200px;position:relative}
+.chart-title{font-size:13px;font-weight:600;color:var(--secondary);margin-bottom:12px}
+.chart-svg{width:100%;height:160px}
+.perf-card{margin:0 16px 8px;padding:14px 16px;background:var(--surface);border-radius:var(--rs);display:flex;justify-content:space-between;align-items:center}
+.perf-left{display:flex;align-items:center;gap:10px}
+.perf-pair{font-size:14px;font-weight:600}
+.perf-wr{font-size:12px;color:var(--secondary)}
+.perf-bar{width:60px;height:4px;background:var(--tertiary);border-radius:2px;overflow:hidden;margin-top:4px}
+.perf-bar-fill{height:100%;border-radius:2px}
+.perf-right{text-align:right}
+.perf-pnl{font-size:16px;font-weight:700;font-variant-numeric:tabular-nums}
+.perf-trades{font-size:11px;color:var(--tertiary)}
+/* Strategy matrix */
+.matrix{margin:0 16px 8px;overflow-x:auto}
+.matrix table{width:100%;border-collapse:collapse;font-size:11px}
+.matrix th{padding:6px 8px;text-align:left;color:var(--tertiary);font-weight:600;border-bottom:1px solid var(--tertiary)}
+.matrix td{padding:6px 8px;border-bottom:1px solid rgba(255,255,255,0.04);font-variant-numeric:tabular-nums}
+.matrix .wr{font-weight:600}
+
+/* ═══ TAB 3: AI ═══ */
+.ai-kpi{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin:8px 16px}
+.timeline{margin:0 16px}
+.tl-item{padding:12px 16px;background:var(--surface);border-radius:var(--rs);margin-bottom:6px;border-left:3px solid var(--tertiary)}
+.tl-item.buy{border-left-color:var(--green)}.tl-item.sell{border-left-color:var(--red)}.tl-item.review{border-left-color:var(--purple)}
+.tl-header{display:flex;justify-content:space-between;align-items:center;margin-bottom:4px}
+.tl-pair{font-size:14px;font-weight:600}
+.tl-time{font-size:11px;color:var(--tertiary)}
+.tl-body{font-size:12px;color:var(--secondary);line-height:1.5}
+.tl-outcome{margin-top:6px;font-size:12px;font-weight:600}
+
+/* ═══ TAB 4: 戦略 ═══ */
+.param-card{margin:0 16px 8px;background:var(--surface);border-radius:var(--rs);overflow:hidden}
+.param-header{padding:12px 16px;display:flex;justify-content:space-between;align-items:center;cursor:pointer}
+.param-pair{font-size:15px;font-weight:600}
+.param-ver{font-size:11px;color:var(--blue)}
+.param-grid{display:none;padding:0 16px 12px}
+.param-grid.open{display:block}
+.param-group{font-size:10px;font-weight:600;color:var(--blue);text-transform:uppercase;letter-spacing:0.4px;padding:8px 0 4px;border-bottom:1px solid var(--tertiary)}
+.param-row{display:flex;justify-content:space-between;padding:4px 0;font-size:12px}
+.param-key{color:var(--tertiary)}.param-val{font-weight:500;font-variant-numeric:tabular-nums}
+
+/* ═══ TAB 5: システム ═══ */
+.risk-card{margin:0 16px 8px;padding:16px;background:var(--surface);border-radius:var(--r)}
+.risk-title{font-size:14px;font-weight:600;margin-bottom:10px;display:flex;align-items:center;gap:8px}
+.risk-row{display:flex;justify-content:space-between;padding:6px 0;border-bottom:1px solid rgba(255,255,255,0.04);font-size:13px}
+.risk-row:last-child{border-bottom:none}
+.log-item{padding:10px 16px;border-bottom:1px solid rgba(255,255,255,0.04);font-size:12px}
+.log-header{display:flex;gap:8px;align-items:center;margin-bottom:2px}
+.log-level{font-size:10px;font-weight:700;padding:1px 6px;border-radius:3px}
+.log-level.info{background:rgba(10,132,255,0.15);color:var(--blue)}
+.log-level.warn{background:rgba(255,159,10,0.15);color:var(--orange)}
+.log-level.error{background:rgba(255,69,58,0.15);color:var(--red)}
+.log-cat{font-size:10px;color:var(--tertiary)}.log-time{font-size:10px;color:var(--tertiary);margin-left:auto}
+.log-msg{color:var(--secondary);line-height:1.4}
+</style>
+</head>
+<body>
+
+<!-- Status -->
+<div class="sbar">
+  <div class="sbar-left"><div class="dot ok"></div><span class="sbar-status">正常稼働</span></div>
+  <span class="sbar-time">20:58</span>
+</div>
+
+<!-- ═══════════ TAB 1: 今 ═══════════ -->
+<div class="tab-panel active" id="p-now">
+  <section class="hero"><div class="pnl neg">-¥208</div><div class="pnl-sub">今日の損益</div></section>
+  <div class="metrics">
+    <div class="m"><div class="m-val">¥9,792</div><div class="m-lbl">残高</div></div>
+    <div class="m"><div class="m-val" style="color:var(--red)">-2.1%</div><div class="m-lbl">ROI</div></div>
+    <div class="m"><div class="m-val">52.1%</div><div class="m-lbl">勝率</div></div>
+    <div class="m"><div class="m-val">1.02</div><div class="m-lbl">PF</div></div>
+    <div class="m"><div class="m-val">499</div><div class="m-lbl">取引</div></div>
+  </div>
+  <div class="sig"><div class="sig-track"><div class="sig-fill" style="width:48%"></div></div><span class="sig-lbl">有意性 48%</span></div>
+  <div class="story">
+    <div class="story-text"><b class="g">Nikkei225</b>が<b class="g">+801円</b>(TP)で利益の柱。<b class="r">Gold</b>が<b class="r">-479円</b>(SL)で最大損失。<span class="o">VIX=27</span>でSL幅縮小中。PR3件実行。</div>
+    <div class="drivers">
+      <div class="drv"><div class="drv-tag profit">利益TOP</div><div class="drv-pair">Nikkei225</div><div class="drv-pnl" style="color:var(--green)">+801</div><div class="drv-reason">TP · ATR×3.3</div></div>
+      <div class="drv"><div class="drv-tag loss">損失TOP</div><div class="drv-pair">Gold</div><div class="drv-pnl" style="color:var(--red)">-479</div><div class="drv-reason">SL · VIX警戒</div></div>
+    </div>
+    <div class="chips"><span class="chip w">VIX=27</span><span class="chip i">PR 3件</span><span class="chip i">ニュース 2件</span><span class="chip w">SL幅縮小中</span></div>
+  </div>
+  <div class="hm"><div class="hm-g">
+    <div class="hm-h">銘柄</div><div class="hm-h">PnL</div><div class="hm-h">VIX</div><div class="hm-h">PR</div><div class="hm-h">News</div>
+    <div class="hm-p">Nikkei</div><div class="hm-c" style="background:rgba(48,209,88,0.3)">+686</div><div class="hm-c" style="background:rgba(255,159,10,0.2)">0.5</div><div class="hm-c">—</div><div class="hm-c" style="background:rgba(10,132,255,0.15)">9</div>
+    <div class="hm-p">Gold</div><div class="hm-c" style="background:rgba(255,69,58,0.35)">-2053</div><div class="hm-c" style="background:rgba(255,159,10,0.2)">0.5</div><div class="hm-c" style="background:rgba(10,132,255,0.25)">✓</div><div class="hm-c" style="background:rgba(10,132,255,0.15)">9</div>
+    <div class="hm-p">Silver</div><div class="hm-c" style="background:rgba(48,209,88,0.2)">+253</div><div class="hm-c" style="background:rgba(255,159,10,0.2)">0.5</div><div class="hm-c" style="background:rgba(10,132,255,0.25)">✓</div><div class="hm-c" style="background:rgba(10,132,255,0.15)">9</div>
+  </div></div>
+  <div class="sec">ニュース速報</div>
+  <div class="news-feed">
+    <div class="nf-item nf-emergency"><div class="nf-header"><span class="nf-badge nf-badge-emergency">⚡ 緊急</span><span class="nf-time">32分前</span></div><div class="nf-headline">原油上昇、ブレント100ドル超え回復</div><div class="nf-ai"><span class="nf-ai-label">🧠 AI</span><span class="nf-ai-text">CrudeOil BUY推奨 score=92</span></div><div class="nf-action"><span class="nf-action-icon">→</span><span class="nf-action-text"><b style="color:var(--green)">CrudeOil BUY</b> @ $90.88</span></div></div>
+    <div class="nf-item nf-trend"><div class="nf-header"><span class="nf-badge nf-badge-trend">📊 トレンド</span><span class="nf-time">1h前</span></div><div class="nf-headline">経済総合PMI 51.0に低下</div><div class="nf-ai"><span class="nf-ai-label">🧠 AI</span><span class="nf-ai-text">EUR/USD 売り圧力 score=78</span></div><div class="nf-action"><span class="nf-action-icon">→</span><span class="nf-action-text"><b style="color:var(--red)">EUR/USD SELL</b> @ 1.160</span></div></div>
+  </div>
+  <div class="sec">保有中 · 5件 · 含み <span style="color:var(--green)">+¥9</span></div>
+  <div class="positions">
+    <div class="pos lose"><div class="pos-dir s">S</div><div class="pos-body"><div class="pos-top"><span class="pos-pair">USD/JPY</span><span class="pos-pnl neg">-¥13</span></div><div class="pos-bot"><span class="pos-meta">158.299→565 · <span class="time-warn">⏰11h</span> · RR1.8</span><svg width="48" height="16" viewBox="0 0 48 16"><polyline points="0,14 8,9 16,12 24,5 32,10 40,3 48,1" fill="none" stroke="#FF453A" stroke-width="1.2" stroke-linecap="round"/></svg></div></div></div>
+    <div class="pos win"><div class="pos-dir b">B</div><div class="pos-body"><div class="pos-top"><span class="pos-pair">日経225</span><span class="pos-pnl pos">+¥24</span></div><div class="pos-bot"><span class="pos-meta">51,911→52,252 · 6h · RR2.2</span><svg width="48" height="16" viewBox="0 0 48 16"><polyline points="0,14 12,10 24,8 36,4 48,1" fill="none" stroke="#30D158" stroke-width="1.2" stroke-linecap="round"/></svg></div></div></div>
+    <div class="pos win"><div class="pos-dir s">S</div><div class="pos-body"><div class="pos-top"><span class="pos-pair">銅</span><span class="pos-pnl pos">+¥6</span></div><div class="pos-bot"><span class="pos-meta">$5.42→41 · 3h · RR2.0</span><svg width="48" height="16" viewBox="0 0 48 16"><polyline points="0,2 12,6 24,4 36,10 48,14" fill="none" stroke="#30D158" stroke-width="1.2" stroke-linecap="round"/></svg></div></div></div>
+  </div>
+  <div class="sec">市場</div>
+  <div class="mkt-bar">
+    <div class="mkt"><div class="mkt-v" style="color:var(--orange)">27.3</div><div class="mkt-l">VIX</div><div class="mkt-d up">↑2.1</div></div>
+    <div class="mkt"><div class="mkt-v">4.33%</div><div class="mkt-l">US10Y</div><div class="mkt-d dn">↓0.02</div></div>
+    <div class="mkt"><div class="mkt-v">52,252</div><div class="mkt-l">日経</div><div class="mkt-d up">+0.3%</div></div>
+    <div class="mkt"><div class="mkt-v">6,581</div><div class="mkt-l">S&P</div><div class="mkt-d dn">-0.1%</div></div>
+  </div>
+</div>
+
+<!-- ═══════════ TAB 2: 統計 ═══════════ -->
+<div class="tab-panel" id="p-stats">
+  <div class="sec">エクイティカーブ</div>
+  <div class="chart-wrap">
+    <svg class="chart-svg" viewBox="0 0 340 160">
+      <polyline points="0,140 20,130 40,120 60,110 80,100 100,105 120,95 140,80 160,90 180,85 200,70 220,75 240,60 260,55 280,50 300,45 320,40 340,35" fill="none" stroke="#30D158" stroke-width="2" stroke-linecap="round"/>
+      <line x1="0" y1="100" x2="340" y2="100" stroke="#48484A" stroke-width="0.5" stroke-dasharray="4"/>
+      <text x="0" y="98" fill="#48484A" font-size="9">¥10,000</text>
+      <circle cx="340" cy="35" r="3" fill="#30D158"/>
+      <text x="310" y="28" fill="#30D158" font-size="10" font-weight="600">¥9,792</text>
+    </svg>
+  </div>
+
+  <div class="sec">パフォーマンス</div>
+  <div class="grid2" style="margin:0 16px 12px">
+    <div class="stat-cell"><div class="stat-val">52.1%</div><div class="stat-lbl">勝率</div></div>
+    <div class="stat-cell"><div class="stat-val">1.02</div><div class="stat-lbl">PF</div></div>
+    <div class="stat-cell"><div class="stat-val" style="color:var(--red)">-17.9%</div><div class="stat-lbl">最大DD</div></div>
+    <div class="stat-cell"><div class="stat-val">0.12</div><div class="stat-lbl">シャープ</div></div>
+    <div class="stat-cell"><div class="stat-val">2.24</div><div class="stat-lbl">平均RR</div></div>
+    <div class="stat-cell"><div class="stat-val">499</div><div class="stat-lbl">総取引</div></div>
+  </div>
+
+  <div class="sec">手法 × 環境 マトリクス</div>
+  <div class="matrix"><table>
+    <tr><th>手法</th><th>Trend</th><th>Range</th><th>Volatile</th></tr>
+    <tr><td>mean_rev</td><td class="wr" style="color:var(--green)">54%</td><td class="wr" style="color:var(--green)">56%</td><td class="wr" style="color:var(--red)">41%</td></tr>
+    <tr><td>trend_fol</td><td class="wr" style="color:var(--green)">58%</td><td class="wr" style="color:var(--red)">38%</td><td class="wr" style="color:var(--orange)">49%</td></tr>
+  </table></div>
+
+  <div class="sec">銘柄別成績</div>
+  <div class="perf-card"><div class="perf-left"><div><div class="perf-pair">USD/JPY</div><div class="perf-wr">58% · RR 2.40</div><div class="perf-bar"><div class="perf-bar-fill" style="width:58%;background:var(--green)"></div></div></div></div><div class="perf-right"><div class="perf-pnl" style="color:var(--green)">+¥842</div><div class="perf-trades">45取引</div></div></div>
+  <div class="perf-card"><div class="perf-left"><div><div class="perf-pair">Gold</div><div class="perf-wr">49% · RR 2.40</div><div class="perf-bar"><div class="perf-bar-fill" style="width:49%;background:var(--red)"></div></div></div></div><div class="perf-right"><div class="perf-pnl" style="color:var(--red)">-¥1,312</div><div class="perf-trades">62取引</div></div></div>
+  <div class="perf-card"><div class="perf-left"><div><div class="perf-pair">Nikkei225</div><div class="perf-wr">55% · RR 2.25</div><div class="perf-bar"><div class="perf-bar-fill" style="width:55%;background:var(--green)"></div></div></div></div><div class="perf-right"><div class="perf-pnl" style="color:var(--green)">+¥623</div><div class="perf-trades">38取引</div></div></div>
+  <div class="perf-card"><div class="perf-left"><div><div class="perf-pair">CrudeOil</div><div class="perf-wr">53% · RR 2.20</div><div class="perf-bar"><div class="perf-bar-fill" style="width:53%;background:var(--green)"></div></div></div></div><div class="perf-right"><div class="perf-pnl" style="color:var(--green)">+¥195</div><div class="perf-trades">28取引</div></div></div>
+</div>
+
+<!-- ═══════════ TAB 3: AI ═══════════ -->
+<div class="tab-panel" id="p-ai">
+  <div class="sec">AI パフォーマンス</div>
+  <div class="ai-kpi">
+    <div class="stat-cell"><div class="stat-val">52%</div><div class="stat-lbl">AI的中率</div></div>
+    <div class="stat-cell"><div class="stat-val">0.28</div><div class="stat-lbl">Brierスコア</div></div>
+    <div class="stat-cell"><div class="stat-val">8</div><div class="stat-lbl">Param Review</div></div>
+    <div class="stat-cell"><div class="stat-val">24</div><div class="stat-lbl">ニュース分析</div></div>
+  </div>
+
+  <div class="sec">AI判断タイムライン</div>
+  <div class="timeline">
+    <div class="tl-item review">
+      <div class="tl-header"><span class="tl-pair">🧠 Gold — Param Review</span><span class="tl-time">2h前</span></div>
+      <div class="tl-body">「RRが2.32と目標2.0超過。TP倍率を10%増加し利益機会拡大。SL倍率は維持。」<br>atr_tp: 3.3→3.6 · strategy: mean_reversion維持</div>
+      <div class="tl-outcome" style="color:var(--blue)">パラメーター v2 → v3 に更新</div>
+    </div>
+    <div class="tl-item sell">
+      <div class="tl-header"><span class="tl-pair">EUR/USD SELL</span><span class="tl-time">1h前</span></div>
+      <div class="tl-body">[PATH_B] 総合・サービス業PMI低下がユーロ売り圧力。score=78</div>
+      <div class="tl-outcome" style="color:var(--red)">→ SELL @ 1.160 · TP 1.155 · SL 1.163</div>
+    </div>
+    <div class="tl-item buy">
+      <div class="tl-header"><span class="tl-pair">CrudeOil BUY</span><span class="tl-time">32m前</span></div>
+      <div class="tl-body">[PATH_B] 原油100ドル超え回復。上昇トレンド継続期待。score=92</div>
+      <div class="tl-outcome" style="color:var(--green)">→ BUY @ $90.88 · TP $93.38 · SL $90.38</div>
+    </div>
+    <div class="tl-item review">
+      <div class="tl-header"><span class="tl-pair">🧠 Silver — Param Review</span><span class="tl-time">3h前</span></div>
+      <div class="tl-body">「勝率54%でPF=1.15。adx_min を22→26に引き上げてエントリー精度向上。」</div>
+      <div class="tl-outcome" style="color:var(--blue)">パラメーター v1 → v2 に更新</div>
+    </div>
+  </div>
+
+  <div class="sec">ニュース × 銘柄 因果マップ</div>
+  <div class="card">
+    <div class="row"><span class="row-label">原油100ドル超え</span><span class="badge badge-green">CrudeOil BUY</span></div>
+    <div class="row"><span class="row-label">PMI低下 51.0</span><span class="badge badge-red">EUR/USD SELL</span></div>
+    <div class="row"><span class="row-label">日銀据え置き</span><span class="badge badge-gray">影響なし</span></div>
+    <div class="row"><span class="row-label">米CPI予想上回る</span><span class="badge badge-orange">USD/JPY SL縮小</span></div>
+  </div>
+</div>
+
+<!-- ═══════════ TAB 4: 戦略 ═══════════ -->
+<div class="tab-panel" id="p-strategy">
+  <div class="sec">ティア分類</div>
+  <div class="grid2" style="margin:0 16px 12px">
+    <div class="stat-cell"><div class="stat-val" style="color:var(--green)">A ×1.0</div><div class="stat-lbl">USD/JPY, Gold, EUR</div></div>
+    <div class="stat-cell"><div class="stat-val" style="color:var(--blue)">B ×0.7</div><div class="stat-lbl">Nikkei, S&P, GBP, AUD</div></div>
+    <div class="stat-cell"><div class="stat-val" style="color:var(--orange)">C ×0.5</div><div class="stat-lbl">Crude, NatGas, Cu等</div></div>
+    <div class="stat-cell"><div class="stat-val" style="color:var(--tertiary)">D ×0.3</div><div class="stat-lbl">SOL/USD</div></div>
+  </div>
+
+  <div class="sec">ロジックパラメーター</div>
+  <div class="param-card">
+    <div class="param-header" onclick="this.nextElementSibling.classList.toggle('open')">
+      <span class="param-pair">USD/JPY</span>
+      <span class="param-ver">v2 · <span style="color:var(--green)">UPGRADED</span></span>
+    </div>
+    <div class="param-grid">
+      <div class="param-group">エントリー基本</div>
+      <div class="param-row"><span class="param-key">RSI 売/買</span><span class="param-val">35 / 65</span></div>
+      <div class="param-row"><span class="param-key">ADX最小</span><span class="param-val">30</span></div>
+      <div class="param-row"><span class="param-key">TP倍率</span><span class="param-val">3.6</span></div>
+      <div class="param-row"><span class="param-key">SL倍率</span><span class="param-val">1.5</span></div>
+      <div class="param-group">スコアリング重み</div>
+      <div class="param-row"><span class="param-key">w(RSI)</span><span class="param-val">0.35</span></div>
+      <div class="param-row"><span class="param-key">w(ER)</span><span class="param-val">0.25</span></div>
+      <div class="param-row"><span class="param-key">w(MTF)</span><span class="param-val">0.20</span></div>
+      <div class="param-row"><span class="param-key">w(BB)</span><span class="param-val">0.10</span></div>
+      <div class="param-row"><span class="param-key">最低スコア</span><span class="param-val">0.30</span></div>
+      <div class="param-group">クローズ調整</div>
+      <div class="param-row"><span class="param-key">VIX TP倍率</span><span class="param-val">1.00</span></div>
+      <div class="param-row"><span class="param-key">VIX SL倍率</span><span class="param-val">1.00</span></div>
+      <div class="param-row"><span class="param-key">マクロSL</span><span class="param-val">1.00</span></div>
+      <div class="param-group">ポジション管理</div>
+      <div class="param-row"><span class="param-key">最大保有</span><span class="param-val">480分</span></div>
+      <div class="param-row"><span class="param-key">クールダウン</span><span class="param-val">5分</span></div>
+      <div class="param-row"><span class="param-key">日次上限</span><span class="param-val">5回</span></div>
+      <div class="param-row"><span class="param-key">TP1比率</span><span class="param-val">0.50</span></div>
+      <div class="param-group">戦略</div>
+      <div class="param-row"><span class="param-key">戦略</span><span class="param-val">mean_reversion</span></div>
+      <div class="param-row"><span class="param-key">最小RR</span><span class="param-val">1.50</span></div>
+    </div>
+  </div>
+  <div class="param-card">
+    <div class="param-header" onclick="this.nextElementSibling.classList.toggle('open')">
+      <span class="param-pair">Gold</span>
+      <span class="param-ver">v2 · <span style="color:var(--green)">UPGRADED</span></span>
+    </div>
+    <div class="param-grid">
+      <div class="param-group">エントリー基本</div>
+      <div class="param-row"><span class="param-key">RSI 売/買</span><span class="param-val">30 / 70</span></div>
+      <div class="param-row"><span class="param-key">ADX最小</span><span class="param-val">24</span></div>
+      <div class="param-row"><span class="param-key">TP倍率</span><span class="param-val">3.6</span></div>
+      <div class="param-row"><span class="param-key">SL倍率</span><span class="param-val">1.5</span></div>
+    </div>
+  </div>
+  <div class="param-card"><div class="param-header" onclick="this.nextElementSibling.classList.toggle('open')"><span class="param-pair">Nikkei225</span><span class="param-ver">v2</span></div><div class="param-grid"><div class="param-group">エントリー基本</div><div class="param-row"><span class="param-key">RSI 売/買</span><span class="param-val">38 / 62</span></div></div></div>
+  <div class="param-card"><div class="param-header" onclick="this.nextElementSibling.classList.toggle('open')"><span class="param-pair">S&P500</span><span class="param-ver">v2</span></div><div class="param-grid"><div class="param-group">エントリー基本</div><div class="param-row"><span class="param-key">RSI 売/買</span><span class="param-val">38 / 62</span></div></div></div>
+</div>
+
+<!-- ═══════════ TAB 5: システム ═══════════ -->
+<div class="tab-panel" id="p-sys">
+  <div class="sec">RiskGuard</div>
+  <div class="risk-card">
+    <div class="risk-title"><div class="dot ok" style="width:6px;height:6px"></div>RiskGuard 正常</div>
+    <div class="risk-row"><span>DD レベル</span><span style="color:var(--green)">NORMAL (1.8%)</span></div>
+    <div class="risk-row"><span>キルスイッチ</span><span style="color:var(--green)">OFF</span></div>
+    <div class="risk-row"><span>本日損失</span><span>¥208 / ¥2,000</span></div>
+    <div class="risk-row"><span>OPENポジション</span><span>5 / 10</span></div>
+    <div class="risk-row"><span>ロット倍率</span><span>×1.0</span></div>
+  </div>
+
+  <div class="sec">Cron タイミング</div>
+  <div class="grid3" style="margin:0 16px 12px">
+    <div class="stat-cell"><div class="stat-val">3.2s</div><div class="stat-lbl">Fetch</div></div>
+    <div class="stat-cell"><div class="stat-val">1.8s</div><div class="stat-lbl">TP/SL</div></div>
+    <div class="stat-cell"><div class="stat-val">2.1s</div><div class="stat-lbl">Logic</div></div>
+    <div class="stat-cell"><div class="stat-val">4.5s</div><div class="stat-lbl">PathB</div></div>
+    <div class="stat-cell"><div class="stat-val">11.6s</div><div class="stat-lbl">Total</div></div>
+    <div class="stat-cell"><div class="stat-val" style="color:var(--green)">94,175</div><div class="stat-lbl">実行回数</div></div>
+  </div>
+
+  <div class="sec">システムログ</div>
+  <div style="margin:0 16px">
+    <div class="log-item"><div class="log-header"><span class="log-level info">INFO</span><span class="log-cat">FLOW</span><span class="log-time">20:58</span></div><div class="log-msg">PATH_B完了</div></div>
+    <div class="log-item"><div class="log-header"><span class="log-level info">INFO</span><span class="log-cat">LOGIC</span><span class="log-time">20:58</span></div><div class="log-msg">LOGIC完了: 0件エントリー / 16件スキップ</div></div>
+    <div class="log-item"><div class="log-header"><span class="log-level info">INFO</span><span class="log-cat">POSITION</span><span class="log-time">20:45</span></div><div class="log-msg">TP決済: Nikkei225 BUY PnL +801</div></div>
+    <div class="log-item"><div class="log-header"><span class="log-level warn">WARN</span><span class="log-cat">SANITY</span><span class="log-time">20:42</span></div><div class="log-msg">LOGIC TP/SL異常: NatGas SELL</div></div>
+    <div class="log-item"><div class="log-header"><span class="log-level info">INFO</span><span class="log-cat">NEWS</span><span class="log-time">20:30</span></div><div class="log-msg">採用率 3%: 1件採用 / 30件処理</div></div>
+    <div class="log-item"><div class="log-header"><span class="log-level info">INFO</span><span class="log-cat">PARAM</span><span class="log-time">19:15</span></div><div class="log-msg">Param Review: Gold v1→v2 (tp:3.3→3.6)</div></div>
+    <div class="log-item"><div class="log-header"><span class="log-level error">ERROR</span><span class="log-cat">API</span><span class="log-time">18:30</span></div><div class="log-msg">Yahoo Finance timeout: ^GSPC</div></div>
+  </div>
+</div>
+
+<!-- ═══ Tab Bar ═══ -->
+<nav class="tabs">
+  <div class="tab on" onclick="sw('p-now',this)"><span class="tab-i">📍</span><span class="tab-t" style="color:var(--blue)">今</span></div>
+  <div class="tab" onclick="sw('p-stats',this)"><span class="tab-i">📊</span><span class="tab-t">統計</span></div>
+  <div class="tab" onclick="sw('p-ai',this)"><span class="tab-i">🧠</span><span class="tab-t">AI</span></div>
+  <div class="tab" onclick="sw('p-strategy',this)"><span class="tab-i">⚙️</span><span class="tab-t">戦略</span></div>
+  <div class="tab" onclick="sw('p-sys',this)"><span class="tab-i">🔧</span><span class="tab-t">系統</span></div>
+</nav>
+
+<script>
+function sw(id,el){
+  document.querySelectorAll('.tab-panel').forEach(function(p){p.classList.remove('active')});
+  document.getElementById(id).classList.add('active');
+  document.querySelectorAll('.tab').forEach(function(t){t.classList.remove('on');t.querySelector('.tab-t').style.color=''});
+  el.classList.add('on');el.querySelector('.tab-t').style.color='var(--blue)';
+  window.scrollTo(0,0);
+}
+</script>
+
+</body>
+</html>

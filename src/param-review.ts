@@ -165,6 +165,37 @@ function buildReviewPrompt(
     `  entry_score_min: ${params.entry_score_min}（エントリー最低スコア）`,
     `  min_rr_ratio: ${params.min_rr_ratio}（最小RR比）`,
     ``,
+    `【現在パラメーター（ポジション管理 / セッション / レビュー設定）】`,
+    `  max_hold_minutes: ${params.max_hold_minutes}（最大保有時間、分）`,
+    `  cooldown_after_sl: ${params.cooldown_after_sl}（SL後クールダウン、分）`,
+    `  consecutive_loss_shrink: ${params.consecutive_loss_shrink}（N連敗でロット50%縮小）`,
+    `  daily_max_entries: ${params.daily_max_entries}（1日最大エントリー回数）`,
+    `  trailing_activation_atr: ${params.trailing_activation_atr}（トレイリング開始ATR倍）`,
+    `  trailing_distance_atr: ${params.trailing_distance_atr}（トレイリング追従ATR倍）`,
+    `  tp1_ratio: ${params.tp1_ratio}（TP1分割決済比率、0.3〜0.7）`,
+    `  session_start_utc: ${params.session_start_utc}（取引開始UTC時）`,
+    `  session_end_utc: ${params.session_end_utc}（取引終了UTC時）`,
+    `  review_min_trades: ${params.review_min_trades}（レビュー最低サンプル数）`,
+    ``,
+    `【現在パラメーター（基本テクニカル期間）】`,
+    `  rsi_period: ${params.rsi_period}（RSI計算期間、10〜30）`,
+    `  adx_period: ${params.adx_period}（ER計算期間、10〜30）`,
+    `  atr_period: ${params.atr_period}（ATR計算期間、10〜30）`,
+    ``,
+    `【現在パラメーター（環境フィルター）】`,
+    `  vix_max: ${params.vix_max}（VIX上限。超過で全スキップ、20〜60）`,
+    `  require_trend_align: ${params.require_trend_align}（0=不要、1=上位足トレンド一致必須）`,
+    `  regime_allow: ${params.regime_allow}（許可レジーム。'trending,ranging' / 'trending' / 'ranging' / 'trending,ranging,volatile'）`,
+    ``,
+    `【現在パラメーター（エントリー精度 / 環境検出）】`,
+    `  bb_period: ${params.bb_period}（ボリンジャーバンド期間）`,
+    `  bb_squeeze_threshold: ${params.bb_squeeze_threshold}（スクイーズ判定閾値）`,
+    `  w_bb: ${params.w_bb}（BBスコアリング重み）`,
+    `  w_div: ${params.w_div}（ダイバージェンススコアリング重み）`,
+    `  divergence_lookback: ${params.divergence_lookback}（ダイバージェンス比較期間）`,
+    `  min_confirm_signals: ${params.min_confirm_signals}（最低確認シグナル数）`,
+    `  er_upper_limit: ${params.er_upper_limit}（mean_reversion時のER上限）`,
+    ``,
     `【直近${stats.totalTrades}件の実績】`,
     `  勝率: ${(stats.winRate * 100).toFixed(1)}%`,
     `  実績RR（平均利益÷平均損失）: ${stats.actualRr.toFixed(2)}`,
@@ -186,6 +217,10 @@ function buildReviewPrompt(
     `  - mean_reversion戦略ではw_erを高め（ERが低い方が良い）`,
     `  - trend_follow戦略ではw_mtfを高め（上位足トレンド一致が重要）`,
     `  - RR比不足でスキップ多発 → min_rr_ratioを下げるかTP/SL倍率を調整`,
+    `  - 指標期間の調整: 短い(10)=感度高・ダマシ多い、長い(20-30)=安定。標準14。大きく変える根拠がなければ維持推奨`,
+    `  - VIX警戒時にスキップしすぎ → vix_maxを引き上げ。スキップ不足で損失多発 → vix_maxを引き下げ`,
+    `  - トレンド反転で損失多い → require_trend_align=1でフィルター強化`,
+    `  - レンジ相場で損失多い → regime_allowからrangingを除外`,
     ``,
     `【制約（必ず守ること）】`,
     `  - 各パラメーターの変更幅: 現在値の±20%以内`,
@@ -203,9 +238,32 @@ function buildReviewPrompt(
     `  - w_rsi, w_er, w_mtf, w_sr, w_pa: 各0.0〜1.0の範囲`,
     `  - entry_score_min: 0.0〜1.0の範囲`,
     `  - min_rr_ratio: 1.0〜5.0の範囲`,
+    `  - max_hold_minutes: 30〜1440の範囲`,
+    `  - cooldown_after_sl: 0〜60の範囲`,
+    `  - consecutive_loss_shrink: 0〜10の範囲（0=無効）`,
+    `  - daily_max_entries: 1〜20の範囲`,
+    `  - trailing_activation_atr: 0.5〜5.0の範囲`,
+    `  - trailing_distance_atr: 0.3〜3.0の範囲`,
+    `  - tp1_ratio: 0.2〜0.8の範囲`,
+    `  - session_start_utc: 0〜23の範囲`,
+    `  - session_end_utc: 1〜24の範囲`,
+    `  - review_min_trades: 20〜200の範囲`,
+    `  - bb_period: 10〜50の範囲`,
+    `  - bb_squeeze_threshold: 0.1〜0.8の範囲`,
+    `  - w_bb: 0.0〜1.0の範囲`,
+    `  - w_div: 0.0〜1.0の範囲`,
+    `  - divergence_lookback: 5〜30の範囲`,
+    `  - min_confirm_signals: 0〜5の範囲`,
+    `  - er_upper_limit: 0.5〜1.0の範囲`,
+    `  - rsi_period: 10〜30の範囲（整数）`,
+    `  - adx_period: 10〜30の範囲（整数）`,
+    `  - atr_period: 10〜30の範囲（整数）`,
+    `  - vix_max: 20〜60の範囲`,
+    `  - require_trend_align: 0または1のみ`,
+    `  - regime_allow: 'trending','ranging','volatile'の組み合わせ（カンマ区切り、最低1つ）`,
     ``,
     `以下のJSONのみで回答してください（説明文不要）:`,
-    `{"pair":"${pair}","rsi_oversold":number,"rsi_overbought":number,"adx_min":number,"atr_tp_multiplier":number,"atr_sl_multiplier":number,"vix_tp_scale":number,"vix_sl_scale":number,"strategy_primary":"mean_reversion","min_signal_strength":number,"macro_sl_scale":number,"w_rsi":number,"w_er":number,"w_mtf":number,"w_sr":number,"w_pa":number,"entry_score_min":number,"min_rr_ratio":number,"reason":"調整理由200文字以内","expected_rr":number}`,
+    `{"pair":"${pair}","rsi_oversold":number,"rsi_overbought":number,"adx_min":number,"atr_tp_multiplier":number,"atr_sl_multiplier":number,"vix_tp_scale":number,"vix_sl_scale":number,"strategy_primary":"mean_reversion","min_signal_strength":number,"macro_sl_scale":number,"w_rsi":number,"w_er":number,"w_mtf":number,"w_sr":number,"w_pa":number,"w_bb":number,"w_div":number,"entry_score_min":number,"min_rr_ratio":number,"max_hold_minutes":number,"cooldown_after_sl":number,"consecutive_loss_shrink":number,"daily_max_entries":number,"trailing_activation_atr":number,"trailing_distance_atr":number,"tp1_ratio":number,"session_start_utc":number,"session_end_utc":number,"review_min_trades":number,"bb_period":number,"bb_squeeze_threshold":number,"divergence_lookback":number,"min_confirm_signals":number,"er_upper_limit":number,"rsi_period":14,"adx_period":14,"atr_period":14,"vix_max":35,"require_trend_align":0,"regime_allow":"trending,ranging","reason":"調整理由200文字以内","expected_rr":number}`,
   ].join('\n');
 }
 
@@ -232,8 +290,40 @@ interface ReviewResult {
   w_pa:            number;
   entry_score_min: number;
   min_rr_ratio:    number;
+  // Ph.8: 金融理論ベース10パラメーター
+  max_hold_minutes:        number;
+  cooldown_after_sl:       number;
+  consecutive_loss_shrink: number;
+  daily_max_entries:       number;
+  trailing_activation_atr: number;
+  trailing_distance_atr:   number;
+  tp1_ratio:               number;
+  session_start_utc:       number;
+  session_end_utc:         number;
+  review_min_trades:       number;
+  // Ph.9: エントリー精度パラメーター
+  bb_period:              number;
+  bb_squeeze_threshold:   number;
+  w_bb:                   number;
+  w_div:                  number;
+  divergence_lookback:    number;
+  min_confirm_signals:    number;
+  er_upper_limit:         number;
+  // Ph.10: 基本テクニカル期間 + 環境フィルター
+  rsi_period:          number;
+  adx_period:          number;
+  atr_period:          number;
+  vix_max:             number;
+  require_trend_align: number;
+  regime_allow:        string;
   reason: string;
   expected_rr: number;
+}
+
+function validateRegimeAllow(raw: string, current: string): string {
+  const valid = ['trending', 'ranging', 'volatile'];
+  const parts = raw.split(',').map(s => s.trim()).filter(s => valid.includes(s));
+  return parts.length > 0 ? parts.join(',') : current;
 }
 
 function validateAndClamp(raw: ReviewResult, current: InstrumentParamsRow): ReviewResult {
@@ -275,6 +365,32 @@ function validateAndClamp(raw: ReviewResult, current: InstrumentParamsRow): Revi
     w_pa:            parseFloat(clamp(raw.w_pa    ?? current.w_pa,    0, 1).toFixed(2)),
     entry_score_min: parseFloat(clamp(raw.entry_score_min ?? current.entry_score_min, 0, 1).toFixed(2)),
     min_rr_ratio:    parseFloat(clamp(raw.min_rr_ratio    ?? current.min_rr_ratio,    1.0, 5.0).toFixed(2)),
+    // Ph.8: 金融理論ベース10パラメーター
+    max_hold_minutes:        clamp(raw.max_hold_minutes        ?? current.max_hold_minutes,        30, 1440),
+    cooldown_after_sl:       clamp(raw.cooldown_after_sl       ?? current.cooldown_after_sl,        0,   60),
+    consecutive_loss_shrink: clamp(raw.consecutive_loss_shrink ?? current.consecutive_loss_shrink,   0,   10),
+    daily_max_entries:       clamp(raw.daily_max_entries       ?? current.daily_max_entries,          1,   20),
+    trailing_activation_atr: parseFloat(clamp(raw.trailing_activation_atr ?? current.trailing_activation_atr, 0.5, 5.0).toFixed(2)),
+    trailing_distance_atr:   parseFloat(clamp(raw.trailing_distance_atr   ?? current.trailing_distance_atr,   0.3, 3.0).toFixed(2)),
+    tp1_ratio:               parseFloat(clamp(raw.tp1_ratio               ?? current.tp1_ratio,               0.2, 0.8).toFixed(2)),
+    session_start_utc:       clamp(raw.session_start_utc       ?? current.session_start_utc,         0,   23),
+    session_end_utc:         clamp(raw.session_end_utc         ?? current.session_end_utc,           1,   24),
+    review_min_trades:       clamp(raw.review_min_trades       ?? current.review_min_trades,         20, 200),
+    // Ph.9: エントリー精度パラメーター
+    bb_period:              clamp(raw.bb_period              ?? current.bb_period,              10,   50),
+    bb_squeeze_threshold:   parseFloat(clamp(raw.bb_squeeze_threshold ?? current.bb_squeeze_threshold, 0.1, 0.8).toFixed(2)),
+    w_bb:                   parseFloat(clamp(raw.w_bb                ?? current.w_bb,                  0,   1).toFixed(2)),
+    w_div:                  parseFloat(clamp(raw.w_div               ?? current.w_div,                 0,   1).toFixed(2)),
+    divergence_lookback:    clamp(raw.divergence_lookback    ?? current.divergence_lookback,     5,   30),
+    min_confirm_signals:    clamp(raw.min_confirm_signals    ?? current.min_confirm_signals,     0,    5),
+    er_upper_limit:         parseFloat(clamp(raw.er_upper_limit      ?? current.er_upper_limit,        0.5, 1.0).toFixed(2)),
+    // Ph.10: 基本テクニカル期間 + 環境フィルター
+    rsi_period:          Math.round(clamp(within20(raw.rsi_period ?? current.rsi_period, current.rsi_period), 10, 30)),
+    adx_period:          Math.round(clamp(within20(raw.adx_period ?? current.adx_period, current.adx_period), 10, 30)),
+    atr_period:          Math.round(clamp(within20(raw.atr_period ?? current.atr_period, current.atr_period), 10, 30)),
+    vix_max:             parseFloat(clamp(within20(raw.vix_max ?? current.vix_max, current.vix_max), 20, 60).toFixed(1)),
+    require_trend_align: raw.require_trend_align === 1 ? 1 : 0,
+    regime_allow:        validateRegimeAllow(raw.regime_allow ?? current.regime_allow, current.regime_allow),
     reason:              (raw.reason ?? '').slice(0, 200),
     expected_rr:         raw.expected_rr ?? (finalTp / sl),
   };
@@ -368,9 +484,35 @@ async function applyReviewResult(
     w_pa:            current.w_pa,
     entry_score_min: current.entry_score_min,
     min_rr_ratio:    current.min_rr_ratio,
+    // Ph.8: 金融理論ベース10パラメーター
+    max_hold_minutes:        current.max_hold_minutes,
+    cooldown_after_sl:       current.cooldown_after_sl,
+    consecutive_loss_shrink: current.consecutive_loss_shrink,
+    daily_max_entries:       current.daily_max_entries,
+    trailing_activation_atr: current.trailing_activation_atr,
+    trailing_distance_atr:   current.trailing_distance_atr,
+    tp1_ratio:               current.tp1_ratio,
+    session_start_utc:       current.session_start_utc,
+    session_end_utc:         current.session_end_utc,
+    review_min_trades:       current.review_min_trades,
+    // Ph.9: エントリー精度パラメーター
+    bb_period:              current.bb_period,
+    bb_squeeze_threshold:   current.bb_squeeze_threshold,
+    w_bb:                   current.w_bb,
+    w_div:                  current.w_div,
+    divergence_lookback:    current.divergence_lookback,
+    min_confirm_signals:    current.min_confirm_signals,
+    er_upper_limit:         current.er_upper_limit,
+    // Ph.10: 基本テクニカル期間 + 環境フィルター
+    rsi_period:          current.rsi_period,
+    adx_period:          current.adx_period,
+    atr_period:          current.atr_period,
+    vix_max:             current.vix_max,
+    require_trend_align: current.require_trend_align,
+    regime_allow:        current.regime_allow,
   });
 
-  // instrument_params 更新（拡張5カラム + Ph.7 スコアリング7カラムを含む）
+  // instrument_params 更新（拡張5カラム + Ph.7 スコアリング7カラム + Ph.8 10カラム + Ph.9 7カラムを含む）
   await db
     .prepare(
       `UPDATE instrument_params
@@ -391,6 +533,29 @@ async function applyReviewResult(
            w_pa                  = ?,
            entry_score_min       = ?,
            min_rr_ratio          = ?,
+           max_hold_minutes      = ?,
+           cooldown_after_sl     = ?,
+           consecutive_loss_shrink = ?,
+           daily_max_entries     = ?,
+           trailing_activation_atr = ?,
+           trailing_distance_atr = ?,
+           tp1_ratio             = ?,
+           session_start_utc     = ?,
+           session_end_utc       = ?,
+           review_min_trades     = ?,
+           bb_period             = ?,
+           bb_squeeze_threshold  = ?,
+           w_bb                  = ?,
+           w_div                 = ?,
+           divergence_lookback   = ?,
+           min_confirm_signals   = ?,
+           er_upper_limit        = ?,
+           rsi_period            = ?,
+           adx_period            = ?,
+           atr_period            = ?,
+           vix_max               = ?,
+           require_trend_align   = ?,
+           regime_allow          = ?,
            trades_since_review   = 0,
            param_version         = param_version + 1,
            reviewed_by           = ?,
@@ -417,6 +582,29 @@ async function applyReviewResult(
       result.w_pa,
       result.entry_score_min,
       result.min_rr_ratio,
+      result.max_hold_minutes,
+      result.cooldown_after_sl,
+      result.consecutive_loss_shrink,
+      result.daily_max_entries,
+      result.trailing_activation_atr,
+      result.trailing_distance_atr,
+      result.tp1_ratio,
+      result.session_start_utc,
+      result.session_end_utc,
+      result.review_min_trades,
+      result.bb_period,
+      result.bb_squeeze_threshold,
+      result.w_bb,
+      result.w_div,
+      result.divergence_lookback,
+      result.min_confirm_signals,
+      result.er_upper_limit,
+      result.rsi_period,
+      result.adx_period,
+      result.atr_period,
+      result.vix_max,
+      result.require_trend_align,
+      result.regime_allow,
       reviewedBy,
       now,
       prevJson,
@@ -445,6 +633,32 @@ async function applyReviewResult(
     w_pa:            result.w_pa,
     entry_score_min: result.entry_score_min,
     min_rr_ratio:    result.min_rr_ratio,
+    // Ph.8: 金融理論ベース10パラメーター
+    max_hold_minutes:        result.max_hold_minutes,
+    cooldown_after_sl:       result.cooldown_after_sl,
+    consecutive_loss_shrink: result.consecutive_loss_shrink,
+    daily_max_entries:       result.daily_max_entries,
+    trailing_activation_atr: result.trailing_activation_atr,
+    trailing_distance_atr:   result.trailing_distance_atr,
+    tp1_ratio:               result.tp1_ratio,
+    session_start_utc:       result.session_start_utc,
+    session_end_utc:         result.session_end_utc,
+    review_min_trades:       result.review_min_trades,
+    // Ph.9: エントリー精度パラメーター
+    bb_period:              result.bb_period,
+    bb_squeeze_threshold:   result.bb_squeeze_threshold,
+    w_bb:                   result.w_bb,
+    w_div:                  result.w_div,
+    divergence_lookback:    result.divergence_lookback,
+    min_confirm_signals:    result.min_confirm_signals,
+    er_upper_limit:         result.er_upper_limit,
+    // Ph.10: 基本テクニカル期間 + 環境フィルター
+    rsi_period:          result.rsi_period,
+    adx_period:          result.adx_period,
+    atr_period:          result.atr_period,
+    vix_max:             result.vix_max,
+    require_trend_align: result.require_trend_align,
+    regime_allow:        result.regime_allow,
   });
 
   // param_review_log に記録
@@ -555,6 +769,27 @@ export async function runParamReview(
         w_pa:                `${paramsRow.w_pa}→${validated.w_pa}`,
         entry_score_min:     `${paramsRow.entry_score_min}→${validated.entry_score_min}`,
         min_rr_ratio:        `${paramsRow.min_rr_ratio}→${validated.min_rr_ratio}`,
+        max_hold_minutes:    `${paramsRow.max_hold_minutes}→${validated.max_hold_minutes}`,
+        cooldown_after_sl:   `${paramsRow.cooldown_after_sl}→${validated.cooldown_after_sl}`,
+        consecutive_loss_shrink: `${paramsRow.consecutive_loss_shrink}→${validated.consecutive_loss_shrink}`,
+        daily_max_entries:   `${paramsRow.daily_max_entries}→${validated.daily_max_entries}`,
+        tp1_ratio:           `${paramsRow.tp1_ratio}→${validated.tp1_ratio}`,
+        session_start_utc:   `${paramsRow.session_start_utc}→${validated.session_start_utc}`,
+        session_end_utc:     `${paramsRow.session_end_utc}→${validated.session_end_utc}`,
+        review_min_trades:   `${paramsRow.review_min_trades}→${validated.review_min_trades}`,
+        bb_period:           `${paramsRow.bb_period}→${validated.bb_period}`,
+        bb_squeeze_threshold:`${paramsRow.bb_squeeze_threshold}→${validated.bb_squeeze_threshold}`,
+        w_bb:                `${paramsRow.w_bb}→${validated.w_bb}`,
+        w_div:               `${paramsRow.w_div}→${validated.w_div}`,
+        divergence_lookback: `${paramsRow.divergence_lookback}→${validated.divergence_lookback}`,
+        min_confirm_signals: `${paramsRow.min_confirm_signals}→${validated.min_confirm_signals}`,
+        er_upper_limit:      `${paramsRow.er_upper_limit}→${validated.er_upper_limit}`,
+        rsi_period:          `${paramsRow.rsi_period}→${validated.rsi_period}`,
+        adx_period:          `${paramsRow.adx_period}→${validated.adx_period}`,
+        atr_period:          `${paramsRow.atr_period}→${validated.atr_period}`,
+        vix_max:             `${paramsRow.vix_max}→${validated.vix_max}`,
+        require_trend_align: `${paramsRow.require_trend_align}→${validated.require_trend_align}`,
+        regime_allow:        `${paramsRow.regime_allow}→${validated.regime_allow}`,
       },
       reason: validated.reason,
     }));

@@ -1,0 +1,360 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>FX Sim v3 — Zero-Based Mockup</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+:root{
+  --bg:#000;--surface:#1C1C1E;--card:#2C2C2E;
+  --text:#F5F5F7;--secondary:#8E8E93;--tertiary:#48484A;
+  --green:#30D158;--red:#FF453A;--orange:#FF9F0A;--blue:#0A84FF;
+  --radius:16px;--radius-sm:12px;
+  font-family:-apple-system,BlinkMacSystemFont,'SF Pro Display','Hiragino Sans',sans-serif;
+  -webkit-font-smoothing:antialiased;
+}
+body{background:var(--bg);color:var(--text);overflow-x:hidden;
+  padding-bottom:calc(72px + env(safe-area-inset-bottom,0px))}
+
+/* ═══ Emergency State — 画面全体の "気配" で伝える ═══ */
+body.emergency{background:#1A0000}
+body.caution{background:#1A1200}
+
+/* ═══ Status Dot (Q4: 緊急はないか?) ═══ */
+.status-bar{
+  display:flex;justify-content:space-between;align-items:center;
+  padding:14px 24px 0;
+}
+.status-dot{
+  width:10px;height:10px;border-radius:50%;
+  box-shadow:0 0 8px currentColor;
+}
+.status-dot.ok{background:var(--green);color:var(--green)}
+.status-dot.caution{background:var(--orange);color:var(--orange);animation:pulse 2s infinite}
+.status-dot.danger{background:var(--red);color:var(--red);animation:pulse 1s infinite}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:0.4}}
+.status-label{font-size:11px;color:var(--secondary)}
+.status-time{font-size:13px;color:var(--secondary)}
+
+/* Emergency banner — 展開時のみ */
+.emergency-detail{
+  margin:8px 24px 0;padding:10px 14px;border-radius:var(--radius-sm);
+  font-size:13px;font-weight:500;display:none;
+}
+.emergency-detail.active{display:block}
+.emergency-detail.red{background:rgba(255,69,58,0.12);color:var(--red);border:1px solid rgba(255,69,58,0.2)}
+.emergency-detail.orange{background:rgba(255,159,10,0.12);color:var(--orange);border:1px solid rgba(255,159,10,0.2)}
+
+/* ═══ Q1: 儲かっているか? — THE NUMBER ═══ */
+.the-number{
+  text-align:center;padding:32px 24px 8px;
+}
+.pnl-today{
+  font-size:56px;font-weight:800;letter-spacing:-2px;line-height:1;
+  font-variant-numeric:tabular-nums;
+}
+.pnl-today.positive{color:var(--green)}
+.pnl-today.negative{color:var(--red)}
+.pnl-today.zero{color:var(--secondary)}
+.pnl-label{font-size:14px;color:var(--secondary);margin-top:6px}
+.balance-line{
+  font-size:15px;color:var(--secondary);margin-top:12px;
+  display:flex;justify-content:center;gap:16px;
+}
+.balance-line span{font-variant-numeric:tabular-nums}
+.balance-highlight{color:var(--text);font-weight:600}
+
+/* Mini metrics — 極小、邪魔しない */
+.mini-metrics{
+  display:flex;justify-content:center;gap:20px;margin-top:14px;
+  font-size:12px;color:var(--tertiary);
+}
+.mini-metrics .val{color:var(--secondary);font-weight:500;font-variant-numeric:tabular-nums}
+
+/* Significance — 極小バー */
+.sig-bar{
+  margin:12px 48px 0;height:3px;background:var(--tertiary);border-radius:2px;overflow:hidden;
+}
+.sig-fill{height:100%;border-radius:2px;background:linear-gradient(90deg,var(--orange),var(--green))}
+.sig-label{text-align:center;font-size:10px;color:var(--tertiary);margin-top:4px}
+
+/* ═══ Q2: なぜ? — THE STORY ═══ */
+.the-story{
+  margin:24px 20px 0;
+}
+.story-card{
+  padding:16px 18px;background:var(--surface);border-radius:var(--radius);
+  border-left:3px solid var(--blue);
+}
+.story-text{
+  font-size:15px;line-height:1.65;color:var(--text);
+}
+.story-text strong{font-weight:600}
+.story-text .green{color:var(--green)}
+.story-text .red{color:var(--red)}
+.story-text .orange{color:var(--orange)}
+
+/* Driver chips — 物語の補足 */
+.story-chips{
+  display:flex;gap:6px;margin-top:12px;flex-wrap:wrap;
+}
+.chip{
+  padding:5px 12px;border-radius:20px;font-size:12px;font-weight:500;
+  cursor:pointer;transition:transform 0.12s;
+}
+.chip:active{transform:scale(0.95)}
+.chip.profit{background:rgba(48,209,88,0.1);color:var(--green)}
+.chip.loss{background:rgba(255,69,58,0.1);color:var(--red)}
+.chip.info{background:rgba(10,132,255,0.1);color:var(--blue)}
+.chip.warn{background:rgba(255,159,10,0.1);color:var(--orange)}
+
+/* ═══ Q3: 何が起きている? — THE POSITIONS ═══ */
+.the-positions{
+  margin:24px 20px 0;
+}
+.positions-header{
+  font-size:13px;font-weight:600;color:var(--secondary);
+  margin-bottom:10px;letter-spacing:0.3px;
+}
+.pos{
+  display:flex;align-items:center;gap:14px;
+  padding:16px;background:var(--surface);border-radius:var(--radius-sm);
+  margin-bottom:8px;cursor:pointer;transition:transform 0.12s;
+  position:relative;overflow:hidden;
+}
+.pos:active{transform:scale(0.98)}
+
+/* ポジションの "気配" — 左端の色帯 */
+.pos::before{
+  content:'';position:absolute;left:0;top:0;bottom:0;width:3px;
+}
+.pos.winning::before{background:var(--green)}
+.pos.losing::before{background:var(--red)}
+.pos.flat::before{background:var(--tertiary)}
+
+.pos-dir{
+  width:32px;height:32px;border-radius:8px;
+  display:grid;place-items:center;
+  font-size:12px;font-weight:800;flex-shrink:0;
+}
+.pos-dir.buy{background:rgba(48,209,88,0.12);color:var(--green)}
+.pos-dir.sell{background:rgba(255,69,58,0.12);color:var(--red)}
+.pos-body{flex:1;min-width:0}
+.pos-pair{font-size:15px;font-weight:600}
+.pos-meta{font-size:12px;color:var(--secondary);margin-top:1px;
+  display:flex;gap:8px;align-items:center}
+.pos-time{color:var(--tertiary)}
+.pos-right{text-align:right;flex-shrink:0}
+.pos-pnl{font-size:18px;font-weight:700;font-variant-numeric:tabular-nums}
+.pos-pnl.positive{color:var(--green)}
+.pos-pnl.negative{color:var(--red)}
+.pos-spark{margin-top:4px}
+
+/* ═══ News Handle ═══ */
+.news-handle{
+  text-align:center;margin-top:32px;padding-bottom:24px;
+}
+.news-pill{
+  display:inline-flex;align-items:center;gap:8px;
+  padding:10px 20px;background:var(--surface);border-radius:24px;
+  font-size:13px;font-weight:500;color:var(--secondary);
+  cursor:pointer;transition:transform 0.12s;
+}
+.news-pill:active{transform:scale(0.95)}
+.news-badge{
+  width:8px;height:8px;border-radius:50%;background:var(--blue);
+}
+
+/* ═══ Tab Bar ═══ */
+.tabs{
+  position:fixed;bottom:0;left:0;right:0;
+  padding:8px 0 calc(8px + env(safe-area-inset-bottom,0px));
+  background:rgba(0,0,0,0.9);backdrop-filter:blur(24px);-webkit-backdrop-filter:blur(24px);
+  border-top:0.5px solid rgba(255,255,255,0.06);
+  display:flex;justify-content:space-around;z-index:100;
+}
+.tab{
+  display:flex;flex-direction:column;align-items:center;gap:3px;
+  padding:2px 0;min-width:52px;cursor:pointer;
+}
+.tab-icon{font-size:22px;opacity:0.3;transition:opacity 0.2s}
+.tab-text{font-size:10px;color:var(--tertiary);font-weight:500}
+.tab.active .tab-icon{opacity:1}
+.tab.active .tab-text{color:var(--blue)}
+</style>
+</head>
+<body>
+
+<!-- ═══ Q4: 緊急はないか? ═══ -->
+<div class="status-bar">
+  <div style="display:flex;align-items:center;gap:8px">
+    <div class="status-dot ok"></div>
+    <span class="status-label">正常稼働</span>
+  </div>
+  <span class="status-time">20:58</span>
+</div>
+
+<!-- 緊急時のみ表示 -->
+<!-- <div class="emergency-detail red active">⚠ DD STOP — 日次損失上限超過。新規エントリー停止中</div> -->
+<!-- <div class="emergency-detail orange active">⚡ VIX=35 超過 — 全銘柄エントリー一時停止中</div> -->
+
+<!-- ═══ Q1: 儲かっているか? ═══ -->
+<section class="the-number">
+  <div class="pnl-today negative">-¥208</div>
+  <div class="pnl-label">今日の損益</div>
+  <div class="balance-line">
+    <span>残高 <span class="balance-highlight">¥9,792</span></span>
+    <span>ROI <span class="balance-highlight">-2.1%</span></span>
+  </div>
+  <div class="mini-metrics">
+    <span>勝率 <span class="val">52.1%</span></span>
+    <span>取引 <span class="val">499</span></span>
+    <span>PF <span class="val">1.02</span></span>
+  </div>
+  <div class="sig-bar"><div class="sig-fill" style="width:48%"></div></div>
+  <div class="sig-label">統計的有意性 48%</div>
+</section>
+
+<!-- ═══ Q2: なぜ? ═══ -->
+<section class="the-story">
+  <div class="story-card">
+    <div class="story-text">
+      <strong class="green">Nikkei225</strong>が<strong class="green">+801円</strong>(TP到達)で利益の柱。
+      一方<strong class="red">Gold</strong>が<strong class="red">-479円</strong>(SL)で最大損失。
+      <span class="orange">VIX=27</span>のためSL幅を縮小中。
+    </div>
+    <div class="story-chips">
+      <span class="chip profit">Nikkei +801</span>
+      <span class="chip loss">Gold -479</span>
+      <span class="chip warn">VIX=27</span>
+      <span class="chip info">PR 3件</span>
+      <span class="chip info">ニュース 2件</span>
+    </div>
+  </div>
+</section>
+
+<!-- ═══ Q3: 何が起きている? ═══ -->
+<section class="the-positions">
+  <div class="positions-header">保有中 · 5ポジション · 含み<span style="color:var(--green)">+¥9</span></div>
+
+  <div class="pos losing">
+    <div class="pos-dir sell">S</div>
+    <div class="pos-body">
+      <div class="pos-pair">USD / JPY</div>
+      <div class="pos-meta">
+        <span>158.299 → 158.565</span>
+        <span class="pos-time">· 11h</span>
+      </div>
+    </div>
+    <div class="pos-right">
+      <div class="pos-pnl negative">-¥13</div>
+      <svg class="pos-spark" width="52" height="20" viewBox="0 0 52 20">
+        <polyline points="0,16 8,10 18,14 26,6 36,12 44,4 52,2" fill="none" stroke="#FF453A" stroke-width="1.5" stroke-linecap="round"/>
+      </svg>
+    </div>
+  </div>
+
+  <div class="pos losing">
+    <div class="pos-dir sell">S</div>
+    <div class="pos-body">
+      <div class="pos-pair">S&P 500</div>
+      <div class="pos-meta">
+        <span>6,576 → 6,581</span>
+        <span class="pos-time">· 9h</span>
+      </div>
+    </div>
+    <div class="pos-right">
+      <div class="pos-pnl negative">-¥7</div>
+      <svg class="pos-spark" width="52" height="20" viewBox="0 0 52 20">
+        <polyline points="0,10 13,10 26,10 39,10 52,10" fill="none" stroke="#48484A" stroke-width="1.5" stroke-linecap="round"/>
+      </svg>
+    </div>
+  </div>
+
+  <div class="pos winning">
+    <div class="pos-dir buy">B</div>
+    <div class="pos-body">
+      <div class="pos-pair">日経225</div>
+      <div class="pos-meta">
+        <span>51,911 → 52,252</span>
+        <span class="pos-time">· 6h</span>
+      </div>
+    </div>
+    <div class="pos-right">
+      <div class="pos-pnl positive">+¥24</div>
+      <svg class="pos-spark" width="52" height="20" viewBox="0 0 52 20">
+        <polyline points="0,18 13,14 26,10 39,6 52,2" fill="none" stroke="#30D158" stroke-width="1.5" stroke-linecap="round"/>
+      </svg>
+    </div>
+  </div>
+
+  <div class="pos losing">
+    <div class="pos-dir buy">B</div>
+    <div class="pos-body">
+      <div class="pos-pair">SOL / USD</div>
+      <div class="pos-meta">
+        <span>$91.26 → $91.13</span>
+        <span class="pos-time">· 4h</span>
+      </div>
+    </div>
+    <div class="pos-right">
+      <div class="pos-pnl negative">-¥1</div>
+      <svg class="pos-spark" width="52" height="20" viewBox="0 0 52 20">
+        <polyline points="0,6 13,10 26,16 39,12 52,14" fill="none" stroke="#FF453A" stroke-width="1.5" stroke-linecap="round"/>
+      </svg>
+    </div>
+  </div>
+
+  <div class="pos winning">
+    <div class="pos-dir sell">S</div>
+    <div class="pos-body">
+      <div class="pos-pair">銅</div>
+      <div class="pos-meta">
+        <span>$5.42 → $5.41</span>
+        <span class="pos-time">· 3h</span>
+      </div>
+    </div>
+    <div class="pos-right">
+      <div class="pos-pnl positive">+¥6</div>
+      <svg class="pos-spark" width="52" height="20" viewBox="0 0 52 20">
+        <polyline points="0,4 13,8 26,6 39,12 52,16" fill="none" stroke="#30D158" stroke-width="1.5" stroke-linecap="round"/>
+      </svg>
+    </div>
+  </div>
+</section>
+
+<!-- ═══ ニュース ═══ -->
+<div class="news-handle">
+  <div class="news-pill">
+    <span class="news-badge"></span>
+    ニュース · 30件
+  </div>
+</div>
+
+<!-- ═══ Tab Bar ═══ -->
+<nav class="tabs">
+  <div class="tab active">
+    <span class="tab-icon">📍</span>
+    <span class="tab-text" style="color:var(--blue)">今</span>
+  </div>
+  <div class="tab">
+    <span class="tab-icon">📊</span>
+    <span class="tab-text">統計</span>
+  </div>
+  <div class="tab">
+    <span class="tab-icon">🧠</span>
+    <span class="tab-text">AI</span>
+  </div>
+  <div class="tab">
+    <span class="tab-icon">⚙️</span>
+    <span class="tab-text">戦略</span>
+  </div>
+  <div class="tab">
+    <span class="tab-icon">🔧</span>
+    <span class="tab-text">システム</span>
+  </div>
+</nav>
+
+</body>
+</html>

@@ -628,6 +628,26 @@ body, #app {
   color: var(--label-tertiary);
   text-align: center;
 }
+.param-group-header td {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--blue, #0A84FF);
+  padding: 8px 6px 4px;
+  border-bottom: 1px solid var(--separator, #38383A);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+.param-group-divider {
+  grid-column: 1 / -1;
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--blue, #0A84FF);
+  padding: 6px 0 2px;
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+  border-bottom: 1px solid var(--separator, #38383A);
+  margin-top: 4px;
+}
 
 /* ─── 進捗バー（Goal Gradient） ─── */
 .param-progress-track {

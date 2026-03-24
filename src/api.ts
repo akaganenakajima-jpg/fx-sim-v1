@@ -929,6 +929,33 @@ export interface InstrumentParamRow {
   strategy_primary:    string;  // 優先戦略: 'mean_reversion' | 'trend_follow'
   min_signal_strength: number;  // エントリー最低シグナル強度（0〜1）
   macro_sl_scale:      number;  // VIX > vix_max×0.5 時のSL幅追加倍率
+  // Ph.7: エントリースコアリング重み（v215）
+  w_rsi:               number;  // RSIスコア重み
+  w_er:                number;  // 効率比スコア重み
+  w_mtf:               number;  // マルチタイムフレーム重み
+  w_sr:                number;  // サポート/レジスタンス重み
+  w_pa:                number;  // プライスアクション重み
+  entry_score_min:     number;  // エントリー最低スコア（0〜1）
+  min_rr_ratio:        number;  // 最小リスクリワード比
+  // Ph.8: 金融理論ベース10パラメーター（v216）
+  max_hold_minutes:        number;  // 最大保有時間（分）
+  cooldown_after_sl:       number;  // SL後クールダウン（分）
+  consecutive_loss_shrink: number;  // N連敗でロット50%縮小
+  daily_max_entries:       number;  // 1日最大エントリー回数
+  trailing_activation_atr: number;  // トレイリング開始（ATR倍）
+  trailing_distance_atr:   number;  // トレイリング追従幅（ATR倍）
+  tp1_ratio:               number;  // TP1分割決済比率
+  session_start_utc:       number;  // 取引開始時刻（UTC時）
+  session_end_utc:         number;  // 取引終了時刻（UTC時）
+  review_min_trades:       number;  // Param Review最低サンプル数
+  // Ph.9: エントリー精度パラメーター（v217）
+  bb_period:              number;  // ボリンジャーバンド期間
+  bb_squeeze_threshold:   number;  // スクイーズ判定閾値
+  w_bb:                   number;  // BBスコアリング重み
+  w_div:                  number;  // ダイバージェンススコアリング重み
+  divergence_lookback:    number;  // ダイバージェンス比較期間
+  min_confirm_signals:    number;  // 最低確認シグナル数
+  er_upper_limit:         number;  // mean_reversion時のER上限
   review_trade_count: number;
   trades_since_review: number;
   param_version:      number;

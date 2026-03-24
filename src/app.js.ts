@@ -3338,6 +3338,8 @@ export const JS = `
               'data-param-detail="' + escHtml(pairKey) + '">' +
               '<div class="param-detail-inner">' +
                 '<div class="param-grid-6">' +
+                  /* ── グループ1: エントリー基本 ── */
+                  '<div class="param-group-divider">エントリー基本</div>' +
                   '<div class="param-grid-cell">' +
                     '<div class="cell-label">RSI売られ</div>' +
                     '<div class="cell-value">' + fmt(p.rsi_oversold, 0) + '</div>' +
@@ -3361,6 +3363,130 @@ export const JS = `
                   '<div class="param-grid-cell">' +
                     '<div class="cell-label">VIX上限</div>' +
                     '<div class="cell-value">' + fmt(p.vix_max, 0) + '</div>' +
+                  '</div>' +
+                  /* ── グループ2: クローズ調整（Ph.6） ── */
+                  '<div class="param-group-divider">クローズ調整</div>' +
+                  '<div class="param-grid-cell">' +
+                    '<div class="cell-label">VIX TP倍率</div>' +
+                    '<div class="cell-value">' + fmt(p.vix_tp_scale, 2) + '</div>' +
+                  '</div>' +
+                  '<div class="param-grid-cell">' +
+                    '<div class="cell-label">VIX SL倍率</div>' +
+                    '<div class="cell-value">' + fmt(p.vix_sl_scale, 2) + '</div>' +
+                  '</div>' +
+                  '<div class="param-grid-cell">' +
+                    '<div class="cell-label">マクロSL倍率</div>' +
+                    '<div class="cell-value">' + fmt(p.macro_sl_scale, 2) + '</div>' +
+                  '</div>' +
+                  /* ── グループ3: エントリースコアリング（Ph.7） ── */
+                  '<div class="param-group-divider">エントリースコアリング</div>' +
+                  '<div class="param-grid-cell">' +
+                    '<div class="cell-label">w(RSI)</div>' +
+                    '<div class="cell-value">' + fmt(p.w_rsi, 2) + '</div>' +
+                  '</div>' +
+                  '<div class="param-grid-cell">' +
+                    '<div class="cell-label">w(ER)</div>' +
+                    '<div class="cell-value">' + fmt(p.w_er, 2) + '</div>' +
+                  '</div>' +
+                  '<div class="param-grid-cell">' +
+                    '<div class="cell-label">w(MTF)</div>' +
+                    '<div class="cell-value">' + fmt(p.w_mtf, 2) + '</div>' +
+                  '</div>' +
+                  '<div class="param-grid-cell">' +
+                    '<div class="cell-label">w(S/R)</div>' +
+                    '<div class="cell-value">' + fmt(p.w_sr, 2) + '</div>' +
+                  '</div>' +
+                  '<div class="param-grid-cell">' +
+                    '<div class="cell-label">w(PA)</div>' +
+                    '<div class="cell-value">' + fmt(p.w_pa, 2) + '</div>' +
+                  '</div>' +
+                  '<div class="param-grid-cell">' +
+                    '<div class="cell-label">w(BB)</div>' +
+                    '<div class="cell-value">' + fmt(p.w_bb, 2) + '</div>' +
+                  '</div>' +
+                  '<div class="param-grid-cell">' +
+                    '<div class="cell-label">w(DIV)</div>' +
+                    '<div class="cell-value">' + fmt(p.w_div, 2) + '</div>' +
+                  '</div>' +
+                  '<div class="param-grid-cell">' +
+                    '<div class="cell-label">最低スコア</div>' +
+                    '<div class="cell-value">' + fmt(p.entry_score_min, 2) + '</div>' +
+                  '</div>' +
+                  '<div class="param-grid-cell">' +
+                    '<div class="cell-label">最小RR比</div>' +
+                    '<div class="cell-value">' + fmt(p.min_rr_ratio, 1) + '</div>' +
+                  '</div>' +
+                  /* ── グループ4: 戦略設定 ── */
+                  '<div class="param-group-divider">戦略設定</div>' +
+                  '<div class="param-grid-cell">' +
+                    '<div class="cell-label">戦略</div>' +
+                    '<div class="cell-value" style="font-size:11px">' + escHtml(p.strategy_primary || '—') + '</div>' +
+                  '</div>' +
+                  '<div class="param-grid-cell">' +
+                    '<div class="cell-label">シグナル強度</div>' +
+                    '<div class="cell-value">' + fmt(p.min_signal_strength, 2) + '</div>' +
+                  '</div>' +
+                  /* ── グループ5: 環境検出（Ph.9） ── */
+                  '<div class="param-group-divider">環境検出</div>' +
+                  '<div class="param-grid-cell">' +
+                    '<div class="cell-label">BB期間</div>' +
+                    '<div class="cell-value">' + fmt(p.bb_period, 0) + '</div>' +
+                  '</div>' +
+                  '<div class="param-grid-cell">' +
+                    '<div class="cell-label">BBスクイーズ</div>' +
+                    '<div class="cell-value">' + fmt(p.bb_squeeze_threshold, 2) + '</div>' +
+                  '</div>' +
+                  '<div class="param-grid-cell">' +
+                    '<div class="cell-label">DIV参照</div>' +
+                    '<div class="cell-value">' + fmt(p.divergence_lookback, 0) + '</div>' +
+                  '</div>' +
+                  '<div class="param-grid-cell">' +
+                    '<div class="cell-label">最低根拠数</div>' +
+                    '<div class="cell-value">' + fmt(p.min_confirm_signals, 0) + '</div>' +
+                  '</div>' +
+                  '<div class="param-grid-cell">' +
+                    '<div class="cell-label">ER上限(逆張り)</div>' +
+                    '<div class="cell-value">' + fmt(p.er_upper_limit, 2) + '</div>' +
+                  '</div>' +
+                  /* ── グループ6: ポジション管理（Ph.8） ── */
+                  '<div class="param-group-divider">ポジション管理</div>' +
+                  '<div class="param-grid-cell">' +
+                    '<div class="cell-label">最大保有</div>' +
+                    '<div class="cell-value">' + fmt(p.max_hold_minutes, 0) + '分</div>' +
+                  '</div>' +
+                  '<div class="param-grid-cell">' +
+                    '<div class="cell-label">SL後CD</div>' +
+                    '<div class="cell-value">' + fmt(p.cooldown_after_sl, 0) + '分</div>' +
+                  '</div>' +
+                  '<div class="param-grid-cell">' +
+                    '<div class="cell-label">連敗縮退</div>' +
+                    '<div class="cell-value">' + fmt(p.consecutive_loss_shrink, 0) + '連敗</div>' +
+                  '</div>' +
+                  '<div class="param-grid-cell">' +
+                    '<div class="cell-label">日次上限</div>' +
+                    '<div class="cell-value">' + fmt(p.daily_max_entries, 0) + '回</div>' +
+                  '</div>' +
+                  '<div class="param-grid-cell">' +
+                    '<div class="cell-label">Trail開始</div>' +
+                    '<div class="cell-value">' + fmt(p.trailing_activation_atr, 1) + '×ATR</div>' +
+                  '</div>' +
+                  '<div class="param-grid-cell">' +
+                    '<div class="cell-label">Trail幅</div>' +
+                    '<div class="cell-value">' + fmt(p.trailing_distance_atr, 1) + '×ATR</div>' +
+                  '</div>' +
+                  '<div class="param-grid-cell">' +
+                    '<div class="cell-label">TP1比率</div>' +
+                    '<div class="cell-value">' + fmt(p.tp1_ratio, 2) + '</div>' +
+                  '</div>' +
+                  /* ── グループ6: レビュー設定（Ph.8） ── */
+                  '<div class="param-group-divider">レビュー設定</div>' +
+                  '<div class="param-grid-cell">' +
+                    '<div class="cell-label">最低サンプル</div>' +
+                    '<div class="cell-value">' + fmt(p.review_min_trades, 0) + '件</div>' +
+                  '</div>' +
+                  '<div class="param-grid-cell">' +
+                    '<div class="cell-label">セッション</div>' +
+                    '<div class="cell-value" style="font-size:11px">' + fmt(p.session_start_utc, 0) + '〜' + fmt(p.session_end_utc, 0) + 'h UTC</div>' +
                   '</div>' +
                 '</div>' +
                 '<div class="param-last-review">最終レビュー: ' + escHtml(lastAt) + '</div>' +

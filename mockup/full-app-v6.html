@@ -1,0 +1,926 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>FX Sim v6</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+:root{
+  --bg:#000;--surface:#1C1C1E;--card:#2C2C2E;--elevated:#3A3A3C;
+  --text:#F5F5F7;--secondary:#8E8E93;--tertiary:#48484A;
+  --green:#30D158;--red:#FF453A;--orange:#FF9F0A;--blue:#0A84FF;
+  --teal:#64D2FF;--purple:#BF5AF2;
+  --r:12px;--rs:8px;
+  font-family:-apple-system,BlinkMacSystemFont,'SF Pro Display','Hiragino Sans',sans-serif;
+  -webkit-font-smoothing:antialiased;
+}
+body{background:var(--bg);color:var(--text);font-size:15px;line-height:1.47;
+  padding-bottom:calc(72px + env(safe-area-inset-bottom,0px));overflow-x:hidden}
+
+/* ═══ Common ═══ */
+.sbar{display:flex;justify-content:space-between;align-items:center;padding:12px 16px 0;min-height:44px}
+.sbar-left{display:flex;align-items:center;gap:8px}
+.dot{width:8px;height:8px;border-radius:50%;box-shadow:0 0 6px currentColor}
+.dot.ok{background:var(--green);color:var(--green)}
+.dot.warn{background:var(--orange);color:var(--orange)}
+.dot.danger{background:var(--red);color:var(--red)}
+.sbar-status{font-size:11px;color:var(--secondary)}.sbar-time{font-size:13px;color:var(--tertiary)}
+.sec{font-size:11px;font-weight:600;color:var(--tertiary);text-transform:uppercase;letter-spacing:0.4px;padding:16px 16px 8px}
+.tab-panel{display:none}.tab-panel.active{display:block}
+.tabs{position:fixed;bottom:0;left:0;right:0;padding:8px 0 calc(8px + env(safe-area-inset-bottom,0px));
+  background:rgba(0,0,0,0.92);backdrop-filter:blur(24px);-webkit-backdrop-filter:blur(24px);
+  border-top:0.5px solid rgba(255,255,255,0.06);display:flex;justify-content:space-around;z-index:100}
+.tab{display:flex;flex-direction:column;align-items:center;gap:2px;padding:4px 0;min-width:48px;min-height:44px;justify-content:center;cursor:pointer;-webkit-tap-highlight-color:transparent}
+.tab-i{font-size:20px;opacity:0.3;transition:opacity 0.2s}.tab-t{font-size:10px;color:var(--tertiary);font-weight:500;transition:color 0.2s}
+.tab.on .tab-i{opacity:1}.tab.on .tab-t{color:var(--blue)}
+.badge-sm{display:inline-block;padding:2px 6px;border-radius:4px;font-size:10px;font-weight:600}
+
+/* ═══ Cross-link (v6) ═══ */
+.cross-link{font-size:12px;color:var(--blue);cursor:pointer;display:inline-flex;align-items:center;gap:4px;padding:4px 0}
+.cross-link:active{opacity:0.6}
+
+/* ═══ Why tree (v6) ═══ */
+.why-toggle{font-size:12px;color:var(--blue);cursor:pointer;padding:4px 0;display:flex;align-items:center;gap:4px}
+.why-toggle:active{opacity:0.6}
+.why-tree{display:none;margin:4px 0 0 8px;padding-left:12px;border-left:1px solid var(--tertiary);font-size:11px;color:var(--secondary);line-height:1.6}
+.why-tree.open{display:block}
+.why-node{margin:4px 0}
+.why-q{color:var(--blue);font-weight:600;margin-bottom:2px}
+.why-a{color:var(--secondary)}
+.why-evidence{color:var(--tertiary);font-size:10px;font-style:italic}
+.why-sub{margin-left:12px;padding-left:12px;border-left:1px solid rgba(255,255,255,0.06)}
+
+/* ═══ Score bar (v6) ═══ */
+.score-row{display:flex;align-items:center;gap:8px;padding:3px 0;font-size:11px}
+.score-label{width:32px;flex-shrink:0;color:var(--secondary);font-weight:500}
+.score-bar{flex:1;height:6px;background:var(--tertiary);border-radius:3px;overflow:hidden}
+.score-fill{height:100%;border-radius:3px;background:var(--green)}
+.score-val{width:80px;text-align:right;color:var(--tertiary);font-variant-numeric:tabular-nums;font-size:10px}
+.score-total{font-size:12px;font-weight:600;padding:4px 0;margin-top:4px;border-top:1px solid rgba(255,255,255,0.06)}
+
+/* ═══ KPI grid (v6) ═══ */
+.kpi-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:4px;margin:8px 16px 0}
+.kpi{padding:10px 8px;background:var(--surface);border-radius:var(--rs);text-align:center}
+.kpi-val{font-size:18px;font-weight:700;font-variant-numeric:tabular-nums}.kpi-lbl{font-size:10px;color:var(--tertiary);margin-top:2px}
+
+/* ═══ DD stage bar (v6) ═══ */
+.dd-bar{display:flex;height:8px;border-radius:4px;overflow:hidden;margin:0 16px 8px;background:var(--tertiary)}
+.dd-seg{height:100%}
+
+/* ═══ Health expand (v6) ═══ */
+.hc-expand{display:none;padding:8px 0 0 36px;font-size:11px;color:var(--secondary);line-height:1.6}
+.hc-expand.open{display:block}
+.hc-detail{display:flex;align-items:center;gap:8px;margin-bottom:4px}
+.hc-detail-label{color:var(--tertiary)}
+.spark-mini{display:inline-block;vertical-align:middle}
+
+/* ═══ Env matrix (v6) ═══ */
+.matrix-grid{display:grid;grid-template-columns:80px repeat(3,1fr);gap:2px;font-size:11px;margin:0 16px 8px;background:var(--surface);border-radius:var(--rs);padding:8px;overflow-x:auto}
+.matrix-h{padding:4px 6px;color:var(--tertiary);font-weight:600;text-align:center;font-size:10px}.matrix-h:first-child{text-align:left}
+.matrix-p{padding:4px 6px;font-weight:500}.matrix-c{padding:4px 6px;text-align:center;border-radius:3px;font-variant-numeric:tabular-nums}
+
+/* ═══ Brier sparkline (v6) ═══ */
+.brier-row{display:flex;align-items:center;gap:12px;padding:8px 16px;font-size:12px;color:var(--secondary)}
+.brier-label{flex-shrink:0;font-weight:500}.brier-val{font-weight:700;font-variant-numeric:tabular-nums}
+
+/* ═══ AI type breakdown (v6) ═══ */
+.ai-breakdown{display:flex;gap:4px;margin:8px 16px 0}
+.ai-brk{flex:1;padding:10px 8px;background:var(--surface);border-radius:var(--rs);text-align:center}
+.ai-brk-type{font-size:10px;color:var(--tertiary);margin-bottom:4px}.ai-brk-val{font-size:18px;font-weight:700;font-variant-numeric:tabular-nums}
+.ai-brk-sub{font-size:10px;color:var(--tertiary);margin-top:2px}
+
+/* ═══ TAB 1: 今 ═══ */
+.hero{text-align:center;padding:24px 16px 0}
+.pnl{font-size:48px;font-weight:800;letter-spacing:-2px;line-height:1;font-variant-numeric:tabular-nums}
+.pnl.pos{color:var(--green)}.pnl.neg{color:var(--red);text-shadow:0 0 40px rgba(255,69,58,0.15)}
+.pnl-sub{font-size:13px;color:var(--secondary);margin-top:4px}
+.metrics{display:flex;gap:1px;margin:16px 16px 0}
+.m{flex:1;text-align:center;padding:8px 0;background:var(--surface)}.m:first-child{border-radius:var(--rs) 0 0 var(--rs)}.m:last-child{border-radius:0 var(--rs) var(--rs) 0}
+.m-val{font-size:14px;font-weight:600;font-variant-numeric:tabular-nums}.m-lbl{font-size:10px;color:var(--tertiary);text-transform:uppercase;letter-spacing:0.4px;margin-top:2px}
+.sig{margin:8px 16px 0;display:flex;align-items:center;gap:8px}.sig-track{flex:1;height:3px;background:var(--tertiary);border-radius:2px;overflow:hidden}.sig-fill{height:100%;border-radius:2px;background:linear-gradient(90deg,var(--orange),var(--green))}.sig-lbl{font-size:11px;color:var(--tertiary)}
+.story{margin:16px 16px 0;padding:16px;background:var(--surface);border-radius:var(--r);border-left:3px solid var(--blue)}
+.story-text{font-size:14px;line-height:1.6;color:var(--secondary)}.story-text b{color:var(--text);font-weight:600}.story-text .g{color:var(--green)}.story-text .r{color:var(--red)}.story-text .o{color:var(--orange)}
+.drivers{display:flex;gap:8px;margin-top:12px}
+.drv{flex:1;padding:10px 12px;background:var(--bg);border-radius:var(--rs);min-height:44px;cursor:pointer;-webkit-tap-highlight-color:transparent}
+.drv:active{opacity:0.7}
+.drv-tag{font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:0.5px;margin-bottom:2px}.drv-tag.profit{color:var(--green)}.drv-tag.loss{color:var(--red)}
+.drv-pair{font-size:13px;font-weight:600}.drv-pnl{font-size:18px;font-weight:700;font-variant-numeric:tabular-nums;margin:2px 0}.drv-reason{font-size:11px;color:var(--tertiary)}
+.chips{display:flex;flex-wrap:wrap;gap:6px;margin-top:10px}
+.chip{padding:6px 12px;border-radius:14px;font-size:11px;font-weight:500;min-height:28px;display:inline-flex;align-items:center;cursor:pointer;-webkit-tap-highlight-color:transparent}
+.chip:active{opacity:0.6}
+.chip.w{background:rgba(255,159,10,0.1);color:var(--orange)}.chip.i{background:rgba(10,132,255,0.1);color:var(--blue)}
+.hm{margin:12px 16px 0;background:var(--surface);border-radius:var(--rs);padding:8px;overflow-x:auto}
+.hm-g{display:grid;grid-template-columns:72px repeat(4,1fr);gap:2px;font-size:11px}
+.hm-h{padding:4px 6px;color:var(--tertiary);font-weight:600;text-align:center;font-size:10px}.hm-h:first-child{text-align:left}.hm-p{padding:4px 6px;font-weight:500}.hm-c{padding:4px 6px;text-align:center;border-radius:3px;font-variant-numeric:tabular-nums}
+.news-feed{margin:0 16px}.nf-item{padding:14px 16px;background:var(--surface);border-radius:var(--rs);margin-bottom:8px;border-left:3px solid var(--tertiary)}
+.nf-item.nf-emergency{border-left-color:var(--red)}.nf-item.nf-trend{border-left-color:var(--orange)}
+.nf-header{display:flex;justify-content:space-between;align-items:center;margin-bottom:6px}
+.nf-badge{font-size:10px;font-weight:700;padding:2px 8px;border-radius:4px}
+.nf-badge-emergency{background:rgba(255,69,58,0.15);color:var(--red)}.nf-badge-trend{background:rgba(255,159,10,0.15);color:var(--orange)}.nf-badge-info{background:rgba(142,142,147,0.15);color:var(--secondary)}
+.nf-time{font-size:11px;color:var(--tertiary)}.nf-headline{font-size:14px;font-weight:600;line-height:1.4;margin-bottom:8px}
+.nf-ai{display:flex;gap:6px;align-items:flex-start;margin-bottom:6px;padding:8px 10px;background:rgba(10,132,255,0.06);border-radius:6px}
+.nf-ai-label{font-size:11px;color:var(--blue);white-space:nowrap;font-weight:600;flex-shrink:0}.nf-ai-text{font-size:12px;color:var(--secondary);line-height:1.5}
+.nf-action{display:flex;gap:6px;align-items:center}.nf-action-text{font-size:12px;color:var(--secondary)}.nf-action-text b{font-weight:600}
+.positions{margin:0 16px}.pos{display:flex;align-items:center;gap:12px;padding:12px 16px;background:var(--surface);border-radius:var(--rs);margin-bottom:8px;position:relative;overflow:hidden;min-height:56px}
+.pos::before{content:'';position:absolute;left:0;top:0;bottom:0;width:3px}.pos.win::before{background:var(--green)}.pos.lose::before{background:var(--red)}
+.pos-dir{width:32px;height:32px;border-radius:8px;display:grid;place-items:center;font-size:12px;font-weight:800;flex-shrink:0}
+.pos-dir.b{background:rgba(48,209,88,0.12);color:var(--green)}.pos-dir.s{background:rgba(255,69,58,0.12);color:var(--red)}
+.pos-body{flex:1}.pos-top{display:flex;justify-content:space-between;align-items:baseline}
+.pos-pair{font-size:15px;font-weight:600}.pos-pnl{font-size:17px;font-weight:700;font-variant-numeric:tabular-nums}.pos-pnl.pos{color:var(--green)}.pos-pnl.neg{color:var(--red)}
+.pos-bot{display:flex;justify-content:space-between;align-items:center;margin-top:3px}.pos-meta{font-size:11px;color:var(--tertiary)}.pos-meta .time-warn{color:var(--orange)}
+.mkt-bar{display:grid;grid-template-columns:repeat(4,1fr);gap:4px;margin:0 16px}
+.mkt{padding:8px;background:var(--surface);border-radius:var(--rs);text-align:center}.mkt-v{font-size:14px;font-weight:600;font-variant-numeric:tabular-nums}.mkt-l{font-size:10px;color:var(--tertiary);margin-top:2px}.mkt-d{font-size:11px}.mkt-d.up{color:var(--green)}.mkt-d.dn{color:var(--red)}
+.wait-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:4px;margin:8px 16px 0}.wt{padding:8px;background:var(--surface);border-radius:var(--rs)}.wt-pair{font-size:12px;font-weight:500}.wt-price{font-size:11px;color:var(--secondary);font-variant-numeric:tabular-nums;margin-top:2px}
+
+/* ═══ TAB 2: 学び ═══ */
+.evo-card{margin:0 16px 8px;padding:16px;background:var(--surface);border-radius:var(--r)}
+.evo-header{display:flex;justify-content:space-between;align-items:center;margin-bottom:8px}
+.evo-pair{font-size:17px;font-weight:700}.evo-verdict{font-size:13px;font-weight:600}
+.evo-chart{height:48px;margin:8px 0;position:relative}
+.evo-chart svg{width:100%;height:100%}
+.evo-changes{margin-top:8px}
+.evo-change{display:flex;gap:8px;align-items:flex-start;padding:6px 0;border-bottom:1px solid rgba(255,255,255,0.04);font-size:12px}
+.evo-change:last-child{border-bottom:none}
+.evo-dot{width:6px;height:6px;border-radius:50%;margin-top:5px;flex-shrink:0}
+.evo-dot.improved{background:var(--green)}.evo-dot.worsened{background:var(--red)}.evo-dot.neutral{background:var(--tertiary)}
+.evo-text{color:var(--secondary);line-height:1.4}
+.evo-result{font-weight:600}
+.worked{color:var(--green)}.didnt{color:var(--red)}.unchanged{color:var(--tertiary)}
+.verdict-strip{display:flex;gap:8px;margin:8px 16px 0}
+.verdict-box{flex:1;padding:12px;background:var(--surface);border-radius:var(--rs);text-align:center}
+.verdict-num{font-size:24px;font-weight:800;font-variant-numeric:tabular-nums}
+.verdict-lbl{font-size:10px;color:var(--tertiary);text-transform:uppercase;margin-top:2px}
+
+/* ═══ TAB 3: AI ═══ */
+.ai-score{text-align:center;padding:24px 16px 8px}
+.ai-score-num{font-size:56px;font-weight:800;letter-spacing:-2px}
+.ai-score-label{font-size:13px;color:var(--secondary);margin-top:4px}
+.ai-score-sub{font-size:12px;color:var(--tertiary);margin-top:8px}
+.verdict-card{margin:0 16px 8px;padding:14px 16px;background:var(--surface);border-radius:var(--rs);border-left:3px solid var(--tertiary)}
+.verdict-card.correct{border-left-color:var(--green)}.verdict-card.wrong{border-left-color:var(--red)}.verdict-card.pending{border-left-color:var(--blue)}
+.vc-header{display:flex;justify-content:space-between;align-items:center;margin-bottom:4px}
+.vc-action{font-size:14px;font-weight:600}
+.vc-verdict{font-size:12px;font-weight:700;padding:2px 8px;border-radius:4px}
+.vc-verdict.correct{background:rgba(48,209,88,0.15);color:var(--green)}
+.vc-verdict.wrong{background:rgba(255,69,58,0.15);color:var(--red)}
+.vc-verdict.pending{background:rgba(10,132,255,0.15);color:var(--blue)}
+.vc-reason{font-size:12px;color:var(--secondary);line-height:1.5;margin-bottom:4px}
+.vc-outcome{font-size:12px;font-weight:600}.vc-time{font-size:11px;color:var(--tertiary)}
+
+/* ═══ TAB 4: 戦略 ═══ */
+.journey-card{margin:0 16px 12px;padding:16px;background:var(--surface);border-radius:var(--r)}
+.jc-header{display:flex;justify-content:space-between;align-items:center;margin-bottom:12px}
+.jc-pair{font-size:17px;font-weight:700}.jc-ver{font-size:12px;color:var(--blue)}
+.jc-summary{font-size:13px;color:var(--secondary);line-height:1.5;margin-bottom:12px;padding:8px 12px;background:var(--bg);border-radius:var(--rs)}
+.jc-timeline{position:relative;padding-left:20px}
+.jc-timeline::before{content:'';position:absolute;left:6px;top:4px;bottom:4px;width:2px;background:var(--tertiary)}
+.jc-step{position:relative;padding-bottom:16px}
+.jc-step:last-child{padding-bottom:0}
+.jc-step::before{content:'';position:absolute;left:-16px;top:4px;width:10px;height:10px;border-radius:50%;border:2px solid var(--tertiary);background:var(--bg)}
+.jc-step.good::before{border-color:var(--green);background:rgba(48,209,88,0.2)}
+.jc-step.bad::before{border-color:var(--red);background:rgba(255,69,58,0.2)}
+.jc-step.current::before{border-color:var(--blue);background:var(--blue)}
+.jc-step-header{display:flex;justify-content:space-between;font-size:12px;margin-bottom:2px}
+.jc-step-ver{font-weight:600}.jc-step-time{color:var(--tertiary)}
+.jc-step-desc{font-size:12px;color:var(--secondary);line-height:1.4}
+.jc-step-result{font-size:11px;font-weight:600;margin-top:2px}
+.jc-params-toggle{font-size:12px;color:var(--blue);cursor:pointer;margin-top:8px;padding:4px 0}
+.jc-params{display:none;margin-top:8px;font-size:11px}
+.jc-params.open{display:block}
+.jc-param-row{display:flex;justify-content:space-between;padding:3px 0;color:var(--tertiary)}
+.jc-param-row .val{color:var(--secondary);font-weight:500;font-variant-numeric:tabular-nums}
+
+/* ═══ TAB 5: 系統 ═══ */
+.health-hero{text-align:center;padding:32px 16px 16px}
+.health-icon{font-size:64px;margin-bottom:8px}
+.health-text{font-size:20px;font-weight:700}
+.health-sub{font-size:13px;color:var(--secondary);margin-top:4px}
+.health-checks{margin:0 16px}
+.hc{padding:14px 16px;background:var(--surface);border-radius:var(--rs);margin-bottom:6px;cursor:pointer;-webkit-tap-highlight-color:transparent}
+.hc:active{opacity:0.8}
+.hc-row{display:flex;justify-content:space-between;align-items:center}
+.hc-left{display:flex;align-items:center;gap:10px}
+.hc-icon{font-size:18px}.hc-label{font-size:14px;font-weight:500}
+.hc-value{font-size:13px;font-weight:600;font-variant-numeric:tabular-nums}
+.hc-value.ok{color:var(--green)}.hc-value.warn{color:var(--orange)}.hc-value.error{color:var(--red)}
+.log-section{margin:0 16px;max-height:300px;overflow-y:auto;-webkit-overflow-scrolling:touch}
+.log-item{padding:10px 0;border-bottom:1px solid rgba(255,255,255,0.04);font-size:12px}
+.log-header{display:flex;gap:6px;align-items:center;margin-bottom:2px}
+.log-level{font-size:10px;font-weight:700;padding:1px 5px;border-radius:3px}
+.log-level.info{background:rgba(10,132,255,0.15);color:var(--blue)}.log-level.warn{background:rgba(255,159,10,0.15);color:var(--orange)}.log-level.error{background:rgba(255,69,58,0.15);color:var(--red)}
+.log-cat{font-size:10px;color:var(--tertiary)}.log-time{font-size:10px;color:var(--tertiary);margin-left:auto}
+.log-msg{color:var(--secondary);line-height:1.4}
+</style>
+</head>
+<body>
+
+<div class="sbar">
+  <div class="sbar-left"><div class="dot ok"></div><span class="sbar-status">正常稼働</span></div>
+  <span class="sbar-time">20:58</span>
+</div>
+
+<!-- ═══════════ TAB 1: 今 ═══════════ -->
+<div class="tab-panel active" id="p-now">
+  <section class="hero"><div class="pnl neg">-¥208</div><div class="pnl-sub">今日の損益</div></section>
+  <div class="metrics">
+    <div class="m"><div class="m-val">¥9,792</div><div class="m-lbl">残高</div></div>
+    <div class="m"><div class="m-val" style="color:var(--red)">-2.1%</div><div class="m-lbl">ROI</div></div>
+    <div class="m"><div class="m-val">52.1%</div><div class="m-lbl">勝率</div></div>
+    <div class="m"><div class="m-val">1.02</div><div class="m-lbl">PF</div></div>
+    <div class="m"><div class="m-val">499</div><div class="m-lbl">取引</div></div>
+  </div>
+  <div class="sig"><div class="sig-track"><div class="sig-fill" style="width:48%"></div></div><span class="sig-lbl">有意性 48%</span></div>
+  <div class="story">
+    <div class="story-text"><b class="g">Nikkei225</b>が<b class="g">+801円</b>(TP)で利益の柱。<b class="r">Gold</b>が<b class="r">-479円</b>(SL)で最大損失。<span class="o">VIX=27</span>でSL幅縮小中。PR3件実行。</div>
+    <div class="drivers">
+      <div class="drv" onclick="sw('p-stats',document.querySelector('.tab:nth-child(3)'));setTimeout(function(){document.getElementById('evo-nikkei').scrollIntoView({behavior:'smooth'})},100)"><div class="drv-tag profit">利益TOP</div><div class="drv-pair">Nikkei225</div><div class="drv-pnl" style="color:var(--green)">+801</div><div class="drv-reason">TP · ATR×3.3</div></div>
+      <div class="drv" onclick="sw('p-stats',document.querySelector('.tab:nth-child(3)'));setTimeout(function(){document.getElementById('evo-gold').scrollIntoView({behavior:'smooth'})},100)"><div class="drv-tag loss">損失TOP</div><div class="drv-pair">Gold</div><div class="drv-pnl" style="color:var(--red)">-479</div><div class="drv-reason">SL · VIX警戒</div></div>
+    </div>
+    <div class="chips">
+      <span class="chip w">VIX=27</span>
+      <span class="chip i" onclick="sw('p-ai',document.querySelector('.tab:nth-child(4)'));setTimeout(function(){document.getElementById('ai-pr-section').scrollIntoView({behavior:'smooth'})},100)">PR 3件</span>
+      <span class="chip i" onclick="sw('p-ai',document.querySelector('.tab:nth-child(4)'));setTimeout(function(){document.getElementById('ai-news-section').scrollIntoView({behavior:'smooth'})},100)">ニュース 2件</span>
+      <span class="chip w">SL幅縮小中</span>
+    </div>
+  </div>
+  <div class="hm"><div class="hm-g">
+    <div class="hm-h">銘柄</div><div class="hm-h">PnL</div><div class="hm-h">VIX</div><div class="hm-h">PR</div><div class="hm-h">News</div>
+    <div class="hm-p">Nikkei</div><div class="hm-c" style="background:rgba(48,209,88,0.3)">+686</div><div class="hm-c" style="background:rgba(255,159,10,0.2)">0.5</div><div class="hm-c">—</div><div class="hm-c" style="background:rgba(10,132,255,0.15)">9</div>
+    <div class="hm-p">Gold</div><div class="hm-c" style="background:rgba(255,69,58,0.35)">-2053</div><div class="hm-c" style="background:rgba(255,159,10,0.2)">0.5</div><div class="hm-c" style="background:rgba(10,132,255,0.25)">✓</div><div class="hm-c" style="background:rgba(10,132,255,0.15)">9</div>
+    <div class="hm-p">Silver</div><div class="hm-c" style="background:rgba(48,209,88,0.2)">+253</div><div class="hm-c" style="background:rgba(255,159,10,0.2)">0.5</div><div class="hm-c" style="background:rgba(10,132,255,0.25)">✓</div><div class="hm-c" style="background:rgba(10,132,255,0.15)">9</div>
+  </div></div>
+  <div class="sec">ニュース速報 · <span class="cross-link" onclick="sw('p-news',document.querySelector('.tab:nth-child(2)'))">全30件 →</span></div>
+  <div class="news-feed">
+    <div class="nf-item nf-emergency" onclick="sw('p-news',document.querySelector('.tab:nth-child(2)'))"><div class="nf-header"><span class="nf-badge nf-badge-emergency">⚡ 緊急</span><span class="nf-time">32分前</span></div><div class="nf-headline">原油上昇、ブレント100ドル超え回復</div><div class="nf-action"><span style="font-size:12px;color:var(--tertiary)">→</span><span class="nf-action-text"><b style="color:var(--green)">CrudeOil BUY</b> 発動</span></div></div>
+    <div class="nf-item nf-trend" onclick="sw('p-news',document.querySelector('.tab:nth-child(2)'))"><div class="nf-header"><span class="nf-badge nf-badge-trend">📊 トレンド</span><span class="nf-time">1h前</span></div><div class="nf-headline">経済総合PMI 51.0に低下</div><div class="nf-action"><span style="font-size:12px;color:var(--tertiary)">→</span><span class="nf-action-text"><b style="color:var(--red)">EUR/USD SELL</b> 発動</span></div></div>
+  </div>
+  <div class="sec">保有中 · 5件 · 含み <span style="color:var(--green)">+¥9</span></div>
+  <div class="positions" id="now-positions">
+    <div class="pos lose"><div class="pos-dir s">S</div><div class="pos-body"><div class="pos-top"><span class="pos-pair">USD/JPY</span><span class="pos-pnl neg">-¥13</span></div><div class="pos-bot"><span class="pos-meta">158.299→565 · <span class="time-warn">⏰11h</span> · RR1.8</span><svg width="48" height="16" viewBox="0 0 48 16"><polyline points="0,14 8,9 16,12 24,5 32,10 40,3 48,1" fill="none" stroke="#FF453A" stroke-width="1.2" stroke-linecap="round"/></svg></div></div></div>
+    <div class="pos win"><div class="pos-dir b">B</div><div class="pos-body"><div class="pos-top"><span class="pos-pair">日経225</span><span class="pos-pnl pos">+¥24</span></div><div class="pos-bot"><span class="pos-meta">51,911→52,252 · 6h · RR2.2</span><svg width="48" height="16" viewBox="0 0 48 16"><polyline points="0,14 12,10 24,8 36,4 48,1" fill="none" stroke="#30D158" stroke-width="1.2" stroke-linecap="round"/></svg></div></div></div>
+    <div class="pos win"><div class="pos-dir s">S</div><div class="pos-body"><div class="pos-top"><span class="pos-pair">銅</span><span class="pos-pnl pos">+¥6</span></div><div class="pos-bot"><span class="pos-meta">$5.42→41 · 3h · RR2.0</span><svg width="48" height="16" viewBox="0 0 48 16"><polyline points="0,2 12,6 24,4 36,10 48,14" fill="none" stroke="#30D158" stroke-width="1.2" stroke-linecap="round"/></svg></div></div></div>
+  </div>
+  <div class="sec">市場</div>
+  <div class="mkt-bar">
+    <div class="mkt"><div class="mkt-v" style="color:var(--orange)">27.3</div><div class="mkt-l">VIX</div><div class="mkt-d up">↑2.1</div></div>
+    <div class="mkt"><div class="mkt-v">4.33%</div><div class="mkt-l">US10Y</div><div class="mkt-d dn">↓0.02</div></div>
+    <div class="mkt"><div class="mkt-v">52,252</div><div class="mkt-l">日経</div><div class="mkt-d up">+0.3%</div></div>
+    <div class="mkt"><div class="mkt-v">6,581</div><div class="mkt-l">S&P</div><div class="mkt-d dn">-0.1%</div></div>
+  </div>
+  <div class="sec">待機 · 11銘柄</div>
+  <div class="wait-grid">
+    <div class="wt"><div class="wt-pair">EUR/USD</div><div class="wt-price">1.160</div></div>
+    <div class="wt"><div class="wt-pair">GBP/USD</div><div class="wt-price">1.343</div></div>
+    <div class="wt"><div class="wt-pair">NASDAQ</div><div class="wt-price">21,947</div></div>
+    <div class="wt"><div class="wt-pair">DAX</div><div class="wt-price">22,654</div></div>
+    <div class="wt"><div class="wt-pair">Gold</div><div class="wt-price">$4,408</div></div>
+    <div class="wt"><div class="wt-pair">Silver</div><div class="wt-price">$69.56</div></div>
+  </div>
+  <div style="padding:16px;text-align:center"><span class="cross-link" onclick="sw('p-stats',document.querySelector('.tab:nth-child(3)'))">→ 学びタブで変更の効果を確認</span></div>
+</div>
+
+<!-- ═══════════ TAB 2: ニュース ═══════════ -->
+<div class="tab-panel" id="p-news">
+  <!-- ニュース統計 -->
+  <div class="sec">ニュース概況</div>
+  <div class="kpi-grid" style="margin:0 16px 8px">
+    <div class="kpi"><div class="kpi-val">30</div><div class="kpi-lbl">取得件数</div></div>
+    <div class="kpi"><div class="kpi-val" style="color:var(--blue)">3</div><div class="kpi-lbl">AI分析済</div></div>
+    <div class="kpi"><div class="kpi-val" style="color:var(--green)">2</div><div class="kpi-lbl">取引発動</div></div>
+    <div class="kpi"><div class="kpi-val" style="color:var(--red)">1</div><div class="kpi-lbl">緊急</div></div>
+  </div>
+
+  <!-- 影響あり -->
+  <div class="sec">取引に影響したニュース</div>
+  <div class="news-feed">
+    <div class="nf-item nf-emergency">
+      <div class="nf-header"><span class="nf-badge nf-badge-emergency">⚡ 緊急 · score 92</span><span class="nf-time">32分前</span></div>
+      <div class="nf-headline">原油上昇、ブレント100ドル超え回復 イラン戦争緩和の楽観後退</div>
+      <div class="nf-ai"><span class="nf-ai-label">🧠 AI判断</span><span class="nf-ai-text">CrudeOil に強い上昇圧力。即時BUYエントリー推奨。3ソースが同時報道 + 価格スパイク+3%</span></div>
+      <div class="nf-action"><span style="font-size:12px;color:var(--tertiary)">→</span><span class="nf-action-text"><b style="color:var(--green)">CrudeOil BUY</b> @ $90.88 · TP $93.38 · SL $90.38</span></div>
+      <div style="margin-top:8px;padding-top:8px;border-top:1px solid rgba(255,255,255,0.04)">
+        <div style="font-size:11px;color:var(--tertiary);margin-bottom:4px">Why×5</div>
+        <div style="font-size:12px;color:var(--secondary);line-height:1.6;padding-left:8px;border-left:2px solid var(--tertiary)">
+          ① なぜBUY? → 3ソース同時報道 + 価格+3%スパイク → score=92<br>
+          ② なぜscore=92? → 複数独立ソースの一致は信頼性高（Reuters+NHK+Yahoo）<br>
+          ③ なぜTP=$93.38? → ATR×3.3=$2.50幅。過去の同条件では80%がTP方向に進行<br>
+          ④ なぜSL=$90.38? → ATR×1.5=$0.50幅。VIX=27のためvix_sl_scale=1.0（縮小なし）<br>
+          ⑤ 検証: 同条件の過去5件中4件がプラス（80%）。平均RR=2.8
+        </div>
+      </div>
+      <div style="margin-top:8px"><span class="cross-link" onclick="sw('p-now',document.querySelector('.tab:nth-child(1)'))">→ 今タブでポジション確認</span></div>
+    </div>
+
+    <div class="nf-item nf-trend">
+      <div class="nf-header"><span class="nf-badge nf-badge-trend">📊 トレンド · score 78</span><span class="nf-time">1h前</span></div>
+      <div class="nf-headline">経済総合PMI、51.0に低下 前回53.7 サービス業が牽引役失う</div>
+      <div class="nf-ai"><span class="nf-ai-label">🧠 AI判断</span><span class="nf-ai-text">EUR/USD に売り圧力。総合・サービス業PMI低下がユーロ弱含みを示唆。製造業は好調も全体像は弱い</span></div>
+      <div class="nf-action"><span style="font-size:12px;color:var(--tertiary)">→</span><span class="nf-action-text"><b style="color:var(--red)">EUR/USD SELL</b> @ 1.160 · TP 1.155 · SL 1.163</span></div>
+      <div style="margin-top:8px;padding-top:8px;border-top:1px solid rgba(255,255,255,0.04)">
+        <div style="font-size:11px;color:var(--tertiary);margin-bottom:4px">Why×5</div>
+        <div style="font-size:12px;color:var(--secondary);line-height:1.6;padding-left:8px;border-left:2px solid var(--tertiary)">
+          ① なぜSELL? → PMI 53.7→51.0 の大幅低下。サービス業=ユーロ圏の主要セクター<br>
+          ② なぜEUR/USD? → ユーロ圏のPMI低下は直接EUR売り材料<br>
+          ③ なぜscore=78? → 経済指標の予想比下振れは中程度の影響<br>
+          ④ 結果: SELL中。含み-¥3（判定中）<br>
+          ⑤ 類似: 過去のPMI下振れ時の勝率 62%（8件中5件）
+        </div>
+      </div>
+      <div style="margin-top:8px"><span class="cross-link" onclick="sw('p-ai',document.querySelector('.tab:nth-child(4)'))">→ AIタブで判定確認</span></div>
+    </div>
+  </div>
+
+  <!-- 影響なし -->
+  <div class="sec">分析済み · 影響なし</div>
+  <div class="news-feed">
+    <div class="nf-item nf-info">
+      <div class="nf-header"><span class="nf-badge nf-badge-info">📰 情報 · score 45</span><span class="nf-time">2h前</span></div>
+      <div class="nf-headline">日銀、金融政策据え置き 植田総裁「緩和継続が適切」</div>
+      <div class="nf-ai"><span class="nf-ai-label">🧠 AI</span><span class="nf-ai-text">USD/JPY への影響は限定的。市場は据え置きを織り込み済み</span></div>
+      <div class="nf-action"><span style="font-size:12px;color:var(--tertiary)">→</span><span class="nf-action-text" style="color:var(--tertiary)">影響なし · パラメーター変更なし</span></div>
+    </div>
+    <div class="nf-item nf-info">
+      <div class="nf-header"><span class="nf-badge nf-badge-info">📰 情報 · score 38</span><span class="nf-time">3h前</span></div>
+      <div class="nf-headline">米CPI、前月比+0.3% 予想+0.2%をやや上回る</div>
+      <div class="nf-ai"><span class="nf-ai-label">🧠 AI</span><span class="nf-ai-text">インフレ懸念やや上昇も市場は限定的反応。USD/JPY のSL幅を微調整</span></div>
+      <div class="nf-action"><span style="font-size:12px;color:var(--tertiary)">→</span><span class="nf-action-text"><span style="color:var(--orange)">USD/JPY SL幅縮小</span>（パラメーター微調整）</span></div>
+    </div>
+  </div>
+
+  <!-- 未分析 -->
+  <div class="sec">未分析ニュース · 26件</div>
+  <div style="margin:0 16px">
+    <div style="padding:10px 0;border-bottom:1px solid rgba(255,255,255,0.04);font-size:13px"><span style="color:var(--tertiary);font-size:11px;margin-right:8px">5m前</span>米国住宅着工件数、3月は前月比-2.1%</div>
+    <div style="padding:10px 0;border-bottom:1px solid rgba(255,255,255,0.04);font-size:13px"><span style="color:var(--tertiary);font-size:11px;margin-right:8px">12m前</span>中国GDP第1四半期 +4.8% 予想下回る</div>
+    <div style="padding:10px 0;border-bottom:1px solid rgba(255,255,255,0.04);font-size:13px"><span style="color:var(--tertiary);font-size:11px;margin-right:8px">25m前</span>ECB理事、追加利下げに慎重姿勢示す</div>
+    <div style="padding:10px 0;border-bottom:1px solid rgba(255,255,255,0.04);font-size:13px"><span style="color:var(--tertiary);font-size:11px;margin-right:8px">40m前</span>英国失業率 4.1% 横ばい</div>
+    <div style="padding:10px 0;border-bottom:1px solid rgba(255,255,255,0.04);font-size:13px"><span style="color:var(--tertiary);font-size:11px;margin-right:8px">1h前</span>豪ドル、RBA議事要旨受け小動き</div>
+    <div style="padding:10px 0;font-size:12px;color:var(--tertiary);text-align:center">他21件...</div>
+  </div>
+
+  <!-- ソース別統計 -->
+  <div class="sec">ソース別</div>
+  <div style="margin:0 16px 16px">
+    <div style="display:flex;justify-content:space-between;padding:8px 0;border-bottom:1px solid rgba(255,255,255,0.04);font-size:13px"><span>Reuters</span><span style="color:var(--secondary)">8件</span></div>
+    <div style="display:flex;justify-content:space-between;padding:8px 0;border-bottom:1px solid rgba(255,255,255,0.04);font-size:13px"><span>NHK</span><span style="color:var(--secondary)">6件</span></div>
+    <div style="display:flex;justify-content:space-between;padding:8px 0;border-bottom:1px solid rgba(255,255,255,0.04);font-size:13px"><span>Yahoo Finance</span><span style="color:var(--secondary)">5件</span></div>
+    <div style="display:flex;justify-content:space-between;padding:8px 0;border-bottom:1px solid rgba(255,255,255,0.04);font-size:13px"><span>Google News</span><span style="color:var(--secondary)">4件</span></div>
+    <div style="display:flex;justify-content:space-between;padding:8px 0;border-bottom:1px solid rgba(255,255,255,0.04);font-size:13px"><span>Kabutan</span><span style="color:var(--secondary)">4件</span></div>
+    <div style="display:flex;justify-content:space-between;padding:8px 0;font-size:13px"><span>WSJ / その他</span><span style="color:var(--secondary)">3件</span></div>
+  </div>
+</div>
+
+<!-- ═══════════ TAB 3: 学び ═══════════ -->
+<div class="tab-panel" id="p-stats">
+  <!-- KPI grid (v6 new) -->
+  <div class="sec">全体パフォーマンス</div>
+  <div class="kpi-grid">
+    <div class="kpi"><div class="kpi-val" style="color:var(--green)">52.1%</div><div class="kpi-lbl">勝率</div></div>
+    <div class="kpi"><div class="kpi-val">1.02</div><div class="kpi-lbl">PF</div></div>
+    <div class="kpi"><div class="kpi-val">0.41</div><div class="kpi-lbl">シャープ</div></div>
+    <div class="kpi"><div class="kpi-val" style="color:var(--red)">-3.2%</div><div class="kpi-lbl">最大DD</div></div>
+    <div class="kpi"><div class="kpi-val">2.1</div><div class="kpi-lbl">平均RR</div></div>
+    <div class="kpi"><div class="kpi-val">499</div><div class="kpi-lbl">総取引</div></div>
+  </div>
+
+  <!-- Equity curve (v6 new) -->
+  <div style="margin:12px 16px 0;background:var(--surface);border-radius:var(--rs);padding:12px">
+    <div style="font-size:11px;color:var(--tertiary);margin-bottom:8px;font-weight:600">エクイティカーブ</div>
+    <svg viewBox="0 0 320 60" style="width:100%;height:60px">
+      <polyline points="0,50 20,48 40,45 60,47 80,42 100,38 120,40 140,35 160,30 180,33 200,28 220,25 240,30 260,27 280,22 300,20 320,24" fill="none" stroke="var(--green)" stroke-width="1.5" stroke-linecap="round"/>
+      <line x1="140" y1="0" x2="140" y2="60" stroke="var(--blue)" stroke-width="1" stroke-dasharray="3"/><text x="143" y="10" fill="var(--blue)" font-size="8">v2開始</text>
+      <line x1="240" y1="0" x2="240" y2="60" stroke="var(--purple)" stroke-width="1" stroke-dasharray="3"/><text x="243" y="10" fill="var(--purple)" font-size="8">PR#3</text>
+    </svg>
+  </div>
+
+  <!-- Env matrix (v6 new) -->
+  <div class="sec">手法 × 環境マトリクス</div>
+  <div class="matrix-grid">
+    <div class="matrix-h"></div><div class="matrix-h">低VIX</div><div class="matrix-h">中VIX</div><div class="matrix-h">高VIX</div>
+    <div class="matrix-p">MeanRev</div><div class="matrix-c" style="background:rgba(48,209,88,0.25)">+62%</div><div class="matrix-c" style="background:rgba(48,209,88,0.15)">+51%</div><div class="matrix-c" style="background:rgba(255,69,58,0.2)">38%</div>
+    <div class="matrix-p">Trend</div><div class="matrix-c" style="background:rgba(255,69,58,0.15)">42%</div><div class="matrix-c" style="background:rgba(48,209,88,0.15)">+55%</div><div class="matrix-c" style="background:rgba(48,209,88,0.25)">+58%</div>
+    <div class="matrix-p">News</div><div class="matrix-c">50%</div><div class="matrix-c" style="background:rgba(48,209,88,0.2)">+60%</div><div class="matrix-c" style="background:rgba(48,209,88,0.15)">+54%</div>
+  </div>
+
+  <div class="sec">全体の結論</div>
+  <div class="verdict-strip">
+    <div class="verdict-box"><div class="verdict-num" style="color:var(--green)">5</div><div class="verdict-lbl">効いた変更</div></div>
+    <div class="verdict-box"><div class="verdict-num" style="color:var(--red)">2</div><div class="verdict-lbl">効かなかった</div></div>
+    <div class="verdict-box"><div class="verdict-num" style="color:var(--tertiary)">1</div><div class="verdict-lbl">判定中</div></div>
+  </div>
+
+  <div class="sec">銘柄別: 変更 → 結果（Why×5付き）</div>
+
+  <!-- USD/JPY -->
+  <div class="evo-card" id="evo-usdjpy">
+    <div class="evo-header">
+      <span class="evo-pair">USD/JPY</span>
+      <span class="evo-verdict worked">✅ 改善中</span>
+    </div>
+    <div class="evo-chart">
+      <svg viewBox="0 0 300 48"><polyline points="0,40 30,38 60,42 90,35 120,30 150,28 180,32 210,25 240,20 270,18 300,15" fill="none" stroke="#30D158" stroke-width="1.5" stroke-linecap="round"/>
+      <line x1="120" y1="0" x2="120" y2="48" stroke="#0A84FF" stroke-width="1" stroke-dasharray="3"/><text x="122" y="10" fill="#0A84FF" font-size="8">v2</text></svg>
+    </div>
+    <div class="evo-changes">
+      <div class="evo-change"><div class="evo-dot improved"></div><div style="flex:1">
+        <div class="evo-text">v1→v2: TP倍率 3.0→3.6、ADX最小 22→30</div>
+        <div class="evo-result worked">勝率 48%→58% · RR 1.8→2.4 · 30件で検証済み</div>
+        <div class="why-toggle" onclick="this.nextElementSibling.classList.toggle('open')">▶ なぜ効いた？</div>
+        <div class="why-tree">
+          <div class="why-node">
+            <div class="why-q">Why1: なぜ勝率が上がった？</div>
+            <div class="why-a">TP倍率拡大 → TP到達前のSL決済が減少（SL率 62%→48%）</div>
+            <div class="why-sub">
+              <div class="why-node">
+                <div class="why-q">Why2: なぜSL決済が減った？</div>
+                <div class="why-a">ATR×3.6 で通常の値動き幅を超える余裕を確保</div>
+                <div class="why-evidence">裏付: v2期間中のTP到達率 52%（v1: 38%）</div>
+              </div>
+            </div>
+          </div>
+          <div class="why-node">
+            <div class="why-q">Why1: ADX閾値引上げの効果は？</div>
+            <div class="why-a">弱トレンド(ADX&lt;30)でのエントリーを排除</div>
+            <div class="why-sub">
+              <div class="why-node">
+                <div class="why-q">Why2: なぜ弱トレンド排除が有効？</div>
+                <div class="why-a">ER&lt;0.5 のレンジ相場エントリーが激減</div>
+                <div class="why-evidence">裏付: スキップ率 +15%、残りの精度が向上</div>
+                <div class="why-sub">
+                  <div class="why-node">
+                    <div class="why-q">Why3: レンジでなぜ負ける？</div>
+                    <div class="why-a">MeanReversionがノイズに巻き込まれる</div>
+                    <div class="why-sub">
+                      <div class="why-node">
+                        <div class="why-q">Why4: なぜノイズが大きい？</div>
+                        <div class="why-a">方向性なくATR範囲で上下するため</div>
+                        <div class="why-sub">
+                          <div class="why-node">
+                            <div class="why-q">Why5: 根本原因</div>
+                            <div class="why-a">MeanRev戦略はトレンド確認なしに使うと損する構造</div>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+        <span class="cross-link" onclick="sw('p-strategy',document.querySelector('.tab:nth-child(5)'));setTimeout(function(){document.getElementById('jc-usdjpy').scrollIntoView({behavior:'smooth'})},100)">→ 戦略で詳細</span>
+        <span class="cross-link" style="margin-left:12px" onclick="sw('p-ai',document.querySelector('.tab:nth-child(4)'))">→ AIタブで判断を確認</span>
+      </div></div>
+    </div>
+  </div>
+
+  <!-- Gold -->
+  <div class="evo-card" id="evo-gold">
+    <div class="evo-header">
+      <span class="evo-pair">Gold</span>
+      <span class="evo-verdict didnt">❌ 悪化</span>
+    </div>
+    <div class="evo-chart">
+      <svg viewBox="0 0 300 48"><polyline points="0,15 30,18 60,12 90,20 120,25 150,30 180,28 210,35 240,38 270,40 300,42" fill="none" stroke="#FF453A" stroke-width="1.5" stroke-linecap="round"/>
+      <line x1="120" y1="0" x2="120" y2="48" stroke="#0A84FF" stroke-width="1" stroke-dasharray="3"/><text x="122" y="10" fill="#0A84FF" font-size="8">v2</text></svg>
+    </div>
+    <div class="evo-changes">
+      <div class="evo-change"><div class="evo-dot worsened"></div><div style="flex:1">
+        <div class="evo-text">v1→v2: RSI 35/65→30/70、TP倍率 3.3→3.6</div>
+        <div class="evo-result didnt">勝率 52%→49% · PnL -¥1,312 · SL連発が改善せず</div>
+        <div class="why-toggle" onclick="this.nextElementSibling.classList.toggle('open')">▶ なぜ効かなかった？</div>
+        <div class="why-tree">
+          <div class="why-node">
+            <div class="why-q">Why1: なぜSL連発が止まらない？</div>
+            <div class="why-a">VIX高止まり(27)でGold価格が急変動</div>
+            <div class="why-sub">
+              <div class="why-node">
+                <div class="why-q">Why2: RSI幅拡大はなぜ逆効果？</div>
+                <div class="why-a">30/70だとエントリーが遅れ、反転済みでポジション取得</div>
+                <div class="why-sub">
+                  <div class="why-node">
+                    <div class="why-q">Why3: なぜ反転後に入る？</div>
+                    <div class="why-a">Goldは安全資産として急反転が起きやすい</div>
+                    <div class="why-evidence">裏付: RSI30到達後10分以内の反転率 68%</div>
+                    <div class="why-sub">
+                      <div class="why-node">
+                        <div class="why-q">Why4: 根本原因</div>
+                        <div class="why-a">GoldにMeanRevは相性悪い → SL戦略の見直しか戦略変更が必要</div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+        <span class="cross-link" onclick="sw('p-strategy',document.querySelector('.tab:nth-child(5)'));setTimeout(function(){document.getElementById('jc-gold').scrollIntoView({behavior:'smooth'})},100)">→ 戦略で詳細</span>
+      </div></div>
+    </div>
+  </div>
+
+  <!-- Nikkei -->
+  <div class="evo-card" id="evo-nikkei">
+    <div class="evo-header">
+      <span class="evo-pair">Nikkei225</span>
+      <span class="evo-verdict worked">✅ 改善中</span>
+    </div>
+    <div class="evo-chart">
+      <svg viewBox="0 0 300 48"><polyline points="0,35 50,30 100,32 150,25 200,20 250,18 300,12" fill="none" stroke="#30D158" stroke-width="1.5" stroke-linecap="round"/>
+      <line x1="100" y1="0" x2="100" y2="48" stroke="#0A84FF" stroke-width="1" stroke-dasharray="3"/><text x="102" y="10" fill="#0A84FF" font-size="8">v2</text></svg>
+    </div>
+    <div class="evo-changes">
+      <div class="evo-change"><div class="evo-dot improved"></div><div style="flex:1">
+        <div class="evo-text">v1→v2: RSI 35/65→38/62、TP倍率 3.0→3.3</div>
+        <div class="evo-result worked">勝率 50%→55% · RR 2.0→2.25</div>
+        <div class="why-toggle" onclick="this.nextElementSibling.classList.toggle('open')">▶ なぜ効いた？</div>
+        <div class="why-tree">
+          <div class="why-node">
+            <div class="why-q">Why1: RSI幅縮小の効果は？</div>
+            <div class="why-a">確度の高いシグナルのみに絞り込み</div>
+            <div class="why-sub">
+              <div class="why-node">
+                <div class="why-q">Why2: なぜ絞り込みが有効？</div>
+                <div class="why-a">日経は米市場追従でトレンドが明確 → 確信度高い局面でのみエントリー</div>
+                <div class="why-evidence">裏付: RSI38-62範囲の勝率 61%（全体55%）</div>
+              </div>
+            </div>
+          </div>
+        </div>
+        <span class="cross-link" onclick="sw('p-strategy',document.querySelector('.tab:nth-child(5)'));setTimeout(function(){document.getElementById('jc-nikkei').scrollIntoView({behavior:'smooth'})},100)">→ 戦略で詳細</span>
+      </div></div>
+    </div>
+  </div>
+
+  <div style="padding:16px;text-align:center"><span class="cross-link" onclick="sw('p-ai',document.querySelector('.tab:nth-child(4)'))">→ AIタブで全判断の正解率を確認</span></div>
+</div>
+
+<!-- ═══════════ TAB 3: AI ═══════════ -->
+<div class="tab-panel" id="p-ai">
+  <div class="ai-score">
+    <div class="ai-score-num" style="color:var(--green)">68%</div>
+    <div class="ai-score-label">AIの正解率</div>
+    <div class="ai-score-sub">直近30件のAI行動のうち、20件が正しかった</div>
+  </div>
+
+  <!-- AI type breakdown (v6 new) -->
+  <div class="ai-breakdown">
+    <div class="ai-brk"><div class="ai-brk-type">ニュース分析</div><div class="ai-brk-val" style="color:var(--green)">72%</div><div class="ai-brk-sub">18件中13件正解</div></div>
+    <div class="ai-brk"><div class="ai-brk-type">Param Review</div><div class="ai-brk-val" style="color:var(--orange)">58%</div><div class="ai-brk-sub">12件中7件正解</div></div>
+  </div>
+
+  <!-- Brier score (v6 new) -->
+  <div class="brier-row">
+    <span class="brier-label">Brierスコア</span>
+    <svg width="80" height="20" viewBox="0 0 80 20" class="spark-mini"><polyline points="0,15 10,12 20,14 30,10 40,11 50,8 60,9 70,7 80,6" fill="none" stroke="var(--green)" stroke-width="1.2" stroke-linecap="round"/></svg>
+    <span class="brier-val" style="color:var(--green)">0.18</span>
+    <span style="font-size:10px;color:var(--tertiary)">↓改善中</span>
+  </div>
+
+  <div class="verdict-strip">
+    <div class="verdict-box"><div class="verdict-num" style="color:var(--green)">20</div><div class="verdict-lbl">正解</div></div>
+    <div class="verdict-box"><div class="verdict-num" style="color:var(--red)">7</div><div class="verdict-lbl">不正解</div></div>
+    <div class="verdict-box"><div class="verdict-num" style="color:var(--blue)">3</div><div class="verdict-lbl">判定中</div></div>
+  </div>
+
+  <div class="sec" id="ai-pr-section">Param Review</div>
+
+  <div class="verdict-card correct">
+    <div class="vc-header">
+      <span class="vc-action">🧠 Gold Param Review</span>
+      <span class="vc-verdict correct">✅ 正解</span>
+    </div>
+    <div class="vc-reason">「TP倍率を3.3→3.6に引上げ。RR改善を狙う」</div>
+    <div class="vc-outcome worked">→ 変更後 RR 2.0→2.32 に改善。TP到達率 +8%</div>
+    <div class="why-toggle" onclick="this.nextElementSibling.classList.toggle('open')">▶ Why×5 根拠チェーン</div>
+    <div class="why-tree">
+      <div class="why-node">
+        <div class="why-q">Why1: なぜRR改善と判断？</div>
+        <div class="why-a">v1のTP到達率が38%と低く、TP幅不足が原因と分析</div>
+        <div class="why-sub"><div class="why-node">
+          <div class="why-q">Why2: なぜTP幅不足？</div>
+          <div class="why-a">ATR×3.0がGoldの平均スイング幅を下回っていた</div>
+          <div class="why-evidence">裏付: Gold平均スイング = ATR×3.4</div>
+        </div></div>
+      </div>
+    </div>
+    <div class="vc-time">2h前</div>
+    <span class="cross-link" onclick="sw('p-stats',document.querySelector('.tab:nth-child(3)'));setTimeout(function(){document.getElementById('evo-gold').scrollIntoView({behavior:'smooth'})},100)">→ 学びで効果を確認</span>
+  </div>
+
+  <div class="verdict-card correct">
+    <div class="vc-header">
+      <span class="vc-action">🧠 Silver Param Review</span>
+      <span class="vc-verdict correct">✅ 正解</span>
+    </div>
+    <div class="vc-reason">「adx_min 22→26。エントリー精度向上」</div>
+    <div class="vc-outcome worked">→ 変更後の勝率 54%→60%（5件）</div>
+    <div class="vc-time">3h前</div>
+    <span class="cross-link" onclick="sw('p-stats',document.querySelector('.tab:nth-child(3)'))">→ 学びで効果を確認</span>
+  </div>
+
+  <div class="sec" id="ai-news-section">ニュース分析</div>
+
+  <div class="verdict-card correct">
+    <div class="vc-header">
+      <span class="vc-action">📰 CrudeOil ニュース BUY</span>
+      <span class="vc-verdict correct">✅ 正解</span>
+    </div>
+    <div class="vc-reason">「原油100ドル超え → BUY推奨 score=92」</div>
+    <div class="vc-outcome worked">→ BUY後 +$2.50 上昇。TP方向に進行中</div>
+    <div class="why-toggle" onclick="this.nextElementSibling.classList.toggle('open')">▶ Why×5 根拠チェーン</div>
+    <div class="why-tree">
+      <div class="why-node">
+        <div class="why-q">Why1: なぜscore=92？</div>
+        <div class="why-a">3ソースが同時に原油上昇を報道 + 価格+3%スパイク</div>
+        <div class="why-sub"><div class="why-node">
+          <div class="why-q">Why2: なぜBUY判断？</div>
+          <div class="why-a">上昇モメンタム検出 + ER=0.68（トレンド確認済み）</div>
+          <div class="why-sub"><div class="why-node">
+            <div class="why-q">Why3: なぜTP=$93.38？</div>
+            <div class="why-a">ATR×3.3 = $2.50 幅で設定</div>
+            <div class="why-evidence">検証: 同条件の過去5件中4件がプラス（80%）</div>
+          </div></div>
+        </div></div>
+      </div>
+    </div>
+    <div class="vc-time">32分前</div>
+    <span class="cross-link" onclick="sw('p-now',document.querySelector('.tab:nth-child(1)'));setTimeout(function(){document.getElementById('now-positions').scrollIntoView({behavior:'smooth'})},100)">→ 今タブで進行確認</span>
+  </div>
+
+  <div class="verdict-card wrong">
+    <div class="vc-header">
+      <span class="vc-action">📰 Gold ニュース BUY</span>
+      <span class="vc-verdict wrong">❌ 不正解</span>
+    </div>
+    <div class="vc-reason">「インフレ懸念でGold上昇 → BUY推奨 score=75」</div>
+    <div class="vc-outcome didnt">→ BUY後 -$47 下落。SL到達で -479円</div>
+    <div class="why-toggle" onclick="this.nextElementSibling.classList.toggle('open')">▶ Why×5 根拠チェーン</div>
+    <div class="why-tree">
+      <div class="why-node">
+        <div class="why-q">Why1: なぜ不正解？</div>
+        <div class="why-a">score=75は中程度 → 確信度不足で判断すべきでなかった</div>
+        <div class="why-sub"><div class="why-node">
+          <div class="why-q">Why2: なぜ下落した？</div>
+          <div class="why-a">ドル高でGoldに売り圧力。ニュースの方向性とマクロが乖離</div>
+          <div class="why-evidence">裏付: 同日DXY +0.8%上昇</div>
+        </div></div>
+      </div>
+    </div>
+    <div class="vc-time">5h前</div>
+  </div>
+
+  <div class="verdict-card pending">
+    <div class="vc-header">
+      <span class="vc-action">📰 EUR/USD ニュース SELL</span>
+      <span class="vc-verdict pending">⏳ 判定中</span>
+    </div>
+    <div class="vc-reason">「PMI低下 → SELL推奨 score=78」</div>
+    <div class="vc-outcome" style="color:var(--blue)">→ SELL中。含み -¥3 · まだ判定不可</div>
+    <div class="vc-time">1h前</div>
+    <span class="cross-link" onclick="sw('p-now',document.querySelector('.tab:nth-child(1)'));setTimeout(function(){document.getElementById('now-positions').scrollIntoView({behavior:'smooth'})},100)">→ 今タブで進行確認</span>
+  </div>
+
+  <div style="padding:16px;text-align:center"><span class="cross-link" onclick="sw('p-stats',document.querySelector('.tab:nth-child(3)'))">→ 学びタブで全体の効果を確認</span></div>
+</div>
+
+<!-- ═══════════ TAB 4: 戦略 ═══════════ -->
+<div class="tab-panel" id="p-strategy">
+  <div class="sec">各銘柄の進化</div>
+
+  <!-- USD/JPY -->
+  <div class="journey-card" id="jc-usdjpy">
+    <div class="jc-header"><span class="jc-pair">USD/JPY</span><span class="jc-ver">現在 v2</span></div>
+    <div class="jc-summary">初期設定から1回のAIレビューを経て、TP倍率とADX閾値を引き上げ。結果、勝率が48%→58%に改善。攻撃的なパラメーターが奏功。</div>
+
+    <!-- Score breakdown (v6 new) -->
+    <div style="margin-bottom:12px;padding:8px 12px;background:var(--bg);border-radius:var(--rs)">
+      <div style="font-size:11px;color:var(--tertiary);font-weight:600;margin-bottom:6px">現在のエントリースコア内訳</div>
+      <div class="score-row"><span class="score-label">RSI</span><div class="score-bar"><div class="score-fill" style="width:82%"></div></div><span class="score-val">0.35 × 0.82 = 0.287</span></div>
+      <div class="score-row"><span class="score-label">ER</span><div class="score-bar"><div class="score-fill" style="width:65%"></div></div><span class="score-val">0.25 × 0.65 = 0.163</span></div>
+      <div class="score-row"><span class="score-label">MTF</span><div class="score-bar"><div class="score-fill" style="width:100%"></div></div><span class="score-val">0.20 × 1.00 = 0.200</span></div>
+      <div class="score-row"><span class="score-label">S/R</span><div class="score-bar"><div class="score-fill" style="width:45%"></div></div><span class="score-val">0.10 × 0.45 = 0.045</span></div>
+      <div class="score-row"><span class="score-label">PA</span><div class="score-bar"><div class="score-fill" style="width:0%"></div></div><span class="score-val">0.10 × 0.00 = 0.000</span></div>
+      <div class="score-row"><span class="score-label">BB</span><div class="score-bar"><div class="score-fill" style="width:30%"></div></div><span class="score-val">0.10 × 0.30 = 0.030</span></div>
+      <div class="score-total">Total: <span style="color:var(--green)">0.725</span> <span style="font-size:11px;color:var(--secondary)">(閾値 0.30 ✅)</span></div>
+    </div>
+
+    <div class="jc-timeline">
+      <div class="jc-step current">
+        <div class="jc-step-header"><span class="jc-step-ver">v2（現在）</span><span class="jc-step-time">7h前</span></div>
+        <div class="jc-step-desc">AI「RR=2.32。TP倍率を10%拡大、ADX閾値を30に引上げ」</div>
+        <div class="jc-step-result worked">勝率58% · RR2.40 · PnL +¥842</div>
+      </div>
+      <div class="jc-step good">
+        <div class="jc-step-header"><span class="jc-step-ver">v1（初期）</span><span class="jc-step-time">3/20〜</span></div>
+        <div class="jc-step-desc">デフォルト設定。RSI 35/65、TP×3.0、ADX 22</div>
+        <div class="jc-step-result" style="color:var(--tertiary)">勝率48% · RR1.80 · 30件で卒業</div>
+      </div>
+    </div>
+    <div class="jc-params-toggle" onclick="this.nextElementSibling.classList.toggle('open')">▶ パラメーター全量</div>
+    <div class="jc-params">
+      <div class="jc-param-row"><span>RSI 売/買</span><span class="val">35 / 65</span></div>
+      <div class="jc-param-row"><span>ADX最小</span><span class="val">30</span></div>
+      <div class="jc-param-row"><span>TP倍率</span><span class="val">3.6</span></div>
+      <div class="jc-param-row"><span>SL倍率</span><span class="val">1.5</span></div>
+      <div class="jc-param-row"><span>w(RSI/ER/MTF)</span><span class="val">0.35/0.25/0.20</span></div>
+      <div class="jc-param-row"><span>戦略</span><span class="val">mean_reversion</span></div>
+      <div class="jc-param-row"><span>最大保有</span><span class="val">480分</span></div>
+      <div class="jc-param-row"><span>クールダウン</span><span class="val">5分</span></div>
+    </div>
+    <span class="cross-link" onclick="sw('p-stats',document.querySelector('.tab:nth-child(3)'));setTimeout(function(){document.getElementById('evo-usdjpy').scrollIntoView({behavior:'smooth'})},100)">→ 学びで成果確認</span>
+  </div>
+
+  <!-- Gold -->
+  <div class="journey-card" id="jc-gold">
+    <div class="jc-header"><span class="jc-pair">Gold</span><span class="jc-ver">現在 v2</span></div>
+    <div class="jc-summary">AIがRSI幅を広げ（30/70）、TP倍率を拡大。しかしVIX高止まりでSL連発が続き、結果は悪化。次のレビューでSL戦略の見直しが必要。</div>
+
+    <div style="margin-bottom:12px;padding:8px 12px;background:var(--bg);border-radius:var(--rs)">
+      <div style="font-size:11px;color:var(--tertiary);font-weight:600;margin-bottom:6px">現在のエントリースコア内訳</div>
+      <div class="score-row"><span class="score-label">RSI</span><div class="score-bar"><div class="score-fill" style="width:40%;background:var(--red)"></div></div><span class="score-val">0.35 × 0.40 = 0.140</span></div>
+      <div class="score-row"><span class="score-label">ER</span><div class="score-bar"><div class="score-fill" style="width:55%"></div></div><span class="score-val">0.25 × 0.55 = 0.138</span></div>
+      <div class="score-row"><span class="score-label">MTF</span><div class="score-bar"><div class="score-fill" style="width:30%;background:var(--orange)"></div></div><span class="score-val">0.20 × 0.30 = 0.060</span></div>
+      <div class="score-row"><span class="score-label">S/R</span><div class="score-bar"><div class="score-fill" style="width:60%"></div></div><span class="score-val">0.10 × 0.60 = 0.060</span></div>
+      <div class="score-row"><span class="score-label">PA</span><div class="score-bar"><div class="score-fill" style="width:20%;background:var(--red)"></div></div><span class="score-val">0.10 × 0.20 = 0.020</span></div>
+      <div class="score-total">Total: <span style="color:var(--orange)">0.418</span> <span style="font-size:11px;color:var(--secondary)">(閾値 0.30 ⚠️ ギリギリ)</span></div>
+    </div>
+
+    <div class="jc-timeline">
+      <div class="jc-step current">
+        <div class="jc-step-header"><span class="jc-step-ver">v2（現在）</span><span class="jc-step-time">5h前</span></div>
+        <div class="jc-step-desc">AI「勝率改善のためRSI幅拡大。TP倍率を3.6に」</div>
+        <div class="jc-step-result didnt">勝率49% · PnL -¥1,312 · SL連発未解消</div>
+      </div>
+      <div class="jc-step bad">
+        <div class="jc-step-header"><span class="jc-step-ver">v1（初期）</span><span class="jc-step-time">3/20〜</span></div>
+        <div class="jc-step-desc">RSI 35/65、TP×3.3。VIX高水準で損切り多発</div>
+        <div class="jc-step-result" style="color:var(--tertiary)">勝率52% · RR1.85 · 30件で卒業</div>
+      </div>
+    </div>
+    <div class="jc-params-toggle" onclick="this.nextElementSibling.classList.toggle('open')">▶ パラメーター全量</div>
+    <div class="jc-params">
+      <div class="jc-param-row"><span>RSI 売/買</span><span class="val">30 / 70</span></div>
+      <div class="jc-param-row"><span>ADX最小</span><span class="val">24</span></div>
+      <div class="jc-param-row"><span>TP倍率</span><span class="val">3.6</span></div>
+      <div class="jc-param-row"><span>VIX上限</span><span class="val">40</span></div>
+    </div>
+    <span class="cross-link" onclick="sw('p-stats',document.querySelector('.tab:nth-child(3)'));setTimeout(function(){document.getElementById('evo-gold').scrollIntoView({behavior:'smooth'})},100)">→ 学びで成果確認</span>
+  </div>
+
+  <!-- Nikkei -->
+  <div class="journey-card" id="jc-nikkei">
+    <div class="jc-header"><span class="jc-pair">Nikkei225</span><span class="jc-ver">現在 v2</span></div>
+    <div class="jc-summary">RSI幅縮小で「確度の高いシグナルのみ」に絞り込み。勝率5%向上。安定的に改善中。</div>
+
+    <div style="margin-bottom:12px;padding:8px 12px;background:var(--bg);border-radius:var(--rs)">
+      <div style="font-size:11px;color:var(--tertiary);font-weight:600;margin-bottom:6px">現在のエントリースコア内訳</div>
+      <div class="score-row"><span class="score-label">RSI</span><div class="score-bar"><div class="score-fill" style="width:75%"></div></div><span class="score-val">0.35 × 0.75 = 0.263</span></div>
+      <div class="score-row"><span class="score-label">ER</span><div class="score-bar"><div class="score-fill" style="width:80%"></div></div><span class="score-val">0.25 × 0.80 = 0.200</span></div>
+      <div class="score-row"><span class="score-label">MTF</span><div class="score-bar"><div class="score-fill" style="width:90%"></div></div><span class="score-val">0.20 × 0.90 = 0.180</span></div>
+      <div class="score-total">Total: <span style="color:var(--green)">0.643</span> <span style="font-size:11px;color:var(--secondary)">(閾値 0.30 ✅)</span></div>
+    </div>
+
+    <div class="jc-timeline">
+      <div class="jc-step current">
+        <div class="jc-step-header"><span class="jc-step-ver">v2（現在）</span><span class="jc-step-time">6h前</span></div>
+        <div class="jc-step-desc">AI「RSI 38/62に絞込み。TP倍率 3.3に微増」</div>
+        <div class="jc-step-result worked">勝率55% · RR2.25 · PnL +¥623</div>
+      </div>
+    </div>
+    <span class="cross-link" onclick="sw('p-stats',document.querySelector('.tab:nth-child(3)'));setTimeout(function(){document.getElementById('evo-nikkei').scrollIntoView({behavior:'smooth'})},100)">→ 学びで成果確認</span>
+  </div>
+
+  <div style="padding:16px;text-align:center"><span class="cross-link" onclick="sw('p-ai',document.querySelector('.tab:nth-child(4)'))">→ AIタブで判断の正確性を確認</span></div>
+</div>
+
+<!-- ═══════════ TAB 5: 系統 ═══════════ -->
+<div class="tab-panel" id="p-sys">
+  <div class="health-hero">
+    <div class="health-icon">✅</div>
+    <div class="health-text" style="color:var(--green)">全システム正常</div>
+    <div class="health-sub">最終チェック: 20:58 · 稼働 94,175回</div>
+  </div>
+
+  <!-- DD stage bar (v6 new) -->
+  <div class="sec">ドローダウン段階</div>
+  <div class="dd-bar">
+    <div class="dd-seg" style="width:40%;background:var(--green)" title="NORMAL"></div>
+    <div class="dd-seg" style="width:20%;background:var(--orange);opacity:0.3" title="CAUTION"></div>
+    <div class="dd-seg" style="width:15%;background:var(--orange);opacity:0.15" title="WARNING"></div>
+    <div class="dd-seg" style="width:15%;background:var(--red);opacity:0.1" title="HALT"></div>
+    <div class="dd-seg" style="width:10%;background:var(--red);opacity:0.05" title="STOP"></div>
+  </div>
+  <div style="display:flex;justify-content:space-between;margin:0 16px 8px;font-size:10px;color:var(--tertiary)">
+    <span style="color:var(--green);font-weight:600">▲ 現在 1.8%</span>
+    <span>NORMAL</span><span>CAUTION</span><span>WARN</span><span>HALT</span><span>STOP</span>
+  </div>
+
+  <!-- Error rate & uptime (v6 new) -->
+  <div style="display:flex;gap:4px;margin:0 16px 8px">
+    <div style="flex:1;padding:10px 8px;background:var(--surface);border-radius:var(--rs);text-align:center">
+      <div style="font-size:18px;font-weight:700;color:var(--green)">99.98%</div>
+      <div style="font-size:10px;color:var(--tertiary);margin-top:2px">稼働率 24h</div>
+    </div>
+    <div style="flex:1;padding:10px 8px;background:var(--surface);border-radius:var(--rs);text-align:center">
+      <div style="font-size:18px;font-weight:700;color:var(--green)">0.02%</div>
+      <div style="font-size:10px;color:var(--tertiary);margin-top:2px">エラー率 24h</div>
+    </div>
+  </div>
+
+  <div class="sec">ヘルスチェック（タップで詳細）</div>
+  <div class="health-checks">
+    <div class="hc" onclick="this.querySelector('.hc-expand').classList.toggle('open')">
+      <div class="hc-row"><div class="hc-left"><span class="hc-icon">🔄</span><span class="hc-label">Cron 実行</span></div><div class="hc-value ok">11.6s · 正常</div></div>
+      <div class="hc-expand">
+        <div class="hc-detail"><span class="hc-detail-label">内訳:</span> Fetch 3.2s / TPSL 1.8s / Logic 2.1s / PathB 4.5s</div>
+        <div class="hc-detail"><span class="hc-detail-label">24h推移:</span> <svg width="80" height="16" viewBox="0 0 80 16" class="spark-mini"><polyline points="0,10 10,11 20,9 30,12 40,8 50,10 60,7 70,9 80,8" fill="none" stroke="var(--green)" stroke-width="1.2" stroke-linecap="round"/></svg> <span style="font-size:10px;color:var(--secondary)">平均 10.8s</span></div>
+        <div class="hc-detail"><span class="hc-detail-label">閾値:</span> <span style="font-size:11px">30s 警告 / 50s タイムアウト</span></div>
+      </div>
+    </div>
+    <div class="hc" onclick="this.querySelector('.hc-expand').classList.toggle('open')">
+      <div class="hc-row"><div class="hc-left"><span class="hc-icon">🛡️</span><span class="hc-label">RiskGuard</span></div><div class="hc-value ok">DD 1.8% · NORMAL</div></div>
+      <div class="hc-expand">
+        <div class="hc-detail"><span class="hc-detail-label">段階:</span> NORMAL(〜3%) → CAUTION(〜5%) → WARNING(〜8%) → HALT(〜10%) → STOP</div>
+        <div class="hc-detail"><span class="hc-detail-label">最大DD:</span> 3.2%（3/21 14:30）</div>
+        <div class="hc-detail"><span class="hc-detail-label">24h推移:</span> <svg width="80" height="16" viewBox="0 0 80 16" class="spark-mini"><polyline points="0,8 10,6 20,7 30,5 40,6 50,4 60,5 70,3 80,4" fill="none" stroke="var(--green)" stroke-width="1.2" stroke-linecap="round"/></svg></div>
+      </div>
+    </div>
+    <div class="hc" onclick="this.querySelector('.hc-expand').classList.toggle('open')">
+      <div class="hc-row"><div class="hc-left"><span class="hc-icon">📊</span><span class="hc-label">レート取得</span></div><div class="hc-value ok">16/16 銘柄</div></div>
+      <div class="hc-expand">
+        <div class="hc-detail"><span class="hc-detail-label">成功率:</span> 99.9%（24h）</div>
+        <div class="hc-detail"><span class="hc-detail-label">平均応答:</span> 180ms</div>
+      </div>
+    </div>
+    <div class="hc" onclick="this.querySelector('.hc-expand').classList.toggle('open')">
+      <div class="hc-row"><div class="hc-left"><span class="hc-icon">🧠</span><span class="hc-label">AI API</span></div><div class="hc-value ok">応答正常</div></div>
+      <div class="hc-expand">
+        <div class="hc-detail"><span class="hc-detail-label">平均応答:</span> 2.1s</div>
+        <div class="hc-detail"><span class="hc-detail-label">24hコール:</span> 38回</div>
+        <div class="hc-detail"><span class="hc-detail-label">エラー率:</span> 0%</div>
+      </div>
+    </div>
+    <div class="hc" onclick="this.querySelector('.hc-expand').classList.toggle('open')">
+      <div class="hc-row"><div class="hc-left"><span class="hc-icon">💾</span><span class="hc-label">D1 DB</span></div><div class="hc-value ok">38.7 MB</div></div>
+      <div class="hc-expand">
+        <div class="hc-detail"><span class="hc-detail-label">テーブル:</span> positions 1,204行 / decisions 94,175行</div>
+        <div class="hc-detail"><span class="hc-detail-label">上限:</span> 500 MB（使用率 7.7%）</div>
+      </div>
+    </div>
+    <div class="hc" onclick="this.querySelector('.hc-expand').classList.toggle('open')">
+      <div class="hc-row"><div class="hc-left"><span class="hc-icon">📡</span><span class="hc-label">ニュース</span></div><div class="hc-value ok">採用率 3%</div></div>
+      <div class="hc-expand">
+        <div class="hc-detail"><span class="hc-detail-label">24h取得:</span> 847件 → 緊急2件 / トレンド12件 → 採用2件</div>
+        <div class="hc-detail"><span class="hc-detail-label">ソース稼働:</span> Reuters ✅ / Reddit ✅</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="sec">直近ログ（異常のみ）</div>
+  <div class="log-section" style="margin:0 16px">
+    <div class="log-item"><div class="log-header"><span class="log-level warn">WARN</span><span class="log-cat">SANITY</span><span class="log-time">20:42</span></div><div class="log-msg">LOGIC TP/SL異常: NatGas SELL</div></div>
+    <div class="log-item"><div class="log-header"><span class="log-level error">ERROR</span><span class="log-cat">API</span><span class="log-time">18:30</span></div><div class="log-msg">Yahoo Finance timeout: ^GSPC (5s超過)</div></div>
+    <div class="log-item">
+      <div class="log-header"><span class="log-level warn">WARN</span><span class="log-cat">POSITION</span><span class="log-time">16:45</span></div>
+      <div class="log-msg">孤立ポジションキャンセル: BTC/USD (銘柄除外済み)</div>
+      <span class="cross-link" onclick="sw('p-now',document.querySelector('.tab:nth-child(1)'));setTimeout(function(){document.getElementById('now-positions').scrollIntoView({behavior:'smooth'})},100)">→ 関連ポジション</span>
+    </div>
+  </div>
+
+  <div style="text-align:center;padding:24px 0">
+    <span style="font-size:12px;color:var(--tertiary);cursor:pointer" onclick="document.getElementById('all-logs').style.display=document.getElementById('all-logs').style.display==='none'?'block':'none'">全ログを表示 ▼</span>
+  </div>
+  <div id="all-logs" style="display:none;margin:0 16px">
+    <div class="log-item"><div class="log-header"><span class="log-level info">INFO</span><span class="log-cat">FLOW</span><span class="log-time">20:58</span></div><div class="log-msg">PATH_B完了</div></div>
+    <div class="log-item"><div class="log-header"><span class="log-level info">INFO</span><span class="log-cat">LOGIC</span><span class="log-time">20:58</span></div><div class="log-msg">LOGIC完了: 0件エントリー / 16件スキップ</div></div>
+    <div class="log-item"><div class="log-header"><span class="log-level info">INFO</span><span class="log-cat">POSITION</span><span class="log-time">20:45</span></div><div class="log-msg">TP決済: Nikkei225 BUY PnL +801</div></div>
+    <div class="log-item"><div class="log-header"><span class="log-level info">INFO</span><span class="log-cat">PARAM</span><span class="log-time">19:15</span></div><div class="log-msg">Param Review: Gold v1→v2 (tp:3.3→3.6)</div></div>
+  </div>
+
+  <div style="padding:16px;text-align:center;font-size:12px;color:var(--tertiary)">次回レビュー: 3/25 09:00 · 残り12h</div>
+</div>
+
+<!-- Tab Bar -->
+<nav class="tabs">
+  <div class="tab on" onclick="sw('p-now',this)"><span class="tab-i">📍</span><span class="tab-t" style="color:var(--blue)">今</span></div>
+  <div class="tab" onclick="sw('p-news',this)"><span class="tab-i">📰</span><span class="tab-t">ニュース</span></div>
+  <div class="tab" onclick="sw('p-stats',this)"><span class="tab-i">📊</span><span class="tab-t">学び</span></div>
+  <div class="tab" onclick="sw('p-ai',this)"><span class="tab-i">🧠</span><span class="tab-t">AI</span></div>
+  <div class="tab" onclick="sw('p-strategy',this)"><span class="tab-i">⚙️</span><span class="tab-t">戦略</span></div>
+  <div class="tab" onclick="sw('p-sys',this)"><span class="tab-i">🔧</span><span class="tab-t">系統</span></div>
+</nav>
+
+<script>
+function sw(id,el){
+  document.querySelectorAll('.tab-panel').forEach(function(p){p.classList.remove('active')});
+  document.getElementById(id).classList.add('active');
+  document.querySelectorAll('.tab').forEach(function(t){t.classList.remove('on');t.querySelector('.tab-t').style.color=''});
+  if(el&&el.classList){el.classList.add('on');el.querySelector('.tab-t').style.color='var(--blue)';}
+  window.scrollTo(0,0);
+}
+</script>
+
+</body>
+</html>
