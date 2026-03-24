@@ -177,6 +177,16 @@ function buildReviewPrompt(
     `  session_end_utc: ${params.session_end_utc}（取引終了UTC時）`,
     `  review_min_trades: ${params.review_min_trades}（レビュー最低サンプル数）`,
     ``,
+    `【現在パラメーター（基本テクニカル期間）】`,
+    `  rsi_period: ${params.rsi_period}（RSI計算期間、10〜30）`,
+    `  adx_period: ${params.adx_period}（ER計算期間、10〜30）`,
+    `  atr_period: ${params.atr_period}（ATR計算期間、10〜30）`,
+    ``,
+    `【現在パラメーター（環境フィルター）】`,
+    `  vix_max: ${params.vix_max}（VIX上限。超過で全スキップ、20〜60）`,
+    `  require_trend_align: ${params.require_trend_align}（0=不要、1=上位足トレンド一致必須）`,
+    `  regime_allow: ${params.regime_allow}（許可レジーム。'trending,ranging' / 'trending' / 'ranging' / 'trending,ranging,volatile'）`,
+    ``,
     `【現在パラメーター（エントリー精度 / 環境検出）】`,
     `  bb_period: ${params.bb_period}（ボリンジャーバンド期間）`,
     `  bb_squeeze_threshold: ${params.bb_squeeze_threshold}（スクイーズ判定閾値）`,
@@ -207,6 +217,10 @@ function buildReviewPrompt(
     `  - mean_reversion戦略ではw_erを高め（ERが低い方が良い）`,
     `  - trend_follow戦略ではw_mtfを高め（上位足トレンド一致が重要）`,
     `  - RR比不足でスキップ多発 → min_rr_ratioを下げるかTP/SL倍率を調整`,
+    `  - 指標期間の調整: 短い(10)=感度高・ダマシ多い、長い(20-30)=安定。標準14。大きく変える根拠がなければ維持推奨`,
+    `  - VIX警戒時にスキップしすぎ → vix_maxを引き上げ。スキップ不足で損失多発 → vix_maxを引き下げ`,
+    `  - トレンド反転で損失多い → require_trend_align=1でフィルター強化`,
+    `  - レンジ相場で損失多い → regime_allowからrangingを除外`,
     ``,
     `【制約（必ず守ること）】`,
     `  - 各パラメーターの変更幅: 現在値の±20%以内`,
@@ -241,9 +255,15 @@ function buildReviewPrompt(
     `  - divergence_lookback: 5〜30の範囲`,
     `  - min_confirm_signals: 0〜5の範囲`,
     `  - er_upper_limit: 0.5〜1.0の範囲`,
+    `  - rsi_period: 10〜30の範囲（整数）`,
+    `  - adx_period: 10〜30の範囲（整数）`,
+    `  - atr_period: 10〜30の範囲（整数）`,
+    `  - vix_max: 20〜60の範囲`,
+    `  - require_trend_align: 0または1のみ`,
+    `  - regime_allow: 'trending','ranging','volatile'の組み合わせ（カンマ区切り、最低1つ）`,
     ``,
     `以下のJSONのみで回答してください（説明文不要）:`,
-    `{"pair":"${pair}","rsi_oversold":number,"rsi_overbought":number,"adx_min":number,"atr_tp_multiplier":number,"atr_sl_multiplier":number,"vix_tp_scale":number,"vix_sl_scale":number,"strategy_primary":"mean_reversion","min_signal_strength":number,"macro_sl_scale":number,"w_rsi":number,"w_er":number,"w_mtf":number,"w_sr":number,"w_pa":number,"w_bb":number,"w_div":number,"entry_score_min":number,"min_rr_ratio":number,"max_hold_minutes":number,"cooldown_after_sl":number,"consecutive_loss_shrink":number,"daily_max_entries":number,"trailing_activation_atr":number,"trailing_distance_atr":number,"tp1_ratio":number,"session_start_utc":number,"session_end_utc":number,"review_min_trades":number,"bb_period":number,"bb_squeeze_threshold":number,"divergence_lookback":number,"min_confirm_signals":number,"er_upper_limit":number,"reason":"調整理由200文字以内","expected_rr":number}`,
+    `{"pair":"${pair}","rsi_oversold":number,"rsi_overbought":number,"adx_min":number,"atr_tp_multiplier":number,"atr_sl_multiplier":number,"vix_tp_scale":number,"vix_sl_scale":number,"strategy_primary":"mean_reversion","min_signal_strength":number,"macro_sl_scale":number,"w_rsi":number,"w_er":number,"w_mtf":number,"w_sr":number,"w_pa":number,"w_bb":number,"w_div":number,"entry_score_min":number,"min_rr_ratio":number,"max_hold_minutes":number,"cooldown_after_sl":number,"consecutive_loss_shrink":number,"daily_max_entries":number,"trailing_activation_atr":number,"trailing_distance_atr":number,"tp1_ratio":number,"session_start_utc":number,"session_end_utc":number,"review_min_trades":number,"bb_period":number,"bb_squeeze_threshold":number,"divergence_lookback":number,"min_confirm_signals":number,"er_upper_limit":number,"rsi_period":14,"adx_period":14,"atr_period":14,"vix_max":35,"require_trend_align":0,"regime_allow":"trending,ranging","reason":"調整理由200文字以内","expected_rr":number}`,
   ].join('\n');
 }
 
@@ -289,8 +309,21 @@ interface ReviewResult {
   divergence_lookback:    number;
   min_confirm_signals:    number;
   er_upper_limit:         number;
+  // Ph.10: 基本テクニカル期間 + 環境フィルター
+  rsi_period:          number;
+  adx_period:          number;
+  atr_period:          number;
+  vix_max:             number;
+  require_trend_align: number;
+  regime_allow:        string;
   reason: string;
   expected_rr: number;
+}
+
+function validateRegimeAllow(raw: string, current: string): string {
+  const valid = ['trending', 'ranging', 'volatile'];
+  const parts = raw.split(',').map(s => s.trim()).filter(s => valid.includes(s));
+  return parts.length > 0 ? parts.join(',') : current;
 }
 
 function validateAndClamp(raw: ReviewResult, current: InstrumentParamsRow): ReviewResult {
@@ -351,6 +384,13 @@ function validateAndClamp(raw: ReviewResult, current: InstrumentParamsRow): Revi
     divergence_lookback:    clamp(raw.divergence_lookback    ?? current.divergence_lookback,     5,   30),
     min_confirm_signals:    clamp(raw.min_confirm_signals    ?? current.min_confirm_signals,     0,    5),
     er_upper_limit:         parseFloat(clamp(raw.er_upper_limit      ?? current.er_upper_limit,        0.5, 1.0).toFixed(2)),
+    // Ph.10: 基本テクニカル期間 + 環境フィルター
+    rsi_period:          Math.round(clamp(within20(raw.rsi_period ?? current.rsi_period, current.rsi_period), 10, 30)),
+    adx_period:          Math.round(clamp(within20(raw.adx_period ?? current.adx_period, current.adx_period), 10, 30)),
+    atr_period:          Math.round(clamp(within20(raw.atr_period ?? current.atr_period, current.atr_period), 10, 30)),
+    vix_max:             parseFloat(clamp(within20(raw.vix_max ?? current.vix_max, current.vix_max), 20, 60).toFixed(1)),
+    require_trend_align: raw.require_trend_align === 1 ? 1 : 0,
+    regime_allow:        validateRegimeAllow(raw.regime_allow ?? current.regime_allow, current.regime_allow),
     reason:              (raw.reason ?? '').slice(0, 200),
     expected_rr:         raw.expected_rr ?? (finalTp / sl),
   };
@@ -463,6 +503,13 @@ async function applyReviewResult(
     divergence_lookback:    current.divergence_lookback,
     min_confirm_signals:    current.min_confirm_signals,
     er_upper_limit:         current.er_upper_limit,
+    // Ph.10: 基本テクニカル期間 + 環境フィルター
+    rsi_period:          current.rsi_period,
+    adx_period:          current.adx_period,
+    atr_period:          current.atr_period,
+    vix_max:             current.vix_max,
+    require_trend_align: current.require_trend_align,
+    regime_allow:        current.regime_allow,
   });
 
   // instrument_params 更新（拡張5カラム + Ph.7 スコアリング7カラム + Ph.8 10カラム + Ph.9 7カラムを含む）
@@ -503,6 +550,12 @@ async function applyReviewResult(
            divergence_lookback   = ?,
            min_confirm_signals   = ?,
            er_upper_limit        = ?,
+           rsi_period            = ?,
+           adx_period            = ?,
+           atr_period            = ?,
+           vix_max               = ?,
+           require_trend_align   = ?,
+           regime_allow          = ?,
            trades_since_review   = 0,
            param_version         = param_version + 1,
            reviewed_by           = ?,
@@ -546,6 +599,12 @@ async function applyReviewResult(
       result.divergence_lookback,
       result.min_confirm_signals,
       result.er_upper_limit,
+      result.rsi_period,
+      result.adx_period,
+      result.atr_period,
+      result.vix_max,
+      result.require_trend_align,
+      result.regime_allow,
       reviewedBy,
       now,
       prevJson,
@@ -593,6 +652,13 @@ async function applyReviewResult(
     divergence_lookback:    result.divergence_lookback,
     min_confirm_signals:    result.min_confirm_signals,
     er_upper_limit:         result.er_upper_limit,
+    // Ph.10: 基本テクニカル期間 + 環境フィルター
+    rsi_period:          result.rsi_period,
+    adx_period:          result.adx_period,
+    atr_period:          result.atr_period,
+    vix_max:             result.vix_max,
+    require_trend_align: result.require_trend_align,
+    regime_allow:        result.regime_allow,
   });
 
   // param_review_log に記録
@@ -718,6 +784,12 @@ export async function runParamReview(
         divergence_lookback: `${paramsRow.divergence_lookback}→${validated.divergence_lookback}`,
         min_confirm_signals: `${paramsRow.min_confirm_signals}→${validated.min_confirm_signals}`,
         er_upper_limit:      `${paramsRow.er_upper_limit}→${validated.er_upper_limit}`,
+        rsi_period:          `${paramsRow.rsi_period}→${validated.rsi_period}`,
+        adx_period:          `${paramsRow.adx_period}→${validated.adx_period}`,
+        atr_period:          `${paramsRow.atr_period}→${validated.atr_period}`,
+        vix_max:             `${paramsRow.vix_max}→${validated.vix_max}`,
+        require_trend_align: `${paramsRow.require_trend_align}→${validated.require_trend_align}`,
+        regime_allow:        `${paramsRow.regime_allow}→${validated.regime_allow}`,
       },
       reason: validated.reason,
     }));
