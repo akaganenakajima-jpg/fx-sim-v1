@@ -676,12 +676,15 @@ export const JS = `
     var totalCount = latest.length + accepted.length;
     var analyzedCount = analysis.length;
     var triggeredCount = analysis.filter(function(n) { return n.attention; }).length;
-    var emergencyCount = analysis.filter(function(n) { return n.impact && parseInt(n.impact) >= 90; }).length;
+    // 緊急: attentionかつaffected_pairsが複数、またはattentionが最高優先度のニュース
+    var emergencyCount = analysis.filter(function(n) {
+      return n.attention && n.affected_pairs && n.affected_pairs.length >= 2;
+    }).length;
 
-    var nkTotal = el('nk-total'); if (nkTotal) nkTotal.textContent = totalCount || '—';
-    var nkAnalyzed = el('nk-analyzed'); if (nkAnalyzed) nkAnalyzed.textContent = analyzedCount || '—';
-    var nkTriggered = el('nk-triggered'); if (nkTriggered) nkTriggered.textContent = triggeredCount || '—';
-    var nkEmergency = el('nk-emergency'); if (nkEmergency) nkEmergency.textContent = emergencyCount || '—';
+    var nkTotal = el('nk-total'); if (nkTotal) nkTotal.textContent = String(totalCount || '—');
+    var nkAnalyzed = el('nk-analyzed'); if (nkAnalyzed) nkAnalyzed.textContent = String(analyzedCount || '—');
+    var nkTriggered = el('nk-triggered'); if (nkTriggered) nkTriggered.textContent = String(triggeredCount || '—');
+    var nkEmergency = el('nk-emergency'); if (nkEmergency) nkEmergency.textContent = String(emergencyCount || '—');
 
     // 取引に影響したニュース
     var impacted = el('news-feed-impacted');
@@ -745,10 +748,15 @@ export const JS = `
   }
 
   function newsCard(n, highlight) {
-    var score = n.impact ? parseInt(n.impact) : 0;
-    var badgeCls = score >= 90 ? 'nf-badge-emergency' : score >= 70 ? 'nf-badge-trend' : 'nf-badge-info';
-    var badgeText = score >= 90 ? '緊急' : score >= 70 ? 'トレンド' : '情報';
-    var borderCls = score >= 90 ? 'nf-emergency' : score >= 70 ? 'nf-trend' : '';
+    // attention=trueなら緊急/トレンド扱い、falseなら情報
+    var isAttention = !!n.attention;
+    var isEmergency = isAttention && n.affected_pairs && n.affected_pairs.length >= 2;
+    var badgeCls = isEmergency ? 'nf-badge-emergency' : isAttention ? 'nf-badge-trend' : 'nf-badge-info';
+    var badgeText = isEmergency ? '緊急' : isAttention ? 'トレンド' : '情報';
+    var borderCls = isEmergency ? 'nf-emergency' : isAttention ? 'nf-trend' : 'nf-info';
+    // impactフィールドはAI判断テキスト（数値スコアではない）
+    var impactText = typeof n.impact === 'string' ? n.impact : '';
+    var aiText = n.desc_ja || n.description || impactText || '';
     var whyHtml = '';
     if (n.why_chain && n.why_chain.length > 0) {
       whyHtml = '<div style="margin-top:8px;padding-top:8px;border-top:1px solid rgba(255,255,255,0.04)">' +
@@ -757,16 +765,20 @@ export const JS = `
         n.why_chain.map(function(w, i) { return '\\u2460\\u2461\\u2462\\u2463\\u2464'.charAt(i) + ' ' + escHtml(w); }).join('<br>') +
         '</div></div>';
     }
+    var pairsHtml = '';
+    if (n.affected_pairs && n.affected_pairs.length > 0) {
+      pairsHtml = '<div class="nf-action"><span style="font-size:12px;color:var(--tertiary)">\\u2192</span>' +
+        '<span class="nf-action-text">影響銘柄: <b>' + n.affected_pairs.join(', ') + '</b></span></div>';
+    }
     var crossHtml = '';
-    if (n.attention && n.action_pair) {
+    if (isAttention) {
       crossHtml = '<div style="margin-top:8px"><span class="cross-link" onclick="switchTab(\\\'tab-portfolio\\\')">\\u2192 今タブでポジション確認</span></div>';
     }
     return '<div class="nf-item ' + borderCls + '">' +
-      '<div class="nf-header"><span class="nf-badge ' + badgeCls + '">' + badgeText + ' \\u00b7 score ' + score + '</span><span class="nf-time">' + fmtTimeAgo(n.analyzed_at || '') + '</span></div>' +
+      '<div class="nf-header"><span class="nf-badge ' + badgeCls + '">' + badgeText + '</span><span class="nf-time">' + fmtTimeAgo(n.analyzed_at || n.pubDate || '') + '</span></div>' +
       '<div class="nf-headline">' + escHtml(n.title_ja || n.title || '') + '</div>' +
-      (n.desc_ja ? '<div class="nf-ai"><span class="nf-ai-label">AI判断</span><span class="nf-ai-text">' + escHtml(n.desc_ja) + '</span></div>' : '') +
-      (n.action_text ? '<div class="nf-action"><span style="font-size:12px;color:var(--tertiary)">\\u2192</span><span class="nf-action-text">' + n.action_text + '</span></div>' : '') +
-      whyHtml + crossHtml +
+      (aiText ? '<div class="nf-ai"><span class="nf-ai-label">AI判断</span><span class="nf-ai-text">' + escHtml(aiText) + '</span></div>' : '') +
+      pairsHtml + whyHtml + crossHtml +
     '</div>';
   }
 
@@ -835,7 +847,31 @@ export const JS = `
       return x.toFixed(1) + ',' + y.toFixed(1);
     }).join(' ');
     var color = cumPnl[cumPnl.length - 1] >= INITIAL_CAPITAL ? 'var(--green)' : 'var(--red)';
-    svg.innerHTML = '<polyline points="' + pts + '" fill="none" stroke="' + color + '" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>';
+
+    // パラメーター変更マーカー（縦破線 + ラベル）
+    var markerHtml = '';
+    var ph = data.paramHistory || [];
+    // 最古のcloseのタイムスタンプを基準点として時系列マッピング
+    var closeTimes = closes.map(function(c) { return new Date(c.closed_at || c.entry_at || 0).getTime(); });
+    var tMin = closeTimes[0] || 0;
+    var tMax = closeTimes[closeTimes.length - 1] || 1;
+    var tRange = tMax - tMin || 1;
+    var markerColors = ['#0A84FF', '#BF5AF2', '#FF9F0A', '#30D158'];
+    var usedX = {};
+    ph.slice(0, 4).forEach(function(ph_item, mi) {
+      var t = new Date(ph_item.created_at || ph_item.time || 0).getTime();
+      if (!t) return;
+      var ratio = Math.max(0, Math.min(1, (t - tMin) / tRange));
+      var mx = Math.round(pad + ratio * (w - pad * 2));
+      if (usedX[mx]) mx = mx + 8; // 重複回避
+      usedX[mx] = true;
+      var col = markerColors[mi % markerColors.length];
+      var label = mi === 0 ? 'v2開始' : 'PR#' + (mi + 1);
+      markerHtml += '<line x1="' + mx + '" y1="0" x2="' + mx + '" y2="' + h + '" stroke="' + col + '" stroke-width="1" stroke-dasharray="3"/>';
+      markerHtml += '<text x="' + (mx + 2) + '" y="10" fill="' + col + '" font-size="8">' + label + '</text>';
+    });
+
+    svg.innerHTML = '<polyline points="' + pts + '" fill="none" stroke="' + color + '" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>' + markerHtml;
   }
 
   function renderStrategyMatrix(data) {
@@ -930,7 +966,24 @@ export const JS = `
           return x + ',' + y;
         }).join(' ');
         var sColor = p.totalPnl >= 0 ? '#30D158' : '#FF453A';
-        chartHtml = '<div class="evo-chart"><svg viewBox="0 0 300 48"><polyline points="' + pts + '" fill="none" stroke="' + sColor + '" stroke-width="1.5" stroke-linecap="round"/></svg></div>';
+        // v2マーカー: pairChangesの最初の変更をsparkline上に縦線で表示
+        var evoMarkerHtml = '';
+        if (pairChanges.length > 0 && sp.length > 2) {
+          // sparklineは最新データなので先頭が最古。最初のParam Review時刻をsparklineの時間軸にマッピング
+          var firstChange = pairChanges[pairChanges.length - 1]; // 最古の変更
+          var spTimes = sp.map(function(pt) { return new Date(pt.ts || pt.created_at || 0).getTime(); });
+          var spTMin = spTimes[0] || 0;
+          var spTMax = spTimes[spTimes.length - 1] || 1;
+          var spTRange = spTMax - spTMin || 1;
+          var chTime = new Date(firstChange.created_at || firstChange.time || 0).getTime();
+          if (chTime && spTMin && chTime > spTMin && chTime < spTMax) {
+            var chRatio = (chTime - spTMin) / spTRange;
+            var chX = Math.round(chRatio * 300);
+            evoMarkerHtml = '<line x1="' + chX + '" y1="0" x2="' + chX + '" y2="48" stroke="#0A84FF" stroke-width="1" stroke-dasharray="3"/>' +
+              '<text x="' + (chX + 2) + '" y="10" fill="#0A84FF" font-size="8">v2</text>';
+          }
+        }
+        chartHtml = '<div class="evo-chart"><svg viewBox="0 0 300 48"><polyline points="' + pts + '" fill="none" stroke="' + sColor + '" stroke-width="1.5" stroke-linecap="round"/>' + evoMarkerHtml + '</svg></div>';
       }
 
       // changes
@@ -1125,11 +1178,11 @@ export const JS = `
     container.innerHTML = items.slice(0, 5).map(function(n) {
       var v = n.verdict || 'pending';
       return verdictCard({
-        action: (n.action_pair || '') + ' ニュース ' + (n.action_direction || ''),
+        action: 'ニュース',
         verdict: v,
-        reason: escHtml(n.title_ja || n.title || '') + (n.impact ? ' score=' + n.impact : ''),
-        outcome: n.outcome_text || '',
-        time: n.analyzed_at || '',
+        reason: escHtml(n.title_ja || n.title || ''),
+        outcome: n.desc_ja || n.description || n.impact || n.outcome_text || '',
+        time: n.analyzed_at || n.pubDate || '',
         why_chain: n.why_chain || null,
         crossLink: { tab: 'tab-portfolio', text: '\\u2192 今タブで進行確認' }
       });

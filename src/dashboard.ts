@@ -64,10 +64,6 @@ export function getDashboardHtml(): string {
     <div class="hm-g" id="heatmap-grid"></div>
   </div>
 
-  <!-- ニュース速報セクション -->
-  <div class="sec">ニュース速報</div>
-  <div class="news-feed" id="news-feed-now"></div>
-
   <!-- 保有ポジション -->
   <div class="sec" id="positions-header">保有中</div>
   <div class="positions" id="positions-list"></div>
