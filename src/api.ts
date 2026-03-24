@@ -929,6 +929,14 @@ export interface InstrumentParamRow {
   strategy_primary:    string;  // 優先戦略: 'mean_reversion' | 'trend_follow'
   min_signal_strength: number;  // エントリー最低シグナル強度（0〜1）
   macro_sl_scale:      number;  // VIX > vix_max×0.5 時のSL幅追加倍率
+  // Ph.7: エントリースコアリング重み（v215）
+  w_rsi:               number;  // RSIスコア重み
+  w_er:                number;  // 効率比スコア重み
+  w_mtf:               number;  // マルチタイムフレーム重み
+  w_sr:                number;  // サポート/レジスタンス重み
+  w_pa:                number;  // プライスアクション重み
+  entry_score_min:     number;  // エントリー最低スコア（0〜1）
+  min_rr_ratio:        number;  // 最小リスクリワード比
   review_trade_count: number;
   trades_since_review: number;
   param_version:      number;

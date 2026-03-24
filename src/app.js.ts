@@ -3338,6 +3338,8 @@ export const JS = `
               'data-param-detail="' + escHtml(pairKey) + '">' +
               '<div class="param-detail-inner">' +
                 '<div class="param-grid-6">' +
+                  /* ── グループ1: エントリー基本 ── */
+                  '<div class="param-group-divider">エントリー基本</div>' +
                   '<div class="param-grid-cell">' +
                     '<div class="cell-label">RSI売られ</div>' +
                     '<div class="cell-value">' + fmt(p.rsi_oversold, 0) + '</div>' +
@@ -3361,6 +3363,60 @@ export const JS = `
                   '<div class="param-grid-cell">' +
                     '<div class="cell-label">VIX上限</div>' +
                     '<div class="cell-value">' + fmt(p.vix_max, 0) + '</div>' +
+                  '</div>' +
+                  /* ── グループ2: クローズ調整（Ph.6） ── */
+                  '<div class="param-group-divider">クローズ調整</div>' +
+                  '<div class="param-grid-cell">' +
+                    '<div class="cell-label">VIX TP倍率</div>' +
+                    '<div class="cell-value">' + fmt(p.vix_tp_scale, 2) + '</div>' +
+                  '</div>' +
+                  '<div class="param-grid-cell">' +
+                    '<div class="cell-label">VIX SL倍率</div>' +
+                    '<div class="cell-value">' + fmt(p.vix_sl_scale, 2) + '</div>' +
+                  '</div>' +
+                  '<div class="param-grid-cell">' +
+                    '<div class="cell-label">マクロSL倍率</div>' +
+                    '<div class="cell-value">' + fmt(p.macro_sl_scale, 2) + '</div>' +
+                  '</div>' +
+                  /* ── グループ3: エントリースコアリング（Ph.7） ── */
+                  '<div class="param-group-divider">エントリースコアリング</div>' +
+                  '<div class="param-grid-cell">' +
+                    '<div class="cell-label">w(RSI)</div>' +
+                    '<div class="cell-value">' + fmt(p.w_rsi, 2) + '</div>' +
+                  '</div>' +
+                  '<div class="param-grid-cell">' +
+                    '<div class="cell-label">w(ER)</div>' +
+                    '<div class="cell-value">' + fmt(p.w_er, 2) + '</div>' +
+                  '</div>' +
+                  '<div class="param-grid-cell">' +
+                    '<div class="cell-label">w(MTF)</div>' +
+                    '<div class="cell-value">' + fmt(p.w_mtf, 2) + '</div>' +
+                  '</div>' +
+                  '<div class="param-grid-cell">' +
+                    '<div class="cell-label">w(S/R)</div>' +
+                    '<div class="cell-value">' + fmt(p.w_sr, 2) + '</div>' +
+                  '</div>' +
+                  '<div class="param-grid-cell">' +
+                    '<div class="cell-label">w(PA)</div>' +
+                    '<div class="cell-value">' + fmt(p.w_pa, 2) + '</div>' +
+                  '</div>' +
+                  '<div class="param-grid-cell">' +
+                    '<div class="cell-label">最低スコア</div>' +
+                    '<div class="cell-value">' + fmt(p.entry_score_min, 2) + '</div>' +
+                  '</div>' +
+                  '<div class="param-grid-cell">' +
+                    '<div class="cell-label">最小RR比</div>' +
+                    '<div class="cell-value">' + fmt(p.min_rr_ratio, 1) + '</div>' +
+                  '</div>' +
+                  /* ── グループ4: 戦略設定 ── */
+                  '<div class="param-group-divider">戦略設定</div>' +
+                  '<div class="param-grid-cell">' +
+                    '<div class="cell-label">戦略</div>' +
+                    '<div class="cell-value" style="font-size:11px">' + escHtml(p.strategy_primary || '—') + '</div>' +
+                  '</div>' +
+                  '<div class="param-grid-cell">' +
+                    '<div class="cell-label">シグナル強度</div>' +
+                    '<div class="cell-value">' + fmt(p.min_signal_strength, 2) + '</div>' +
                   '</div>' +
                 '</div>' +
                 '<div class="param-last-review">最終レビュー: ' + escHtml(lastAt) + '</div>' +
