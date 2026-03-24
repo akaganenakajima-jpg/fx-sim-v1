@@ -21,6 +21,16 @@ export interface TechnicalSignal {
   reason: string;
   tp_rate: number | null;      // ATRベースTP（エントリーレートから計算）
   sl_rate: number | null;      // ATRベースSL
+  // Ph.7: スコアリング詳細
+  scores?: {
+    rsi: number;
+    er: number;
+    mtf: number;
+    sr: number;
+    pa: number;
+    total: number;
+    breakdown: string;  // 人間可読なスコア内訳
+  };
 }
 
 export interface InstrumentParamsRow {
@@ -42,6 +52,14 @@ export interface InstrumentParamsRow {
   strategy_primary:     string;  // 優先戦略: 'mean_reversion' | 'trend_follow'
   min_signal_strength:  number;  // エントリー最低シグナル強度（RSI偏差+ER、0〜1）
   macro_sl_scale:       number;  // VIX > vix_max×0.5 時のSL幅追加倍率（マクロ警戒）
+  // Ph.7: 重みつきエントリースコアリング
+  w_rsi:           number;  // RSI偏差の重み
+  w_er:            number;  // ER（トレンド強度）の重み
+  w_mtf:           number;  // マルチタイムフレーム整合性の重み
+  w_sr:            number;  // サポレジ近接度の重み
+  w_pa:            number;  // プライスアクション（直近高安パターン）の重み
+  entry_score_min: number;  // エントリー最低スコア
+  min_rr_ratio:    number;  // スケール適用後の最小RR比
 }
 
 // ─── RSI計算 ─────────────────────────────────────────────────────────────────
@@ -185,22 +203,75 @@ export function calcTechnicalSignal(
              tp_rate: null, sl_rate: null };
   }
 
+  // ── Ph.7: 重みつきエントリースコアリング計算 ──────────────────────────
+  // BUY/SELL シグナル生成前にスコアを計算し、TechnicalSignal に付与する
+  // スコアリング自体はフィルタリングを行わない（logic-trading.ts 側で閾値チェック）
+  const calcScores = (direction: 'BUY' | 'SELL') => {
+    // 1. RSI スコア（0〜1）
+    const rsiScore = direction === 'BUY'
+      ? Math.max(0, Math.min(1, (params.rsi_oversold - rsi!) / Math.max(1, params.rsi_oversold)))
+      : Math.max(0, Math.min(1, (rsi! - params.rsi_overbought) / Math.max(1, 100 - params.rsi_overbought)));
+
+    // 2. ER スコア（0〜1）
+    const erScore = params.strategy_primary === 'trend_follow'
+      ? Math.min(1, er!)
+      : Math.min(1, Math.max(0, 1 - er!));  // mean_reversion: ERが低いほど高スコア
+
+    // 3. MTFスコア（0〜1）: 長期方向とエントリー方向の整合性
+    const longTermDirection = closes[closes.length - 1] - closes[0];
+    const mtfAligned = (direction === 'BUY' && longTermDirection > 0)
+                    || (direction === 'SELL' && longTermDirection < 0);
+    const mtfScore = mtfAligned ? 1.0 : 0.0;
+
+    // 4. サポレジ近接度スコア（0〜1）
+    const recentHigh = Math.max(...closes.slice(-20));
+    const recentLow = Math.min(...closes.slice(-20));
+    const range = recentHigh - recentLow;
+    const srScore = range > 0
+      ? (direction === 'BUY'
+          ? (recentHigh - currentRate) / range
+          : (currentRate - recentLow) / range)
+      : 0.5;
+
+    // 5. プライスアクション スコア（0〜1）: 直近3本の反転パターン
+    const last3 = closes.slice(-3);
+    const paScore = last3.length >= 3
+      ? (direction === 'BUY'
+          ? (last3[2] > last3[1] && last3[1] < last3[0]) ? 1.0 : 0.0
+          : (last3[2] < last3[1] && last3[1] > last3[0]) ? 1.0 : 0.0)
+      : 0.5;
+
+    // 重みつき総合スコア
+    const total =
+      params.w_rsi * rsiScore +
+      params.w_er  * erScore +
+      params.w_mtf * mtfScore +
+      params.w_sr  * Math.max(0, Math.min(1, srScore)) +
+      params.w_pa  * paScore;
+
+    const breakdown = `rsi=${rsiScore.toFixed(2)}*${params.w_rsi} er=${erScore.toFixed(2)}*${params.w_er} mtf=${mtfScore.toFixed(1)}*${params.w_mtf} sr=${Math.max(0, Math.min(1, srScore)).toFixed(2)}*${params.w_sr} pa=${paScore.toFixed(1)}*${params.w_pa}`;
+
+    return { rsi: rsiScore, er: erScore, mtf: mtfScore, sr: Math.max(0, Math.min(1, srScore)), pa: paScore, total, breakdown };
+  };
+
   // BUYシグナル: RSI が oversold 以下（売られすぎ）
   if (rsi < rsi_oversold) {
     const tp = parseFloat((currentRate + atr * atr_tp_multiplier).toFixed(5));
     const sl = parseFloat((currentRate - atr * atr_sl_multiplier).toFixed(5));
+    const scores = calcScores('BUY');
     return { pair, rsi, atr, er, regime, signal: 'BUY',
              reason: `RSI=${rsi.toFixed(1)}<${rsi_oversold}(売られすぎ) ER=${er.toFixed(3)} ATR=${atr.toFixed(4)}`,
-             tp_rate: tp, sl_rate: sl };
+             tp_rate: tp, sl_rate: sl, scores };
   }
 
   // SELLシグナル: RSI が overbought 以上（買われすぎ）
   if (rsi > rsi_overbought) {
     const tp = parseFloat((currentRate - atr * atr_tp_multiplier).toFixed(5));
     const sl = parseFloat((currentRate + atr * atr_sl_multiplier).toFixed(5));
+    const scores = calcScores('SELL');
     return { pair, rsi, atr, er, regime, signal: 'SELL',
              reason: `RSI=${rsi.toFixed(1)}>${rsi_overbought}(買われすぎ) ER=${er.toFixed(3)} ATR=${atr.toFixed(4)}`,
-             tp_rate: tp, sl_rate: sl };
+             tp_rate: tp, sl_rate: sl, scores };
   }
 
   // 中立

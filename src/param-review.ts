@@ -156,6 +156,15 @@ function buildReviewPrompt(
     `  min_signal_strength: ${params.min_signal_strength}（エントリー最低シグナル強度0〜1、RSI偏差+ER平均）`,
     `  macro_sl_scale: ${params.macro_sl_scale}（VIX>vix_max×0.5時のSL幅追加倍率）`,
     ``,
+    `【現在パラメーター（エントリースコアリング重み）】`,
+    `  w_rsi: ${params.w_rsi}（RSI偏差の重み）`,
+    `  w_er: ${params.w_er}（ER/トレンド強度の重み）`,
+    `  w_mtf: ${params.w_mtf}（マルチタイムフレーム整合性の重み）`,
+    `  w_sr: ${params.w_sr}（サポレジ近接度の重み）`,
+    `  w_pa: ${params.w_pa}（プライスアクションの重み）`,
+    `  entry_score_min: ${params.entry_score_min}（エントリー最低スコア）`,
+    `  min_rr_ratio: ${params.min_rr_ratio}（最小RR比）`,
+    ``,
     `【直近${stats.totalTrades}件の実績】`,
     `  勝率: ${(stats.winRate * 100).toFixed(1)}%`,
     `  実績RR（平均利益÷平均損失）: ${stats.actualRr.toFixed(2)}`,
@@ -173,6 +182,10 @@ function buildReviewPrompt(
     `  - マクロストレス時に大損失 → macro_sl_scaleを縮小（例: 0.85）でSLを狭める`,
     `  - シグナル精度が低い → min_signal_strengthを引き上げる（例: 0.15〜0.25）`,
     `  - trend_followに変えたい → strategy_primaryを'trend_follow'に変更`,
+    `  - 重みの最適化: 合計は1.0前後が望ましい。0にすると無視、0.5以上は最重要`,
+    `  - mean_reversion戦略ではw_erを高め（ERが低い方が良い）`,
+    `  - trend_follow戦略ではw_mtfを高め（上位足トレンド一致が重要）`,
+    `  - RR比不足でスキップ多発 → min_rr_ratioを下げるかTP/SL倍率を調整`,
     ``,
     `【制約（必ず守ること）】`,
     `  - 各パラメーターの変更幅: 現在値の±20%以内`,
@@ -187,9 +200,12 @@ function buildReviewPrompt(
     `  - macro_sl_scale: 0.5〜1.5の範囲`,
     `  - min_signal_strength: 0.0〜0.5の範囲`,
     `  - strategy_primary: 'mean_reversion' または 'trend_follow' のみ`,
+    `  - w_rsi, w_er, w_mtf, w_sr, w_pa: 各0.0〜1.0の範囲`,
+    `  - entry_score_min: 0.0〜1.0の範囲`,
+    `  - min_rr_ratio: 1.0〜5.0の範囲`,
     ``,
     `以下のJSONのみで回答してください（説明文不要）:`,
-    `{"pair":"${pair}","rsi_oversold":number,"rsi_overbought":number,"adx_min":number,"atr_tp_multiplier":number,"atr_sl_multiplier":number,"vix_tp_scale":number,"vix_sl_scale":number,"strategy_primary":"mean_reversion","min_signal_strength":number,"macro_sl_scale":number,"reason":"調整理由200文字以内","expected_rr":number}`,
+    `{"pair":"${pair}","rsi_oversold":number,"rsi_overbought":number,"adx_min":number,"atr_tp_multiplier":number,"atr_sl_multiplier":number,"vix_tp_scale":number,"vix_sl_scale":number,"strategy_primary":"mean_reversion","min_signal_strength":number,"macro_sl_scale":number,"w_rsi":number,"w_er":number,"w_mtf":number,"w_sr":number,"w_pa":number,"entry_score_min":number,"min_rr_ratio":number,"reason":"調整理由200文字以内","expected_rr":number}`,
   ].join('\n');
 }
 
@@ -208,6 +224,14 @@ interface ReviewResult {
   strategy_primary:    string;
   min_signal_strength: number;
   macro_sl_scale:      number;
+  // Ph.7: エントリースコアリング重み
+  w_rsi:           number;
+  w_er:            number;
+  w_mtf:           number;
+  w_sr:            number;
+  w_pa:            number;
+  entry_score_min: number;
+  min_rr_ratio:    number;
   reason: string;
   expected_rr: number;
 }
@@ -243,6 +267,14 @@ function validateAndClamp(raw: ReviewResult, current: InstrumentParamsRow): Revi
     strategy_primary:    strategyPrimary,
     min_signal_strength: parseFloat(clamp(within20(raw.min_signal_strength ?? current.min_signal_strength, Math.max(0.01, current.min_signal_strength)), 0.0, 0.5).toFixed(3)),
     macro_sl_scale:      parseFloat(clamp(within20(raw.macro_sl_scale ?? current.macro_sl_scale, current.macro_sl_scale), 0.5, 1.5).toFixed(2)),
+    // Ph.7: エントリースコアリング重み（±20%クランプ + 絶対範囲クランプ）
+    w_rsi:           parseFloat(clamp(raw.w_rsi   ?? current.w_rsi,   0, 1).toFixed(2)),
+    w_er:            parseFloat(clamp(raw.w_er    ?? current.w_er,    0, 1).toFixed(2)),
+    w_mtf:           parseFloat(clamp(raw.w_mtf   ?? current.w_mtf,   0, 1).toFixed(2)),
+    w_sr:            parseFloat(clamp(raw.w_sr    ?? current.w_sr,    0, 1).toFixed(2)),
+    w_pa:            parseFloat(clamp(raw.w_pa    ?? current.w_pa,    0, 1).toFixed(2)),
+    entry_score_min: parseFloat(clamp(raw.entry_score_min ?? current.entry_score_min, 0, 1).toFixed(2)),
+    min_rr_ratio:    parseFloat(clamp(raw.min_rr_ratio    ?? current.min_rr_ratio,    1.0, 5.0).toFixed(2)),
     reason:              (raw.reason ?? '').slice(0, 200),
     expected_rr:         raw.expected_rr ?? (finalTp / sl),
   };
@@ -328,9 +360,17 @@ async function applyReviewResult(
     strategy_primary:    current.strategy_primary,
     min_signal_strength: current.min_signal_strength,
     macro_sl_scale:      current.macro_sl_scale,
+    // Ph.7: エントリースコアリング重み
+    w_rsi:           current.w_rsi,
+    w_er:            current.w_er,
+    w_mtf:           current.w_mtf,
+    w_sr:            current.w_sr,
+    w_pa:            current.w_pa,
+    entry_score_min: current.entry_score_min,
+    min_rr_ratio:    current.min_rr_ratio,
   });
 
-  // instrument_params 更新（拡張5カラムを含む）
+  // instrument_params 更新（拡張5カラム + Ph.7 スコアリング7カラムを含む）
   await db
     .prepare(
       `UPDATE instrument_params
@@ -344,6 +384,13 @@ async function applyReviewResult(
            strategy_primary      = ?,
            min_signal_strength   = ?,
            macro_sl_scale        = ?,
+           w_rsi                 = ?,
+           w_er                  = ?,
+           w_mtf                 = ?,
+           w_sr                  = ?,
+           w_pa                  = ?,
+           entry_score_min       = ?,
+           min_rr_ratio          = ?,
            trades_since_review   = 0,
            param_version         = param_version + 1,
            reviewed_by           = ?,
@@ -363,6 +410,13 @@ async function applyReviewResult(
       result.strategy_primary,
       result.min_signal_strength,
       result.macro_sl_scale,
+      result.w_rsi,
+      result.w_er,
+      result.w_mtf,
+      result.w_sr,
+      result.w_pa,
+      result.entry_score_min,
+      result.min_rr_ratio,
       reviewedBy,
       now,
       prevJson,
@@ -383,6 +437,14 @@ async function applyReviewResult(
     strategy_primary:    result.strategy_primary,
     min_signal_strength: result.min_signal_strength,
     macro_sl_scale:      result.macro_sl_scale,
+    // Ph.7: エントリースコアリング重み
+    w_rsi:           result.w_rsi,
+    w_er:            result.w_er,
+    w_mtf:           result.w_mtf,
+    w_sr:            result.w_sr,
+    w_pa:            result.w_pa,
+    entry_score_min: result.entry_score_min,
+    min_rr_ratio:    result.min_rr_ratio,
   });
 
   // param_review_log に記録
@@ -486,6 +548,13 @@ export async function runParamReview(
         strategy_primary:    `${paramsRow.strategy_primary}→${validated.strategy_primary}`,
         min_signal_strength: `${paramsRow.min_signal_strength}→${validated.min_signal_strength}`,
         macro_sl_scale:      `${paramsRow.macro_sl_scale}→${validated.macro_sl_scale}`,
+        w_rsi:               `${paramsRow.w_rsi}→${validated.w_rsi}`,
+        w_er:                `${paramsRow.w_er}→${validated.w_er}`,
+        w_mtf:               `${paramsRow.w_mtf}→${validated.w_mtf}`,
+        w_sr:                `${paramsRow.w_sr}→${validated.w_sr}`,
+        w_pa:                `${paramsRow.w_pa}→${validated.w_pa}`,
+        entry_score_min:     `${paramsRow.entry_score_min}→${validated.entry_score_min}`,
+        min_rr_ratio:        `${paramsRow.min_rr_ratio}→${validated.min_rr_ratio}`,
       },
       reason: validated.reason,
     }));
