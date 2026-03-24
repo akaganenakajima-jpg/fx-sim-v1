@@ -44,6 +44,7 @@ import { generateWeeklyReview, generateMonthlyReview } from './trade-journal';
 import { isValidStrategy } from './strategy-tag';
 import { getWeekendStatus, lockProfitsForWeekend, forceCloseAllForWeekend } from './weekend';
 import { runLogicDecisions } from './logic-trading';
+import { runParamReview } from './param-review';
 
 interface Env {
   DB: D1Database;
@@ -1633,6 +1634,19 @@ async function run(env: Env): Promise<void> {
     if (elapsed > 30000) {
       await insertSystemLog(env.DB, 'WARN', 'CRON', `実行時間超過: ${elapsed}ms`);
     }
+
+    // Ph.4: パラメーターレビュー（非同期・メインループをブロックしない）
+    // PATH_A完了後に1銘柄だけチェック。タイムアウト超過しても安全（ctx不使用）
+    void (async () => {
+      try {
+        const reviewResult = await runParamReview(env.DB, getApiKey(env));
+        if (reviewResult.reviewed) {
+          console.log(`[fx-sim] PARAM_REVIEW: ${reviewResult.pair} updated — ${reviewResult.summary}`);
+        }
+      } catch (e) {
+        console.warn(`[fx-sim] runParamReview error: ${String(e).slice(0, 100)}`);
+      }
+    })();
 
     // 日次処理（JST 0:00 = UTC 15:00 に実行）
     const jstHour = (now.getUTCHours() + 9) % 24;
