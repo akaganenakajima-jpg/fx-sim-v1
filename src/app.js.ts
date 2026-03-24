@@ -2880,5 +2880,462 @@ export const JS = `
 
   refresh();
   setInterval(refresh, 30000);
+
+  // ─── パラメーター管理 (/api/params) ───────────────────────────────────────
+
+  var paramsData = null;
+  var paramsTabActive = 'current';
+
+  // タブ切り替え（HTMLから呼ばれる）
+  window.showParamsTab = function(tab) {
+    paramsTabActive = tab;
+    var cur = el('params-current');
+    var hist = el('params-history');
+    var btnC = el('params-tab-current');
+    var btnH = el('params-tab-history');
+    if (cur)  cur.style.display  = tab === 'current'  ? 'block' : 'none';
+    if (hist) hist.style.display = tab === 'history'  ? 'block' : 'none';
+    if (btnC) { btnC.classList.toggle('active', tab === 'current'); }
+    if (btnH) { btnH.classList.toggle('active', tab === 'history'); }
+    if (paramsData) renderParamsData(paramsData);
+  };
+
+  function loadParams() {
+    fetch('/api/params')
+      .then(function(r) { return r.json(); })
+      .then(function(d) {
+        paramsData = d;
+        var loading = el('params-loading');
+        if (loading) loading.style.display = 'none';
+        renderEmergencyBanner(d.latestEmergency);
+        renderParamsData(d);
+        renderParamsPanelReview(d);
+      })
+      .catch(function(e) {
+        var loading = el('params-loading');
+        if (loading) loading.textContent = 'データ取得失敗';
+      });
+  }
+
+  // ─── 緊急ニュースバナー（4-B） ─────────────────────────────────────────────
+
+  function renderEmergencyBanner(emergency) {
+    var banner = el('emergency-news-banner');
+    if (!banner) return;
+    if (!emergency || !emergency.created_at) return;
+
+    var now = Date.now();
+    var createdMs = new Date(emergency.created_at).getTime();
+    var ageMs = now - createdMs;
+    var TEN_MIN = 10 * 60 * 1000;
+
+    if (ageMs > TEN_MIN) return; // 10分以上経過ならバナー非表示
+
+    // タイトルを設定
+    var titleEl = banner.querySelector('.emergency-news-title');
+    if (titleEl) titleEl.textContent = emergency.news_title || '緊急ニュース検出';
+
+    // バナー表示
+    banner.classList.add('visible');
+    banner.classList.remove('fading');
+
+    // 残り時間後に自動非表示
+    var remainMs = TEN_MIN - ageMs;
+    setTimeout(function() {
+      banner.classList.add('fading');
+      setTimeout(function() {
+        banner.classList.remove('visible');
+        banner.classList.remove('fading');
+      }, 800);
+    }, remainMs);
+  }
+
+  // ─── パラメーターカード展開トグル（4-C） ──────────────────────────────────
+
+  window.toggleParamCard = function(pair) {
+    var storageKey = 'param-expanded-cards';
+    var expanded = {};
+    try { expanded = JSON.parse(localStorage.getItem(storageKey) || '{}'); } catch {}
+
+    var cardDetail = document.querySelector('[data-param-detail="' + pair + '"]');
+    var chevron    = document.querySelector('[data-param-chevron="' + pair + '"]');
+    if (!cardDetail) return;
+
+    var isExpanded = expanded[pair] === true;
+    if (isExpanded) {
+      expanded[pair] = false;
+      cardDetail.classList.remove('expanded');
+      if (chevron) chevron.style.transform = 'rotate(0deg)';
+    } else {
+      expanded[pair] = true;
+      cardDetail.classList.add('expanded');
+      if (chevron) chevron.style.transform = 'rotate(180deg)';
+    }
+    try { localStorage.setItem(storageKey, JSON.stringify(expanded)); } catch {}
+  };
+
+  // ─── カテゴリアコーディオン（4-D） ────────────────────────────────────────
+
+  window.toggleParamCat = function(cat) {
+    var storageKey = 'param-collapsed-cats';
+    var collapsed = {};
+    try { collapsed = JSON.parse(localStorage.getItem(storageKey) || '{}'); } catch {}
+
+    var header = document.querySelector('[data-cat-header="' + cat + '"]');
+    var body   = document.querySelector('[data-cat-body="' + cat + '"]');
+    if (!header || !body) return;
+
+    var isCollapsed = collapsed[cat] === true;
+    if (isCollapsed) {
+      collapsed[cat] = false;
+      header.classList.remove('collapsed');
+      body.classList.remove('collapsed');
+    } else {
+      collapsed[cat] = true;
+      header.classList.add('collapsed');
+      body.classList.add('collapsed');
+    }
+    try { localStorage.setItem(storageKey, JSON.stringify(collapsed)); } catch {}
+  };
+
+  // ─── 現在パラメーター表 ───────────────────────────────────────────────────
+
+  // パラメーター名 → 表示ラベル + 小数桁
+  var PARAM_COLS = [
+    { key: 'rsi_oversold',      label: 'RSI売られ',  dp: 0 },
+    { key: 'rsi_overbought',    label: 'RSI買われ',  dp: 0 },
+    { key: 'adx_min',           label: 'ADX最小',    dp: 0 },
+    { key: 'atr_tp_multiplier', label: 'TP倍率',     dp: 1 },
+    { key: 'atr_sl_multiplier', label: 'SL倍率',     dp: 1 },
+    { key: 'vix_max',           label: 'VIX上限',    dp: 0 },
+    { key: 'param_version',     label: 'Ver',        dp: 0 },
+    { key: 'trades_since_review', label: '次Revまで', dp: 0, isProgress: true },
+  ];
+
+  function fmt(v, dp) {
+    if (v == null) return '—';
+    return Number(v).toFixed(dp);
+  }
+
+  function rrColor(rr) {
+    if (rr == null) return '';
+    if (rr >= 2.0) return 'color:#34c759';
+    if (rr >= 1.5) return 'color:#ff9500';
+    return 'color:#ff3b30';
+  }
+
+  function diffBadge(oldVal, newVal, dp) {
+    if (oldVal == null || newVal == null) return '';
+    var diff = newVal - oldVal;
+    if (Math.abs(diff) < 0.001) return '<span style="color:var(--label-secondary);font-size:10px"> (変化なし)</span>';
+    var pct = oldVal !== 0 ? Math.round(diff / Math.abs(oldVal) * 100) : 0;
+    var color = diff > 0 ? '#34c759' : '#ff3b30';
+    var sign = diff > 0 ? '+' : '';
+    return '<span style="color:' + color + ';font-size:10px;font-weight:600"> (' + sign + pct + '%)</span>';
+  }
+
+  function renderCurrentParams(params) {
+    var wrap = el('params-table-wrap');
+    if (!wrap || !params || params.length === 0) return;
+
+    // localStorage から展開状態・カテゴリ折りたたみ状態を復元
+    var expandedCards = {};
+    var collapsedCats = {};
+    try { expandedCards = JSON.parse(localStorage.getItem('param-expanded-cards') || '{}'); } catch {}
+    try { collapsedCats = JSON.parse(localStorage.getItem('param-collapsed-cats') || '{}'); } catch {}
+
+    var NOW_MS = Date.now();
+    var TWELVE_H = 12 * 60 * 60 * 1000;
+
+    var categories = {
+      '為替':       ['USD/JPY','EUR/USD','GBP/USD','AUD/USD'],
+      '株式指数':   ['S&P500','NASDAQ','Nikkei225','DAX'],
+      '暗号資産':   ['BTC/USD','ETH/USD','SOL/USD'],
+      'コモディティ':['Gold','Silver','CrudeOil'],
+      '債券':       ['US10Y'],
+    };
+    var catOrder = ['為替','株式指数','暗号資産','コモディティ','債券'];
+    var pairMap = {};
+    params.forEach(function(p) { pairMap[p.pair] = p; });
+
+    var html = '';
+
+    catOrder.forEach(function(cat) {
+      var pairs = categories[cat] || [];
+      var catParams = pairs.map(function(pair) { return pairMap[pair]; }).filter(Boolean);
+      if (catParams.length === 0) return;
+
+      var isCatCollapsed = collapsedCats[cat] === true;
+      var catId = encodeURIComponent(cat);
+
+      html +=
+        '<div class="param-category-header' + (isCatCollapsed ? ' collapsed' : '') + '" ' +
+          'data-cat-header="' + catId + '" ' +
+          'onclick="toggleParamCat(&quot;' + catId + '&quot;)">' +
+          '<span class="param-category-title">' + escHtml(cat) + '</span>' +
+          '<span class="param-category-chevron">▼</span>' +
+        '</div>' +
+        '<div class="param-category-body' + (isCatCollapsed ? ' collapsed' : '') + '" ' +
+          'data-cat-body="' + catId + '">';
+
+      catParams.forEach(function(p) {
+        var rrVal = p.atr_sl_multiplier > 0 ? p.atr_tp_multiplier / p.atr_sl_multiplier : 0;
+        var rrStyle = rrVal >= 2.0 ? 'color:var(--green);font-weight:700' : 'color:var(--red);font-weight:700';
+
+        // 進捗バー（Goal Gradient）
+        var remainTrades = Math.max(0, (p.review_trade_count || 0) - (p.trades_since_review || 0));
+        var total = p.review_trade_count || 1;
+        var remainPct = Math.min(100, Math.round(remainTrades / total * 100));
+        var progressClass = remainPct > 60 ? 'progress-normal' : remainPct > 20 ? 'progress-warning' : 'progress-urgent';
+
+        // バッジ（Variable Reward）
+        var verBadge;
+        if (p.param_version >= 2) {
+          var lastReviewedMs = p.last_reviewed_at ? new Date(p.last_reviewed_at).getTime() : 0;
+          var isRecent = (NOW_MS - lastReviewedMs) < TWELVE_H;
+          if (isRecent) {
+            verBadge = '<span class="badge-upgraded">UPGRADED</span>';
+          } else {
+            verBadge = '<span class="badge-version">v' + p.param_version + '</span>';
+          }
+        } else {
+          verBadge = '<span class="badge-version" style="opacity:0.5">v1</span>';
+        }
+
+        var reviewedLabel = p.reviewed_by === 'INITIAL'
+          ? '<span style="color:var(--label-tertiary);font-size:10px">初期値</span>'
+          : '<span style="color:var(--blue);font-size:10px">AI調整済</span>';
+        var lastAt = p.last_reviewed_at ? p.last_reviewed_at.slice(0, 10) : '未レビュー';
+        var pairKey = p.pair;
+        var isExpanded = expandedCards[pairKey] === true;
+
+        html +=
+          '<div class="param-card">' +
+            // 概要行（常に表示）
+            '<div class="param-card-summary" onclick="toggleParamCard(&quot;' + escHtml(pairKey) + '&quot;)">' +
+              '<span style="font-size:13px;font-weight:600;flex:1">' + escHtml(p.pair) + '</span>' +
+              verBadge +
+              '<span style="margin-left:6px">' + reviewedLabel + '</span>' +
+              '<span style="font-size:12px;' + rrStyle + ';margin-left:6px">RR ' + rrVal.toFixed(2) + '</span>' +
+              '<span style="font-size:10px;color:var(--label-tertiary);margin-left:6px">' + remainTrades + '件</span>' +
+              '<span class="param-chevron" data-param-chevron="' + escHtml(pairKey) + '" ' +
+                'style="transform:rotate(' + (isExpanded ? '180' : '0') + 'deg)">▼</span>' +
+            '</div>' +
+            // 進捗バー
+            '<div class="param-progress-track">' +
+              '<div class="param-progress-fill ' + progressClass + '" style="width:' + remainPct + '%"></div>' +
+            '</div>' +
+            // 詳細（折りたたみ）
+            '<div class="param-card-detail' + (isExpanded ? ' expanded' : '') + '" ' +
+              'data-param-detail="' + escHtml(pairKey) + '">' +
+              '<div class="param-detail-inner">' +
+                '<div class="param-grid-6">' +
+                  '<div class="param-grid-cell">' +
+                    '<div class="cell-label">RSI売られ</div>' +
+                    '<div class="cell-value">' + fmt(p.rsi_oversold, 0) + '</div>' +
+                  '</div>' +
+                  '<div class="param-grid-cell">' +
+                    '<div class="cell-label">RSI買われ</div>' +
+                    '<div class="cell-value">' + fmt(p.rsi_overbought, 0) + '</div>' +
+                  '</div>' +
+                  '<div class="param-grid-cell">' +
+                    '<div class="cell-label">ADX最小</div>' +
+                    '<div class="cell-value">' + fmt(p.adx_min, 0) + '</div>' +
+                  '</div>' +
+                  '<div class="param-grid-cell">' +
+                    '<div class="cell-label">TP倍率</div>' +
+                    '<div class="cell-value">' + fmt(p.atr_tp_multiplier, 1) + '</div>' +
+                  '</div>' +
+                  '<div class="param-grid-cell">' +
+                    '<div class="cell-label">SL倍率</div>' +
+                    '<div class="cell-value">' + fmt(p.atr_sl_multiplier, 1) + '</div>' +
+                  '</div>' +
+                  '<div class="param-grid-cell">' +
+                    '<div class="cell-label">VIX上限</div>' +
+                    '<div class="cell-value">' + fmt(p.vix_max, 0) + '</div>' +
+                  '</div>' +
+                '</div>' +
+                '<div class="param-last-review">最終レビュー: ' + escHtml(lastAt) + '</div>' +
+              '</div>' +
+            '</div>' +
+          '</div>';
+      });
+
+      html += '</div>'; // param-category-body
+    });
+
+    wrap.innerHTML = html;
+  }
+
+  // ─── 変更履歴 ─────────────────────────────────────────────────────────────
+
+  function renderParamsHistory(history) {
+    var listEl = el('params-history-list');
+    if (!listEl) return;
+    if (!history || history.length === 0) {
+      listEl.innerHTML = '<p style="color:var(--label-secondary);font-size:12px;padding:8px 0">レビュー履歴がありません</p>';
+      return;
+    }
+
+    var PARAM_LABELS = {
+      rsi_oversold: 'RSI売られ', rsi_overbought: 'RSI買われ',
+      adx_min: 'ADX最小', atr_tp_multiplier: 'TP倍率', atr_sl_multiplier: 'SL倍率',
+      vix_max: 'VIX上限',
+    };
+
+    var html = '';
+    history.forEach(function(h) {
+      var oldP = {};
+      var newP = {};
+      try { oldP = JSON.parse(h.old_params); } catch {}
+      try { newP = JSON.parse(h.new_params); } catch {}
+
+      var winPct  = Math.round((h.win_rate || 0) * 100);
+      var winColor = winPct >= 50 ? 'var(--green)' : winPct >= 40 ? 'var(--orange)' : 'var(--red)';
+      var rrVal   = h.actual_rr || 0;
+      var rrCol   = rrVal >= 2.0 ? 'var(--green)' : rrVal >= 1.5 ? 'var(--orange)' : 'var(--red)';
+      var pfVal   = h.profit_factor || 0;
+      var pfCol   = pfVal >= 1.5 ? 'var(--green)' : pfVal >= 1.0 ? 'var(--orange)' : 'var(--red)';
+
+      // 変化ありパラメーターを列挙（差分バッジサイズ分岐: ≥15%で大きく太字）
+      var changedKeys = Object.keys(newP).filter(function(k) {
+        return Math.abs((newP[k] || 0) - (oldP[k] || 0)) > 0.001;
+      });
+
+      var diffHtml = changedKeys.length === 0
+        ? '<span style="color:var(--label-secondary);font-size:11px">変化なし（様子見）</span>'
+        : changedKeys.map(function(k) {
+            var diff = (newP[k] || 0) - (oldP[k] || 0);
+            var pct  = oldP[k] !== 0 ? Math.round(diff / Math.abs(oldP[k]) * 100) : 0;
+            var c    = diff > 0 ? 'var(--green)' : 'var(--red)';
+            var sign = diff > 0 ? '▲' : '▼';
+            // ≥15%変化: font-size:12px・font-weight:700（大きく太字）
+            var isBig = Math.abs(pct) >= 15;
+            return '<span style="display:inline-flex;align-items:center;gap:3px;' +
+              'background:var(--bg-secondary);border-radius:6px;padding:2px 7px;' +
+              'font-size:11px;margin:2px">' +
+              escHtml(PARAM_LABELS[k] || k) + ' ' +
+              '<span style="color:' + c + ';' +
+                (isBig ? 'font-size:12px;font-weight:700' : 'font-weight:600') + '">' +
+                sign + ' ' + Math.abs(pct) + '%' +
+              '</span>' +
+              '</span>';
+          }).join('');
+
+      html +=
+        '<div style="background:var(--bg-secondary);border-radius:12px;padding:12px;margin-bottom:10px">' +
+
+          // 1. ヘッダー: ペア + バージョン + 日時
+          '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">' +
+            '<div style="display:flex;align-items:center;gap:6px">' +
+              '<span style="font-size:13px;font-weight:700">' + escHtml(h.pair) + '</span>' +
+              '<span class="badge-version">v' + (h.param_version || 1) + '</span>' +
+            '</div>' +
+            '<span style="font-size:11px;color:var(--label-secondary)">' +
+              escHtml((h.created_at || '').slice(0, 16).replace('T', ' ')) +
+            '</span>' +
+          '</div>' +
+
+          // 2. AI判断理由（Peak-End則: 最上段・強調表示）
+          '<div class="param-reason-block">' +
+            '<div class="param-reason-label">🤖 AI判断理由</div>' +
+            escHtml(h.reason || '—') +
+          '</div>' +
+
+          // 3. 変更内容
+          '<div style="margin-bottom:10px">' +
+            '<div style="font-size:10px;color:var(--label-secondary);font-weight:600;' +
+              'text-transform:uppercase;letter-spacing:0.05em;margin-bottom:6px">変更内容</div>' +
+            '<div style="display:flex;flex-wrap:wrap;gap:0">' + diffHtml + '</div>' +
+          '</div>' +
+
+          // 4. 評価実績グリッド
+          '<div style="display:grid;grid-template-columns:repeat(2,1fr);gap:6px">' +
+            '<div style="text-align:center;background:var(--bg-tertiary);border-radius:8px;padding:6px">' +
+              '<div style="font-size:9px;color:var(--label-secondary)">評価Tr数</div>' +
+              '<div style="font-size:14px;font-weight:700">' + (h.trades_eval || 0) + '</div>' +
+            '</div>' +
+            '<div style="text-align:center;background:var(--bg-tertiary);border-radius:8px;padding:6px">' +
+              '<div style="font-size:9px;color:var(--label-secondary)">勝率</div>' +
+              '<div style="font-size:14px;font-weight:700;color:' + winColor + '">' + winPct + '%</div>' +
+            '</div>' +
+            '<div style="text-align:center;background:var(--bg-tertiary);border-radius:8px;padding:6px">' +
+              '<div style="font-size:9px;color:var(--label-secondary)">実RR</div>' +
+              '<div style="font-size:14px;font-weight:700;color:' + rrCol + '">' + rrVal.toFixed(2) + '</div>' +
+            '</div>' +
+            '<div style="text-align:center;background:var(--bg-tertiary);border-radius:8px;padding:6px">' +
+              '<div style="font-size:9px;color:var(--label-secondary)">Profit Factor</div>' +
+              '<div style="font-size:14px;font-weight:700;color:' + pfCol + '">' + pfVal.toFixed(2) + '</div>' +
+            '</div>' +
+          '</div>' +
+
+        '</div>';
+    });
+    listEl.innerHTML = html;
+  }
+
+  // ─── PC右パネル: 最新レビューサマリー ────────────────────────────────────
+
+  function renderParamsPanelReview(d) {
+    var panelEl = el('panel-params-review');
+    if (!panelEl) return;
+    var history = d.history || [];
+    if (history.length === 0) {
+      panelEl.innerHTML = '<p style="padding:12px;color:var(--label-secondary);font-size:12px">まだレビューなし</p>';
+      return;
+    }
+    // 最新3件を表示
+    var html = '';
+    history.slice(0, 3).forEach(function(h) {
+      var winPct = Math.round((h.win_rate || 0) * 100);
+      var winColor = winPct >= 50 ? '#34c759' : '#ff3b30';
+      var rrVal = h.actual_rr || 0;
+      var rrCol = rrVal >= 2.0 ? '#34c759' : '#ff9500';
+      html +=
+        '<div style="padding:10px 16px;border-bottom:0.5px solid var(--separator)">' +
+          '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px">' +
+            '<span style="font-size:13px;font-weight:600">' + h.pair + '</span>' +
+            '<span style="font-size:10px;color:var(--label-secondary)">' + (h.created_at || '').slice(0, 10) + '</span>' +
+          '</div>' +
+          '<div style="font-size:11px;color:var(--label-secondary);line-height:1.4;margin-bottom:6px">' + escHtml((h.reason || '').slice(0, 80)) + (h.reason && h.reason.length > 80 ? '…' : '') + '</div>' +
+          '<div style="display:flex;gap:12px">' +
+            '<span style="font-size:11px">勝率 <strong style="color:' + winColor + '">' + winPct + '%</strong></span>' +
+            '<span style="font-size:11px">RR <strong style="color:' + rrCol + '">' + rrVal.toFixed(2) + '</strong></span>' +
+            '<span style="font-size:11px">PF <strong>' + (h.profit_factor || 0).toFixed(2) + '</strong></span>' +
+          '</div>' +
+        '</div>';
+    });
+    panelEl.innerHTML = html;
+  }
+
+  function escHtml(s) {
+    return String(s || '')
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;');
+  }
+
+  function renderParamsData(d) {
+    if (paramsTabActive === 'current') renderCurrentParams(d.params);
+    else renderParamsHistory(d.history);
+  }
+
+  // 戦略タブがアクティブになった時にロード（遅延ロード）
+  document.addEventListener('click', function(e) {
+    var btn = e.target && e.target.closest && e.target.closest('[data-tab="tab-strategy"]');
+    if (btn && !paramsData) loadParams();
+  });
+
+  // 初回ロード時に戦略タブが選択済みなら即ロード
+  if (document.querySelector('#tab-strategy.active') || document.querySelector('.tab-item.active[data-tab="tab-strategy"]')) {
+    loadParams();
+  }
+
+  // 30秒ごとにパラメーターも更新
+  setInterval(function() {
+    if (paramsData) loadParams();
+  }, 60000);
+
 })();
 `;

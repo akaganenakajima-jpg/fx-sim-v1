@@ -174,6 +174,25 @@ body, #app {
   padding: 16px;
 }
 
+/* ─── パラメータータブ切り替えボタン ─── */
+.params-tab-btn {
+  background: var(--fill-secondary);
+  border: none;
+  border-radius: 7px;
+  color: var(--label-secondary);
+  font-size: 12px;
+  font-weight: 500;
+  padding: 5px 12px;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+  transition: background 0.15s, color 0.15s;
+}
+.params-tab-btn.active {
+  background: #007aff;
+  color: #fff;
+  font-weight: 600;
+}
+
 /* ─── Hero PnL ─── */
 .card-hero { padding: 16px; }
 .hero-label {
@@ -535,9 +554,211 @@ body, #app {
   100% { background-position: -200% 0; }
 }
 
-/* ─── Reduced motion ─── */
+/* ─── パラメーター管理 UX心理学アニメーション（Ph.5 UI） ─── */
+@keyframes urgent-pulse {
+  0%, 100% { opacity: 1; }
+  50%       { opacity: 0.55; }
+}
+@keyframes upgraded-glow {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(48, 209, 88, 0); }
+  50%       { box-shadow: 0 0 8px 2px rgba(48, 209, 88, 0.55); }
+}
+@keyframes emergency-flash {
+  0%, 100% { background-color: var(--red); }
+  50%       { background-color: #ff6b60; }
+}
+
+/* ─── パラメーターカード（Progressive Disclosure） ─── */
+.param-card {
+  border-radius: 12px;
+  background: var(--bg-secondary);
+  margin-bottom: 8px;
+  overflow: hidden;
+}
+.param-card-summary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 14px;
+  min-height: 44px;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+  user-select: none;
+}
+.param-card-summary:active { opacity: 0.7; }
+.param-chevron {
+  font-size: 11px;
+  color: var(--label-tertiary);
+  transition: transform 0.25s cubic-bezier(0.22, 1, 0.36, 1);
+  flex-shrink: 0;
+}
+.param-card-detail {
+  max-height: 0;
+  overflow: hidden;
+  transition: max-height 0.3s ease-out;
+}
+.param-card-detail.expanded {
+  max-height: 300px;
+}
+.param-detail-inner {
+  padding: 0 14px 12px;
+  border-top: 1px solid var(--separator);
+  margin-top: 0;
+}
+.param-grid-6 {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
+  padding-top: 10px;
+}
+.param-grid-cell { text-align: center; }
+.param-grid-cell .cell-label {
+  font-size: 10px;
+  color: var(--label-tertiary);
+  margin-bottom: 2px;
+}
+.param-grid-cell .cell-value {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--label-primary);
+}
+.param-last-review {
+  margin-top: 8px;
+  font-size: 11px;
+  color: var(--label-tertiary);
+  text-align: center;
+}
+
+/* ─── 進捗バー（Goal Gradient） ─── */
+.param-progress-track {
+  height: 5px;
+  background: var(--bg-tertiary);
+  border-radius: 3px;
+  margin: 4px 14px 6px;
+  overflow: hidden;
+}
+.param-progress-fill {
+  height: 100%;
+  border-radius: 3px;
+  transition: width 0.5s cubic-bezier(0.22, 1, 0.36, 1);
+}
+.param-progress-fill.progress-normal  { background: var(--blue); }
+.param-progress-fill.progress-warning { background: var(--orange); }
+.param-progress-fill.progress-urgent  {
+  background: var(--red);
+  animation: urgent-pulse 1.2s ease-in-out infinite;
+}
+
+/* ─── カテゴリアコーディオン ─── */
+.param-category-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 4px 6px;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+  user-select: none;
+  min-height: 44px;
+}
+.param-category-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--label-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.param-category-chevron {
+  font-size: 11px;
+  color: var(--label-tertiary);
+  transition: transform 0.25s cubic-bezier(0.22, 1, 0.36, 1);
+}
+.param-category-header.collapsed .param-category-chevron {
+  transform: rotate(-90deg);
+}
+.param-category-body {
+  max-height: 9999px;
+  overflow: hidden;
+  transition: max-height 0.35s ease-out;
+}
+.param-category-body.collapsed {
+  max-height: 0;
+}
+
+/* ─── バッジ（Variable Reward） ─── */
+.badge-version {
+  display: inline-block;
+  font-size: 10px;
+  font-weight: 700;
+  padding: 1px 5px;
+  border-radius: 5px;
+  background: var(--bg-tertiary);
+  color: var(--label-secondary);
+  vertical-align: middle;
+}
+.badge-upgraded {
+  display: inline-block;
+  font-size: 10px;
+  font-weight: 700;
+  padding: 1px 5px;
+  border-radius: 5px;
+  background: rgba(48, 209, 88, 0.15);
+  color: var(--green);
+  vertical-align: middle;
+  animation: upgraded-glow 2s ease-in-out infinite;
+}
+
+/* ─── AI判断理由ブロック（Peak-End則） ─── */
+.param-reason-block {
+  background: rgba(0, 122, 255, 0.08);
+  border-left: 3px solid var(--blue);
+  border-radius: 0 8px 8px 0;
+  padding: 8px 10px;
+  margin-bottom: 10px;
+  font-size: 13px;
+  color: var(--label-primary);
+  line-height: 1.5;
+}
+.param-reason-label {
+  font-size: 10px;
+  font-weight: 700;
+  color: var(--blue);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  margin-bottom: 4px;
+}
+
+/* ─── 緊急ニュースバナー（10分以内EMERGENCY） ─── */
+.emergency-news-banner {
+  display: none;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 14px;
+  background: var(--red);
+  border-radius: 10px;
+  margin-bottom: 12px;
+  color: #fff;
+  font-size: 13px;
+  font-weight: 600;
+  opacity: 0;
+  transition: opacity 0.4s ease;
+}
+.emergency-news-banner.visible {
+  display: flex;
+  opacity: 1;
+  animation: emergency-flash 1.5s ease-in-out infinite;
+}
+.emergency-news-banner.fading {
+  opacity: 0;
+}
+
+/* ─── Reduced motion（アクセシビリティ） ─── */
 @media (prefers-reduced-motion: reduce) {
   .skeleton-line, .status-dot, .refresh-btn.spinning svg { animation: none; }
+  .param-progress-fill.progress-urgent { animation: none; }
+  .badge-upgraded { animation: none; }
+  .emergency-news-banner.visible { animation: none; }
+  .param-card-detail { transition: none; }
+  .param-category-body { transition: none; }
 }
 
 /* ─── PnLバッジ 変化フラッシュ（Variable Reward） ─── */

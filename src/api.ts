@@ -558,3 +558,85 @@ async function getNewsAnalysis(db: D1Database): Promise<{
   } catch {}
   return { items: [], updatedAt: null };
 }
+
+// ─── /api/params — パラメーター一覧 + レビュー履歴 ────────────────────────
+
+export interface InstrumentParamRow {
+  pair:               string;
+  rsi_period:         number;
+  rsi_oversold:       number;
+  rsi_overbought:     number;
+  adx_period:         number;
+  adx_min:            number;
+  atr_period:         number;
+  atr_tp_multiplier:  number;
+  atr_sl_multiplier:  number;
+  vix_max:            number;
+  require_trend_align: number;
+  regime_allow:       string;
+  review_trade_count: number;
+  trades_since_review: number;
+  param_version:      number;
+  reviewed_by:        string;
+  last_reviewed_at:   string | null;
+  prev_params_json:   string | null;
+  updated_at:         string;
+}
+
+export interface ParamReviewLogRow {
+  id:            number;
+  pair:          string;
+  param_version: number;
+  old_params:    string;
+  new_params:    string;
+  reason:        string;
+  trades_eval:   number;
+  win_rate:      number;
+  actual_rr:     number;
+  profit_factor: number;
+  reviewed_by:   string;
+  created_at:    string;
+}
+
+export interface EmergencyInfo {
+  news_title: string;
+  news_score: number;
+  created_at: string;
+}
+
+export interface ParamsResponse {
+  params:          InstrumentParamRow[];
+  history:         ParamReviewLogRow[];
+  latestEmergency: EmergencyInfo | null;
+}
+
+/**
+ * GET /api/params
+ * 全銘柄の現在パラメーター + 直近50件のレビュー履歴 + 最新EMERGENYを返す
+ */
+export async function getApiParams(db: D1Database): Promise<ParamsResponse> {
+  // news_trigger_logはv213以降に存在。未存在環境のためtry/catch
+  let emergencyRaw: EmergencyInfo | null = null;
+  try {
+    emergencyRaw = await db.prepare(
+      `SELECT news_title, news_score, created_at
+       FROM news_trigger_log
+       WHERE trigger_type = 'EMERGENCY'
+       ORDER BY id DESC LIMIT 1`
+    ).first<EmergencyInfo>();
+  } catch { /* テーブル未存在時はnullのまま */ }
+
+  const [paramsRaw, historyRaw] = await Promise.all([
+    db.prepare(
+      `SELECT * FROM instrument_params ORDER BY pair ASC`
+    ).all<InstrumentParamRow>(),
+    db.prepare(
+      `SELECT * FROM param_review_log ORDER BY id DESC LIMIT 50`
+    ).all<ParamReviewLogRow>(),
+  ]);
+  return {
+    params:          paramsRaw.results  ?? [],
+    history:         historyRaw.results ?? [],
+    latestEmergency: emergencyRaw ?? null,
+  };
+}

@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>fx-sim ワークフロー図</title>
+<title>fx-sim ワークフロー図 v3（ロジック主体アーキテクチャ）</title>
 <style>
   * { margin: 0; padding: 0; box-sizing: border-box; }
   body {
@@ -95,6 +95,13 @@
   .bg-api .node-title { color: #2dd4bf; }
   .bg-keys { background: rgba(244,114,182,0.06); border-color: rgba(244,114,182,0.18); }
   .bg-keys .node-title { color: #f9a8d4; }
+  /* Ph.3〜5 新ノード */
+  .bg-logic { background: rgba(6,182,212,0.08); border-color: rgba(6,182,212,0.25); }
+  .bg-logic .node-title { color: #22d3ee; }
+  .bg-trigger { background: rgba(245,158,11,0.08); border-color: rgba(245,158,11,0.25); }
+  .bg-trigger .node-title { color: #fcd34d; }
+  .bg-review { background: rgba(99,102,241,0.08); border-color: rgba(99,102,241,0.25); }
+  .bg-review .node-title { color: #a5b4fc; }
 
   /* ── Key Pool Diagram ── */
   .key-pool {
@@ -395,8 +402,8 @@
 </head>
 <body>
 
-<h1>fx-sim ワークフロー</h1>
-<p class="subtitle">1分 Cron → run() 関数の実行フロー（並列化フィーチャーフラグ対応 v2）</p>
+<h1>fx-sim ワークフロー <span style="font-size:16px;font-weight:400;color:#6b7280;margin-left:8px">v3</span></h1>
+<p class="subtitle">ロジック主体アーキテクチャ — ロジックエントリー (Ph.3) + AIパラメーターレビュー (Ph.4) + ニューストリガー (Ph.5) 統合</p>
 
 <div class="flow-container">
 
@@ -499,6 +506,7 @@
   <div class="arrow"><span class="arrow-label">週末Phase 2/3 処理も実行</span></div>
 
   <!-- ═══ Phase 2.5: Weekend Actions ═══ -->
+  <!-- ↑ 既存 → 以下に新ステップ挿入 →  -->
   <div class="phase">
     <div class="phase-label">Step 2.5 — 週末アクション（条件付き）</div>
     <div class="node bg-weekend">
@@ -514,6 +522,102 @@
   </div>
 
   <div class="arrow"></div>
+
+  <!-- ═══ Phase 2.7: Logic Trading (Ph.3) ═══ -->
+  <div class="phase">
+    <div class="phase-label">Step 2.7 — ロジックトレーディング <span style="background:rgba(6,182,212,0.2);color:#22d3ee;font-size:10px;padding:2px 8px;border-radius:5px;margin-left:6px">Ph.3 NEW</span></div>
+    <div class="node bg-logic">
+      <div class="node-title">
+        📐 runLogicDecisions() — AIを呼ばない定量エントリー
+        <span class="node-badge" style="background:rgba(6,182,212,0.2);color:#22d3ee">直列</span>
+      </div>
+      <div class="node-desc">
+        <strong>目的:</strong> RSI/ATR/ER の定量指標のみでエントリー判断。AI API消費ゼロ。<br>
+        <strong>起動条件:</strong> <code>!cryptoOnlyMode &amp;&amp; !economicEventGuard.highImpactNearby</code><br>
+        <strong>TP/SLチェック後・Path B/A前</strong>に実行 → ロジックポジションがOPEN枠に先に入る
+      </div>
+
+      <div class="sub-steps" style="margin-top:14px;display:grid;grid-template-columns:repeat(3,1fr);gap:8px">
+        <div class="sub-step">
+          <div class="sub-step-title">RSI（逆張り）</div>
+          <div class="sub-step-desc">Wilder平滑化<br>oversold/overboughtで<br>BUY/SELL判定</div>
+        </div>
+        <div class="sub-step">
+          <div class="sub-step-title">ATR（Close-to-Close）</div>
+          <div class="sub-step-desc">H/Lデータ不要の<br>代替ATR。<br>TP/SL距離を決定</div>
+        </div>
+        <div class="sub-step">
+          <div class="sub-step-title">ER（Efficiency Ratio）</div>
+          <div class="sub-step-desc">ADX代替のレジーム判定<br><code>adx_min/60</code> で<br>ERしきい値に変換</div>
+        </div>
+      </div>
+
+      <div class="sub-steps" style="margin-top:8px">
+        <div class="sub-step">
+          <div class="sub-step-title">臨時パラメーターマージ（Ph.5統合）</div>
+          <div class="sub-step-desc">
+            <code>getActiveTempParams(db, pair, now)</code> — <code>news_temp_params</code> の期限内レコードを取得<br>
+            NULLでない項目のみ <code>instrument_params</code> の通常値を部分上書き<br>
+            <span style="color:#fcd34d">例: TP倍率だけ拡大してRSIは通常値のまま</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="data-flow" style="border-left-color:rgba(6,182,212,0.4)">
+        ✅ 全ゲート通過 → <code>openPosition(db, pair, direction, rate, tp, sl, broker, null, undefined, {strategy:'mean_reversion', trigger:'LOGIC'})</code><br>
+        📊 <code>decisions.prompt_version = 'LOGIC_v1'</code> で AI判断と区別して記録<br>
+        🔁 <code>trades_since_review++</code> → 30件に達するとAIパラメーターレビューをトリガー
+      </div>
+    </div>
+  </div>
+
+  <div class="arrow"></div>
+
+  <!-- ═══ Phase 2.8: News Trigger (Ph.5) ═══ -->
+  <div class="phase">
+    <div class="phase-label">Step 2.8 — ニューストリガー <span style="background:rgba(245,158,11,0.2);color:#fcd34d;font-size:10px;padding:2px 8px;border-radius:5px;margin-left:6px">Ph.5 NEW</span></div>
+    <div class="node bg-trigger">
+      <div class="node-title">
+        ⚡ runNewsTrigger() — 高スコアニュースの自動分類・発火
+        <span class="node-badge" style="background:rgba(245,158,11,0.2);color:#fcd34d">条件付き</span>
+      </div>
+      <div class="node-desc">
+        <strong>対象:</strong> <code>news_raw</code> の採用記事（<code>haiku_accepted=1</code>）を前回処理ID以降で検索<br>
+        1 cron = 最大1記事を処理（負荷抑制）。処理済みIDは <code>market_cache</code> に記録（重複防止）
+      </div>
+
+      <div class="mode-switch" style="margin-top:14px">
+        <!-- EMERGENCY -->
+        <div class="mode-panel active" style="background:rgba(239,68,68,0.06);border-color:rgba(239,68,68,0.2)">
+          <div class="mode-label" style="color:#f87171">🚨 EMERGENCY（緊急）</div>
+          <div style="font-size:12px;color:#9ca3af;margin-bottom:8px">
+            <strong>判定条件:</strong> <code>relevance &ge; 9 AND sentiment &ge; 8</code><br>
+            または緊急キーワード一致（介入 / BOJ emergency / flash crash 等）
+          </div>
+          <div style="font-size:11px;color:#9ca3af">
+            → <code>setEmergencyForceFlag(db)</code> で <code>market_cache['news_emergency_force']</code> に発火タイムスタンプをセット<br>
+            → 次の cron tick で <code>consumeEmergencyForceFlag()</code> が検出 → <strong>PATH_Bの5分インターバルをバイパス</strong><br>
+            → PATH_B が即時発火し、ニュースに基づくAI完全裁量エントリーを実行
+          </div>
+        </div>
+        <!-- TREND -->
+        <div class="mode-panel active" style="background:rgba(251,191,36,0.06);border-color:rgba(251,191,36,0.2)">
+          <div class="mode-label" style="color:#fcd34d">📈 TREND_INFLUENCE（トレンド影響）</div>
+          <div style="font-size:12px;color:#9ca3af;margin-bottom:8px">
+            <strong>判定条件:</strong> <code>relevance &ge; 7 AND sentiment &ge; 7 AND composite &ge; 7.5</code>（かつ緊急でない）
+          </div>
+          <div style="font-size:11px;color:#9ca3af">
+            → GPT-4.1-miniに「影響銘柄・調整パラメーター・有効期限」を問い合わせ<br>
+            → 結果を <code>news_temp_params</code> に保存（<code>expires_at</code> 付き、1〜8時間）<br>
+            → 次の cron の <code>runLogicDecisions()</code> が臨時パラメーターを自動マージして適用<br>
+            → 期限切れ後は自動で通常パラメーターに復帰（コード変更不要）
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="arrow"><span class="arrow-label">emergencyForce=true → PATH_B 5分制限バイパス</span></div>
 
   <!-- ═══ Phase 3: Path B — B1 (共通) ═══ -->
   <div class="phase">
@@ -748,6 +852,69 @@
     </div>
   </div>
 
+  <div class="arrow"></div>
+
+  <!-- ═══ Phase 5.5: AIパラメーターレビュー (Ph.4) ═══ -->
+  <div class="phase">
+    <div class="phase-label">Step 5.5 — AIパラメーターレビュー <span style="background:rgba(99,102,241,0.2);color:#a5b4fc;font-size:10px;padding:2px 8px;border-radius:5px;margin-left:6px">Ph.4 NEW</span></div>
+    <div class="node bg-review">
+      <div class="node-title">
+        🔬 runParamReview() — AIがパラメーターを自律調整
+        <span class="node-badge" style="background:rgba(99,102,241,0.2);color:#a5b4fc">条件付き（1銘柄/cron）</span>
+      </div>
+      <div class="node-desc">
+        <strong>トリガー（優先順）:</strong><br>
+        ① <code>trades_since_review &ge; review_trade_count</code>（通常30件）<br>
+        ② 初回ブートストラップ（<code>param_version=1 AND 過去取引10件以上</code>）<br>
+        ③ 最終レビューから7日経過（長期放置防止）
+      </div>
+
+      <div class="sub-steps" style="margin-top:14px">
+        <div class="sub-step">
+          <div class="sub-step-title">① 実績集計 — calcTradeStats()</div>
+          <div class="sub-step-desc">
+            直近50件: 勝率 / 実RR / Profit Factor / 最大連敗を集計<br>
+            EV = 勝率 × 実RR - 敗率 が正かどうかも確認
+          </div>
+        </div>
+      </div>
+
+      <div class="sub-steps" style="margin-top:8px">
+        <div class="sub-step">
+          <div class="sub-step-title">② レビュープロンプト → AI呼び出し — callGeminiForReview()</div>
+          <div class="sub-step-desc">
+            現在パラメーター + 実績 → 「RR &ge; 2.0 になる調整案」を依頼<br>
+            <strong>フォールバック:</strong> Gemini失敗 → GPT-4.1-mini（15秒タイムアウト）
+          </div>
+          <div class="fallback-chain">
+            <span class="fb-item primary">Gemini 3.1 Pro</span>
+            <span class="fb-arrow">→ 失敗時</span>
+            <span class="fb-item">GPT-4.1-mini</span>
+            <span class="fb-arrow">→ 失敗時</span>
+            <span class="fb-item" style="color:#f87171">今回スキップ（次回再試行）</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="sub-steps" style="margin-top:8px">
+        <div class="sub-step">
+          <div class="sub-step-title">③ 制約検証 — validateAndClamp()</div>
+          <div class="sub-step-desc">
+            各パラメーターの変化量を ±20% 上限でクランプ<br>
+            <code>atr_tp_multiplier / atr_sl_multiplier &ge; 2.0</code>（RR2.0下限保証）<br>
+            範囲外の値はクランプして採用（拒否しない）
+          </div>
+        </div>
+      </div>
+
+      <div class="data-flow" style="border-left-color:rgba(99,102,241,0.4)">
+        ✅ <code>instrument_params</code> を更新 + <code>prev_params_json</code> に旧値を保存（フロントエンドで差分表示可能）<br>
+        📋 <code>param_review_log</code> に変更理由・実績・差分を完全記録（監査ログ）<br>
+        🔄 <code>trades_since_review = 0</code> リセット → 次のサイクル開始
+      </div>
+    </div>
+  </div>
+
   <hr class="separator">
 
   <!-- ═══ Gemini API キー管理 ═══ -->
@@ -913,6 +1080,18 @@
     <div class="legend-item">
       <div class="legend-dot" style="background: #f9a8d4;"></div>
       APIキー管理
+    </div>
+    <div class="legend-item">
+      <div class="legend-dot" style="background: #22d3ee;"></div>
+      ロジックトレーディング（Ph.3）
+    </div>
+    <div class="legend-item">
+      <div class="legend-dot" style="background: #fcd34d;"></div>
+      ニューストリガー（Ph.5）
+    </div>
+    <div class="legend-item">
+      <div class="legend-dot" style="background: #a5b4fc;"></div>
+      AIパラメーターレビュー（Ph.4）
     </div>
     <div class="legend-item">
       <span class="node-badge badge-parallel" style="font-size: 10px;">並列</span>
