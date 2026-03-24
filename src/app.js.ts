@@ -1440,5 +1440,71 @@ export const JS = `
 
   setInterval(function() { if (paramsData) loadParams(); }, 60000);
 
+  // ═══ Pull-to-Refresh ═══
+  (function() {
+    var startY = 0;
+    var pulling = false;
+    var pullIndicator = null;
+    var threshold = 80;
+
+    function createIndicator() {
+      var el = document.createElement('div');
+      el.id = 'pull-indicator';
+      el.style.cssText = 'position:fixed;top:0;left:0;right:0;height:0;display:flex;align-items:center;justify-content:center;z-index:200;overflow:hidden;transition:height 0.2s ease;background:transparent;';
+      el.innerHTML = '<div style="width:24px;height:24px;border:2px solid var(--tertiary);border-top-color:var(--blue);border-radius:50%;"></div>';
+      document.body.insertBefore(el, document.body.firstChild);
+      return el;
+    }
+
+    document.addEventListener('touchstart', function(e) {
+      if (window.scrollY <= 0) {
+        startY = e.touches[0].clientY;
+        pulling = true;
+        if (!pullIndicator) pullIndicator = createIndicator();
+      }
+    }, { passive: true });
+
+    document.addEventListener('touchmove', function(e) {
+      if (!pulling) return;
+      var dy = e.touches[0].clientY - startY;
+      if (dy > 0 && window.scrollY <= 0) {
+        var h = Math.min(dy * 0.5, threshold);
+        if (pullIndicator) {
+          pullIndicator.style.height = h + 'px';
+          var spinner = pullIndicator.querySelector('div');
+          if (spinner) {
+            var rotation = (dy / threshold) * 360;
+            spinner.style.transform = 'rotate(' + rotation + 'deg)';
+            spinner.style.borderTopColor = dy > threshold ? 'var(--green)' : 'var(--blue)';
+          }
+        }
+      }
+    }, { passive: true });
+
+    document.addEventListener('touchend', function() {
+      if (!pulling) return;
+      pulling = false;
+      var h = pullIndicator ? parseInt(pullIndicator.style.height) : 0;
+      if (h >= threshold * 0.8) {
+        if (pullIndicator) {
+          var spinner = pullIndicator.querySelector('div');
+          if (spinner) spinner.style.animation = 'spin 0.6s linear infinite';
+        }
+        refresh();
+        setTimeout(function() {
+          if (pullIndicator) pullIndicator.style.height = '0';
+          setTimeout(function() {
+            if (pullIndicator) {
+              var spinner = pullIndicator.querySelector('div');
+              if (spinner) spinner.style.animation = '';
+            }
+          }, 200);
+        }, 800);
+      } else {
+        if (pullIndicator) pullIndicator.style.height = '0';
+      }
+    }, { passive: true });
+  })();
+
 })();
 `;

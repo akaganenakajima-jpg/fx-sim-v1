@@ -172,6 +172,30 @@ export default {
         return new Response(JS, {
           headers: { 'Content-Type': 'application/javascript; charset=utf-8', 'Cache-Control': 'no-cache' },
         });
+      case '/manifest.json':
+        return new Response(JSON.stringify({
+          name: 'FX Sim',
+          short_name: 'FX Sim',
+          start_url: '/',
+          display: 'standalone',
+          background_color: '#000000',
+          theme_color: '#000000',
+          description: 'FX Trading Simulator',
+          icons: [
+            { src: '/icon-192.png', sizes: '192x192', type: 'image/svg+xml' },
+            { src: '/icon-512.png', sizes: '512x512', type: 'image/svg+xml' },
+          ],
+        }), {
+          headers: { 'Content-Type': 'application/json', 'Cache-Control': 'public, max-age=86400' },
+        });
+      case '/icon-192.png':
+      case '/icon-512.png': {
+        const size = url.pathname.includes('512') ? 512 : 192;
+        const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}" viewBox="0 0 ${size} ${size}"><rect width="${size}" height="${size}" rx="${Math.round(size * 0.2)}" fill="#1C1C1E"/><text x="50%" y="52%" dominant-baseline="middle" text-anchor="middle" fill="#30D158" font-family="system-ui" font-size="${Math.round(size * 0.35)}" font-weight="800">FX</text></svg>`;
+        return new Response(svg, {
+          headers: { 'Content-Type': 'image/svg+xml', 'Cache-Control': 'public, max-age=86400' },
+        });
+      }
       case '/api/status':
         try {
           const status = await getApiStatus(env.DB, {

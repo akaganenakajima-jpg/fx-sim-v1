@@ -616,4 +616,18 @@ body.drawer-open .tabs, body.sheet-open .tabs { transform: translateZ(0) transla
 @media (min-width: 2560px) {
   body { max-width: var(--container-max); margin-left: auto; margin-right: auto; }
 }
+
+/* ═══ PWA standalone mode ═══ */
+@media (display-mode: standalone) {
+  body { padding-top: env(safe-area-inset-top, 0px); }
+  .sbar { padding-top: calc(env(safe-area-inset-top, 0px) + 8px); }
+  html { overflow: hidden; height: 100%; }
+  body { overflow-y: auto; height: 100%; -webkit-overflow-scrolling: touch; }
+}
+
+/* ═══ Pull-to-Refresh spinner ═══ */
+@keyframes spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
 `;
