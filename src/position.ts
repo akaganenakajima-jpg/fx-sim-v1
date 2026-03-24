@@ -291,6 +291,10 @@ export async function openPosition(
   }
 
   // ポジションサイジング: ケリー基準（勝率 × RR比）
+  // サンプル数20件以上で Kelly ゲートを適用:
+  //   Kelly < 0   → 期待値マイナス銘柄 → エントリー停止
+  //   Kelly < 0.1 → 最小ロット (0.1)
+  //   Kelly ≥ 0.1 → Kelly 値をそのままロットに使用（上限 1.0）
   const perfRow = await db
     .prepare(`SELECT
       COUNT(*) as total,
@@ -301,13 +305,21 @@ export async function openPosition(
     .bind(pair)
     .first<{ total: number; wins: number; avgWin: number; avgLoss: number }>();
   let lot = 1.0;
-  if (perfRow && perfRow.total >= 5) {
+  if (perfRow && perfRow.total >= 20) {
     const winRate = perfRow.wins / perfRow.total;
     const avgRR = perfRow.avgLoss > 0 ? perfRow.avgWin / perfRow.avgLoss : 0;
     const kelly = kellyFraction(winRate, avgRR);
-    // kelly 0〜0.25 → lot 0.5〜2.0
-    lot = Math.max(0.5, Math.min(0.5 + kelly * 6, 2.0));
-    console.log(`[position] Kelly: ${pair} wr=${(winRate*100).toFixed(0)}% rr=${avgRR.toFixed(2)} f=${kelly.toFixed(3)} → lot=${lot.toFixed(1)}`);
+    // Kelly ゲート: 負のKellyは期待値マイナス → 取引停止
+    if (kelly < 0) {
+      await insertSystemLog(db, 'WARN', 'KELLY',
+        `Kelly負: ${pair} ${direction}エントリーをブロック (kelly=${kelly.toFixed(3)})`,
+        JSON.stringify({ pair, kelly, winRate: winRate.toFixed(3), avgRR: avgRR.toFixed(3), total: perfRow.total }));
+      console.warn(`[position] Kelly block: ${pair} kelly=${kelly.toFixed(3)} (wr=${(winRate*100).toFixed(0)}% rr=${avgRR.toFixed(2)}) n=${perfRow.total}`);
+      return;
+    }
+    // Kelly 比例ロットサイジング: Kelly<0.1→最小, Kelly≥0.1→Kelly値（上限1.0）
+    lot = kelly < 0.1 ? 0.1 : Math.min(kelly, 1.0);
+    console.log(`[position] Kelly: ${pair} wr=${(winRate*100).toFixed(0)}% rr=${avgRR.toFixed(2)} f=${kelly.toFixed(3)} → lot=${lot.toFixed(2)}`);
   }
 
   // テスタ施策9: SL幅ベースポジションサイズ（1%ルール）
