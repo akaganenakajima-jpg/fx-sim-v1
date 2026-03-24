@@ -847,6 +847,63 @@ body, #app {
   letter-spacing: -0.3px;
 }
 
+/* ─── 取引トレーサビリティ ─── */
+.trace-section {
+  margin: 12px 0;
+  padding: 10px 12px;
+  background: var(--card-bg, #1C1C1E);
+  border-radius: 8px;
+}
+.trace-title {
+  font-size: 13px;
+  font-weight: 600;
+  margin-bottom: 6px;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.trace-reasoning {
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--secondary, #8E8E93);
+  font-family: 'SF Mono', ui-monospace, monospace;
+  word-break: break-all;
+}
+.trace-formula {
+  font-size: 12px;
+  font-family: 'SF Mono', ui-monospace, monospace;
+  color: var(--text, #fff);
+  padding: 4px 0;
+}
+.trace-note {
+  font-size: 11px;
+  color: var(--orange, #FF9F0A);
+  margin-top: 2px;
+}
+.trace-params {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 4px 12px;
+  font-size: 12px;
+}
+.trace-param-label { color: var(--secondary, #8E8E93); }
+.trace-param-value { font-weight: 500; }
+.trace-history-item {
+  padding: 6px 0;
+  border-bottom: 1px solid var(--separator, #38383A);
+  font-size: 12px;
+}
+.trace-history-item:last-child { border-bottom: none; }
+.trace-history-version {
+  font-weight: 600;
+  color: var(--blue, #0A84FF);
+}
+.trace-history-reason {
+  color: var(--secondary, #8E8E93);
+  margin-top: 2px;
+  line-height: 1.4;
+}
+
 /* ─── 判定履歴 HOLD ディム（Cognitive Load） ─── */
 .decision-row-hold {
   opacity: 0.45;

@@ -587,6 +587,83 @@ export const JS = `
       '</div>';
     }
 
+    // ── トレーサビリティセクション構築 ──
+    var traceHtml = '';
+    var tc = lastData && lastData.tradeContext && lastData.tradeContext[pair] ? lastData.tradeContext[pair] : null;
+    if (tc) {
+      // 1. なぜオープンした？
+      traceHtml += '<div class="trace-section">' +
+        '<div class="trace-title">&#x1F4CD; なぜオープンした？</div>' +
+        '<div class="trace-reasoning">' + escHtml(tc.entryReasoning || '—') + '</div>' +
+        '<div style="margin-top:6px;font-size:12px;color:var(--secondary, #8E8E93)">' +
+          (tc.entryStrategy ? '戦略: ' + escHtml(tc.entryStrategy) : '') +
+          (tc.entryTrigger ? ' | トリガー: ' + escHtml(tc.entryTrigger) : '') +
+          (tc.entryConfidence != null ? ' | 確信度: ' + tc.entryConfidence.toFixed(2) : '') +
+        '</div>' +
+        (tc.entryDecisionAt ? '<div style="font-size:11px;color:var(--secondary, #8E8E93);margin-top:2px">エントリー: ' + fmtTime(tc.entryDecisionAt) + '</div>' : '') +
+      '</div>';
+
+      // 2. TP/SLはどう決まった？
+      if (tc.tpSlBreakdown) {
+        var bd = tc.tpSlBreakdown;
+        traceHtml += '<div class="trace-section">' +
+          '<div class="trace-title">&#x1F4CD; TP/SL はどう決まった？</div>' +
+          '<div class="trace-formula">TP = ' + escHtml(bd.formulaTp) + '</div>' +
+          '<div class="trace-formula">SL = ' + escHtml(bd.formulaSl) + '</div>' +
+          (bd.vixAlertActive ? '<div class="trace-note">VIX=' + (bd.currentVix != null ? bd.currentVix.toFixed(1) : '?') + ' — vix_tp_scale=' + bd.vixTpScale + ' 適用中</div>' : '') +
+          (bd.macroSlScale !== 1.0 ? '<div class="trace-note">macro_sl_scale=' + bd.macroSlScale + ' 適用中</div>' : '') +
+        '</div>';
+      }
+
+      // 3. 現在のパラメーター
+      if (tc.currentParams) {
+        var cp = tc.currentParams;
+        var ago = '';
+        if (cp.lastReviewedAt) {
+          var diffMs = Date.now() - new Date(cp.lastReviewedAt).getTime();
+          var diffH = Math.floor(diffMs / 3600000);
+          if (diffH < 1) ago = Math.floor(diffMs / 60000) + '分前';
+          else if (diffH < 24) ago = diffH + 'h前';
+          else ago = Math.floor(diffH / 24) + 'd前';
+        }
+        traceHtml += '<div class="trace-section">' +
+          '<div class="trace-title">&#x1F4CD; 現在のパラメーター（v' + cp.paramVersion + '）</div>' +
+          '<div class="trace-params">' +
+            '<span class="trace-param-label">RSI</span><span class="trace-param-value">' + cp.rsiOversold + ' / ' + cp.rsiOverbought + '</span>' +
+            '<span class="trace-param-label">ATR x TP</span><span class="trace-param-value">' + cp.atrTpMultiplier + '</span>' +
+            '<span class="trace-param-label">ATR x SL</span><span class="trace-param-value">' + cp.atrSlMultiplier + '</span>' +
+            '<span class="trace-param-label">VIX TP/SL</span><span class="trace-param-value">' + cp.vixTpScale + ' / ' + cp.vixSlScale + '</span>' +
+            '<span class="trace-param-label">strategy</span><span class="trace-param-value">' + escHtml(cp.strategyPrimary) + '</span>' +
+            '<span class="trace-param-label">min signal</span><span class="trace-param-value">' + cp.minSignalStrength + '</span>' +
+          '</div>' +
+          (ago ? '<div style="font-size:11px;color:var(--secondary, #8E8E93);margin-top:6px">最終レビュー: ' + ago + '</div>' : '') +
+        '</div>';
+      }
+
+      // 4. パラメーター変更履歴
+      if (tc.paramHistory && tc.paramHistory.length > 0) {
+        var histItems = tc.paramHistory.map(function(h) {
+          var hAgo = '';
+          var hDiffMs = Date.now() - new Date(h.changedAt).getTime();
+          var hDiffH = Math.floor(hDiffMs / 3600000);
+          if (hDiffH < 1) hAgo = Math.floor(hDiffMs / 60000) + '分前';
+          else if (hDiffH < 24) hAgo = hDiffH + 'h前';
+          else hAgo = Math.floor(hDiffH / 24) + 'd前';
+          return '<div class="trace-history-item">' +
+            '<span class="trace-history-version">v' + h.version + '</span>' +
+            ' <span style="color:var(--secondary, #8E8E93);font-size:11px">(' + hAgo + ')</span>' +
+            (h.winRate != null ? ' <span style="font-size:11px;color:var(--secondary, #8E8E93)">WR=' + (h.winRate * 100).toFixed(0) + '%</span>' : '') +
+            (h.rr != null ? ' <span style="font-size:11px;color:var(--secondary, #8E8E93)">RR=' + h.rr.toFixed(1) + '</span>' : '') +
+            '<div class="trace-history-reason">' + escHtml(h.reason) + '</div>' +
+          '</div>';
+        }).join('');
+        traceHtml += '<div class="trace-section">' +
+          '<div class="trace-title">&#x1F4CD; パラメーター変更履歴</div>' +
+          histItems +
+        '</div>';
+      }
+    }
+
     // 取引規模の計算
     var mul = instr ? instr.multiplier : 1;
     var unitLabel = '';
@@ -614,6 +691,7 @@ export const JS = `
       row('取引規模', unitLabel) +
       (notional > 0 ? row('想定元本', fmtYen(notional) + ' <span style="font-size:11px;color:var(--label-secondary)">(' + leverage.toFixed(1) + '倍)</span>') : '') +
       row('エントリー日時', fmtTime(pos.entry_at)) +
+      traceHtml +
       decisionHtml +
       historyHtml;
 

@@ -167,6 +167,46 @@ export interface StatusResponse {
       factors: Record<string, number>;
     }>;
   } | null;
+  /** 取引トレーサビリティ: OPENポジションの裏側を完全表示 */
+  tradeContext: Record<string, {
+    entryReasoning: string | null;
+    entryDecisionAt: string | null;
+    entryStrategy: string | null;
+    entryTrigger: string | null;
+    entryConfidence: number | null;
+    tpSlBreakdown: {
+      atr: number | null;
+      atrTpMultiplier: number;
+      atrSlMultiplier: number;
+      vixTpScale: number;
+      vixSlScale: number;
+      macroSlScale: number;
+      currentVix: number | null;
+      vixAlertActive: boolean;
+      formulaTp: string;
+      formulaSl: string;
+    } | null;
+    currentParams: {
+      rsiOversold: number;
+      rsiOverbought: number;
+      atrTpMultiplier: number;
+      atrSlMultiplier: number;
+      vixTpScale: number;
+      vixSlScale: number;
+      macroSlScale: number;
+      strategyPrimary: string;
+      minSignalStrength: number;
+      paramVersion: number;
+      lastReviewedAt: string | null;
+    } | null;
+    paramHistory: Array<{
+      version: number;
+      reason: string;
+      changedAt: string;
+      winRate: number | null;
+      rr: number | null;
+    }>;
+  }> | null;
   /** テスタ施策21: 戦略マップデータ */
   strategyMap: {
     strategyStats: Array<{
@@ -532,6 +572,9 @@ export async function getApiStatus(db: D1Database, tradingEnv?: { TRADING_ENABLE
     todaySellCount:     todayDecisionCountRow?.sellCount ?? 0,
     causalSummary: await buildCausalSummary(db),
     strategyMap: await getStrategyMapData(db),
+    tradeContext: (openPositions.results ?? []).length > 0
+      ? await buildTradeContext(db, openPositions.results ?? [])
+      : null,
   };
 }
 
@@ -698,6 +741,128 @@ function buildNarrative(
   let result = parts.join('。');
   if (result.length > 100) result = result.substring(0, 97) + '...';
   return result;
+}
+
+// ─── 取引トレーサビリティ: OPENポジションの裏側データ構築 ────────────────
+async function buildTradeContext(
+  db: D1Database,
+  openPositions: Position[],
+): Promise<StatusResponse['tradeContext']> {
+  if (openPositions.length === 0) return null;
+  const result: NonNullable<StatusResponse['tradeContext']> = {};
+
+  for (const pos of openPositions) {
+    try {
+      // 1. エントリー判断の reasoning を取得
+      const decisionRow = await db.prepare(
+        `SELECT reasoning, created_at FROM decisions
+         WHERE pair = ? AND decision = ? AND created_at <= ?
+         ORDER BY created_at DESC LIMIT 1`
+      ).bind(pos.pair, pos.direction, pos.entry_at).first<{ reasoning: string | null; created_at: string }>();
+
+      // 直近VIXを取得（TP/SL計算の内訳用）
+      const vixRow = await db.prepare(
+        `SELECT vix FROM decisions WHERE pair = ? AND vix IS NOT NULL ORDER BY id DESC LIMIT 1`
+      ).bind(pos.pair).first<{ vix: number | null }>();
+
+      // 2. 現在のパラメーターを取得
+      const paramRow = await db.prepare(
+        `SELECT rsi_oversold, rsi_overbought, atr_tp_multiplier, atr_sl_multiplier,
+                vix_tp_scale, vix_sl_scale, macro_sl_scale, strategy_primary,
+                min_signal_strength, param_version, last_reviewed_at
+         FROM instrument_params WHERE pair = ?`
+      ).bind(pos.pair).first<{
+        rsi_oversold: number; rsi_overbought: number;
+        atr_tp_multiplier: number; atr_sl_multiplier: number;
+        vix_tp_scale: number; vix_sl_scale: number; macro_sl_scale: number;
+        strategy_primary: string; min_signal_strength: number;
+        param_version: number; last_reviewed_at: string | null;
+      }>();
+
+      // 3. パラメーター変更履歴（直近3件）
+      const historyRows = await db.prepare(
+        `SELECT param_version, reason, created_at, win_rate, actual_rr
+         FROM param_review_log WHERE pair = ?
+         ORDER BY id DESC LIMIT 3`
+      ).bind(pos.pair).all<{
+        param_version: number; reason: string; created_at: string;
+        win_rate: number | null; actual_rr: number | null;
+      }>();
+
+      // 4. TP/SL計算の内訳を構築
+      let tpSlBreakdown: NonNullable<StatusResponse['tradeContext']>[string]['tpSlBreakdown'] = null;
+      if (pos.tp_rate != null && pos.sl_rate != null && paramRow) {
+        const currentVix = vixRow?.vix ?? null;
+        const tpMult = paramRow.atr_tp_multiplier;
+        const slMult = paramRow.atr_sl_multiplier;
+        const vixTpScale = paramRow.vix_tp_scale;
+        const vixSlScale = paramRow.vix_sl_scale;
+        const macroSlScale = paramRow.macro_sl_scale;
+
+        // ATRを逆算: TP = entry ± ATR × tpMult × vixTpScale
+        // isBuy: TP = entry + ATR × tpMult × vixTpScale → ATR = (TP - entry) / (tpMult × vixTpScale)
+        // isSell: TP = entry - ATR × tpMult × vixTpScale → ATR = (entry - TP) / (tpMult × vixTpScale)
+        const isBuy = pos.direction === 'BUY';
+        const tpDiff = isBuy ? (pos.tp_rate - pos.entry_rate) : (pos.entry_rate - pos.tp_rate);
+        const estimatedAtr = (tpMult * vixTpScale) > 0 ? tpDiff / (tpMult * vixTpScale) : null;
+
+        // VIXアラート判定
+        const vixAlertActive = currentVix != null && paramRow ? currentVix > (paramRow as any).vix_max * 0.7 : false;
+
+        const sign = isBuy ? '+' : '-';
+        const signSl = isBuy ? '-' : '+';
+        const atrStr = estimatedAtr != null ? estimatedAtr.toFixed(3) : '?';
+        const formulaTp = `${pos.entry_rate.toFixed(3)} ${sign} ${atrStr}x${tpMult}x${vixTpScale} = ${pos.tp_rate.toFixed(3)}`;
+        const formulaSl = `${pos.entry_rate.toFixed(3)} ${signSl} ${atrStr}x${slMult}x${vixSlScale} = ${pos.sl_rate.toFixed(3)}`;
+
+        tpSlBreakdown = {
+          atr: estimatedAtr,
+          atrTpMultiplier: tpMult,
+          atrSlMultiplier: slMult,
+          vixTpScale,
+          vixSlScale,
+          macroSlScale,
+          currentVix,
+          vixAlertActive,
+          formulaTp,
+          formulaSl,
+        };
+      }
+
+      result[pos.pair] = {
+        entryReasoning: decisionRow?.reasoning ?? null,
+        entryDecisionAt: decisionRow?.created_at ?? null,
+        entryStrategy: pos.strategy ?? null,
+        entryTrigger: pos.trigger ?? null,
+        entryConfidence: pos.confidence ?? null,
+        tpSlBreakdown,
+        currentParams: paramRow ? {
+          rsiOversold: paramRow.rsi_oversold,
+          rsiOverbought: paramRow.rsi_overbought,
+          atrTpMultiplier: paramRow.atr_tp_multiplier,
+          atrSlMultiplier: paramRow.atr_sl_multiplier,
+          vixTpScale: paramRow.vix_tp_scale,
+          vixSlScale: paramRow.vix_sl_scale,
+          macroSlScale: paramRow.macro_sl_scale,
+          strategyPrimary: paramRow.strategy_primary,
+          minSignalStrength: paramRow.min_signal_strength,
+          paramVersion: paramRow.param_version,
+          lastReviewedAt: paramRow.last_reviewed_at,
+        } : null,
+        paramHistory: (historyRows.results ?? []).map(r => ({
+          version: r.param_version,
+          reason: r.reason,
+          changedAt: r.created_at,
+          winRate: r.win_rate,
+          rr: r.actual_rr,
+        })),
+      };
+    } catch {
+      // 個別銘柄の失敗は無視して次へ
+    }
+  }
+
+  return Object.keys(result).length > 0 ? result : null;
 }
 
 async function getStrategyMapData(db: D1Database): Promise<StatusResponse['strategyMap']> {
