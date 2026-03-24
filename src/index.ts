@@ -620,6 +620,10 @@ async function runAIDecisions(
     batches.push(aiCandidates.slice(i, i + parallelLimit));
   }
 
+  // W005拡張: PATH_A 全体OPEN上限（PATH_Bと統一）
+  let pathANewEntries = 0;
+  const PATH_A_OPEN_LIMIT = 10;
+
   for (const batch of batches) {
     if (Date.now() - cronStart > 50_000) {
       console.warn(`[fx-sim] Cron budget exhausted (${Date.now() - cronStart}ms), skipping remaining batches`);
@@ -860,27 +864,35 @@ async function runAIDecisions(
                 }
               }
 
-              await openPosition(
-                env.DB,
-                instrument.pair,
-                geminiResult.decision,
-                currentRate,
-                finalTp,
-                finalSl,
-                source,
-                oandaTradeId,
-                getWebhookUrl(env),
-                {
-                  strategy: validStrategy, regime: regimeName, session: currentSession,
-                  confidence: validConfidence, pnlMultiplier: instrument.pnlMultiplier,
-                  trigger: triggerPrefix.includes('RATE') ? 'RATE' : 'SCHED',
-                },
-              );
-              await insertSystemLog(
-                env.DB, 'INFO', 'POSITION',
-                `ポジション開設: ${instrument.pair} ${geminiResult.decision} @ ${currentRate} [${source}]`,
-                JSON.stringify({ tp: finalTp, sl: finalSl, source, oandaTradeId, reasoning: geminiResult.reasoning?.slice(0, 100) })
-              );
+              // W005拡張: PATH_A 全体OPEN上限ハードブロック
+              if (openPositionSet.size + pathANewEntries >= PATH_A_OPEN_LIMIT) {
+                await insertSystemLog(env.DB, 'WARN', 'PATH_A',
+                  `PATH_A OPEN上限ブロック: ${instrument.pair}`,
+                  `OPEN=${openPositionSet.size + pathANewEntries}/${PATH_A_OPEN_LIMIT}`);
+              } else {
+                await openPosition(
+                  env.DB,
+                  instrument.pair,
+                  geminiResult.decision,
+                  currentRate,
+                  finalTp,
+                  finalSl,
+                  source,
+                  oandaTradeId,
+                  getWebhookUrl(env),
+                  {
+                    strategy: validStrategy, regime: regimeName, session: currentSession,
+                    confidence: validConfidence, pnlMultiplier: instrument.pnlMultiplier,
+                    trigger: triggerPrefix.includes('RATE') ? 'RATE' : 'SCHED',
+                  },
+                );
+                await insertSystemLog(
+                  env.DB, 'INFO', 'POSITION',
+                  `ポジション開設: ${instrument.pair} ${geminiResult.decision} @ ${currentRate} [${source}]`,
+                  JSON.stringify({ tp: finalTp, sl: finalSl, source, oandaTradeId, reasoning: geminiResult.reasoning?.slice(0, 100) })
+                );
+                pathANewEntries++; // W005拡張: 成功したらカウント増加
+              } // end PATH_A OPEN limit
             } // end session/confidence gate
             }
           } else if (geminiResult.decision !== 'HOLD') {
