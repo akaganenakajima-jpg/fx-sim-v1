@@ -1,7 +1,7 @@
 // ポジション管理（TP/SL チェック + ブローカー統合）
 // 同時オープンポジションは銘柄ごとに最大1件
 
-import { getOpenPositions, getOpenPositionByPair, closePosition, insertSystemLog, updateDecisionOutcome } from './db';
+import { getOpenPositions, getOpenPositionByPair, closePosition, insertSystemLog, updateDecisionOutcome, getRecentTPOpposite } from './db';
 import type { Position } from './db';
 import type { InstrumentConfig } from './instruments';
 import { getBroker, withFallback, type BrokerEnv } from './broker';
@@ -278,7 +278,23 @@ export async function openPosition(
     return;
   }
 
+  // TP後クールダウン: 同銘柄の逆方向TPから60分以内は逆張りエントリー禁止
+  const TP_COOLDOWN_MIN = 60;
+  const recentTP = await getRecentTPOpposite(db, pair, direction, TP_COOLDOWN_MIN);
+  if (recentTP) {
+    const minAgo = Math.round((Date.now() - new Date(recentTP.closed_at).getTime()) / 60000);
+    await insertSystemLog(db, 'INFO', 'COOLDOWN',
+      `TP後クールダウン: ${pair} ${direction}エントリーをブロック (${minAgo}分前に逆${recentTP.direction}がTP)`,
+      JSON.stringify({ pair, blockedDir: direction, tpId: recentTP.id, tpDir: recentTP.direction, minAgo, cooldownMin: TP_COOLDOWN_MIN }));
+    console.log(`[position] TP-cooldown block: ${pair} ${direction} (${minAgo}min after ${recentTP.direction} TP)`);
+    return;
+  }
+
   // ポジションサイジング: ケリー基準（勝率 × RR比）
+  // サンプル数20件以上で Kelly ゲートを適用:
+  //   Kelly < 0   → 期待値マイナス銘柄 → エントリー停止
+  //   Kelly < 0.1 → 最小ロット (0.1)
+  //   Kelly ≥ 0.1 → Kelly 値をそのままロットに使用（上限 1.0）
   const perfRow = await db
     .prepare(`SELECT
       COUNT(*) as total,
@@ -289,13 +305,21 @@ export async function openPosition(
     .bind(pair)
     .first<{ total: number; wins: number; avgWin: number; avgLoss: number }>();
   let lot = 1.0;
-  if (perfRow && perfRow.total >= 5) {
+  if (perfRow && perfRow.total >= 20) {
     const winRate = perfRow.wins / perfRow.total;
     const avgRR = perfRow.avgLoss > 0 ? perfRow.avgWin / perfRow.avgLoss : 0;
     const kelly = kellyFraction(winRate, avgRR);
-    // kelly 0〜0.25 → lot 0.5〜2.0
-    lot = Math.max(0.5, Math.min(0.5 + kelly * 6, 2.0));
-    console.log(`[position] Kelly: ${pair} wr=${(winRate*100).toFixed(0)}% rr=${avgRR.toFixed(2)} f=${kelly.toFixed(3)} → lot=${lot.toFixed(1)}`);
+    // Kelly ゲート: 負のKellyは期待値マイナス → 取引停止
+    if (kelly < 0) {
+      await insertSystemLog(db, 'WARN', 'KELLY',
+        `Kelly負: ${pair} ${direction}エントリーをブロック (kelly=${kelly.toFixed(3)})`,
+        JSON.stringify({ pair, kelly, winRate: winRate.toFixed(3), avgRR: avgRR.toFixed(3), total: perfRow.total }));
+      console.warn(`[position] Kelly block: ${pair} kelly=${kelly.toFixed(3)} (wr=${(winRate*100).toFixed(0)}% rr=${avgRR.toFixed(2)}) n=${perfRow.total}`);
+      return;
+    }
+    // Kelly 比例ロットサイジング: Kelly<0.1→最小, Kelly≥0.1→Kelly値（上限1.0）
+    lot = kelly < 0.1 ? 0.1 : Math.min(kelly, 1.0);
+    console.log(`[position] Kelly: ${pair} wr=${(winRate*100).toFixed(0)}% rr=${avgRR.toFixed(2)} f=${kelly.toFixed(3)} → lot=${lot.toFixed(2)}`);
   }
 
   // テスタ施策9: SL幅ベースポジションサイズ（1%ルール）

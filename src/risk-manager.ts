@@ -134,44 +134,52 @@ export async function applyDrawdownControl(
   }
 }
 
-// ─── SPRT回復判定（逐次確率比検定） ────────────────
+// ─── SPRT回復判定（逐次確率比検定・Gaussian版） ──────────────
 // Wald (1945): 固定サンプルサイズ不要でデータ到着ごとに判定可能
-// H₀: 勝率 p <= p₀ (回復なし), H₁: 勝率 p >= p₁ (回復あり)
+// 改訂: バイナリ勝敗 → 連続リターン（pnl/残高）ベースの Gaussian SPRT
+// H₀: 平均リターン μ ≤ μ₀（回復なし）
+// H₁: 平均リターン μ ≥ μ₁（回復あり）
+// Δllr = (μ₁-μ₀)/σ² × r_t − (μ₁²-μ₀²)/(2σ²)  where r_t = pnl / INITIAL_BALANCE
 
 interface SPRTConfig {
-  p0: number;  // H₀の勝率（回復なし）
-  p1: number;  // H₁の勝率（回復あり）
+  mu0: number;   // H₀: 平均リターン（回復なし: -0.1%/trade）
+  mu1: number;   // H₁: 平均リターン（回復あり: +0.3%/trade）
+  sigma: number; // リターンの標準偏差（実績ベース: 約1%）
   alpha: number; // 第一種過誤（誤って回復と判定）
   beta: number;  // 第二種過誤（回復を見逃す）
 }
 
 const SPRT_CONFIG: SPRTConfig = {
-  p0: 0.30,   // 回復なし: 勝率30%以下
-  p1: 0.50,   // 回復あり: 勝率50%以上
-  alpha: 0.05,
-  beta: 0.10,
+  mu0:   -0.001,  // 回復なし: -0.1%/trade 以下
+  mu1:   +0.003,  // 回復あり: +0.3%/trade 以上
+  sigma:  0.010,  // リターンSD ≈1%（実績: avgLoss/10000 ≈ 0.008）
+  alpha:  0.05,
+  beta:   0.10,
 };
 
 export type SPRTResult = 'UPGRADE' | 'DOWNGRADE' | 'CONTINUE';
 
 /**
- * SPRT（逐次確率比検定）でDD回復を判定する。
- * DD開始後のトレード勝敗を逐次的に評価し、統計的に有意な回復/悪化を検出する。
+ * SPRT（逐次確率比検定・Gaussian版）でDD回復を判定する。
+ * DD開始後のトレードリターン（pnl/残高）を逐次的に評価し、統計的に有意な回復/悪化を検出する。
+ * バイナリ勝敗ではなく連続値を使うため RR の大小も自動的に考慮される。
  *
  * @returns UPGRADE: 回復と判定（DD段階を1段階上げる）
  *          DOWNGRADE: 悪化と判定（DD段階を1段階下げる）
  *          CONTINUE: まだ判定不能（データ蓄積中）
  */
 export async function evaluateRecovery(db: D1Database): Promise<SPRTResult> {
-  const { p0, p1, alpha, beta } = SPRT_CONFIG;
+  const { mu0, mu1, sigma, alpha, beta } = SPRT_CONFIG;
 
   // 上限・下限閾値（対数尤度比）
   const upperBound = Math.log((1 - beta) / alpha);   // ≈ 2.89
   const lowerBound = Math.log(beta / (1 - alpha));    // ≈ -2.25
 
-  // 1トレードあたりの対数尤度比増分
-  const logLR_win = Math.log(p1 / p0);               // win時: ln(0.5/0.3) ≈ 0.511
-  const logLR_loss = Math.log((1 - p1) / (1 - p0));  // loss時: ln(0.5/0.7) ≈ -0.336
+  // Gaussian SPRT の1観測あたりLLR増分係数
+  // Δllr = (μ₁-μ₀)/σ² × r_t − (μ₁²-μ₀²)/(2σ²)
+  const sigma2 = sigma * sigma;
+  const coeff  = (mu1 - mu0) / sigma2;                          // ≈ 40.0
+  const offset = (mu1 * mu1 - mu0 * mu0) / (2 * sigma2);       // ≈ 0.04
 
   // risk_state から現在の累積対数尤度比を取得
   const storedLLR = await getRiskStateValue(db, 'sprt_log_likelihood');
@@ -197,7 +205,8 @@ export async function evaluateRecovery(db: D1Database): Promise<SPRTResult> {
 
   let maxId = lastId;
   for (const trade of rows) {
-    llr += trade.pnl > 0 ? logLR_win : logLR_loss;
+    const r_t = trade.pnl / INITIAL_BALANCE;  // リターン（例: +50円 → +0.005）
+    llr += coeff * r_t - offset;
     if (trade.id > maxId) maxId = trade.id;
   }
 

@@ -86,38 +86,18 @@ export const INSTRUMENTS: InstrumentConfig[] = [
     correlationGroup: 'risk_on',
     tier: 'B', tierLotMultiplier: 0.7,
   },
-  {
-    pair: 'US10Y',
-    broker: 'oanda',
-    oandaSymbol: 'USB10Y_USD',
-    rateChangeTh: 0.015,
-    tpSlHint: 'SLは0.05〜0.35%（ATRの0.6〜4倍）、TPはSLの最大6倍まで自由（RR1.5以上推奨）',
-    tpSlMin: 0.05,   // H1-ATR≈0.08%。据置（妥当）
-    tpSlMax: 0.35,   // SLは0.35%以内（ATR×4）
-    rrMax: 6,        // RR最大6倍（債券は方向性が弱い）
-    pnlUnit: '円',
-    pnlMultiplier: 5000,
-    trailingActivation: 0.05,  // 旧0.08
-    trailingDistance: 0.03,    // 旧0.04
-    correlationGroup: 'usd_strong',
-    tier: 'C', tierLotMultiplier: 0.5,
-  },
-  {
-    pair: 'BTC/USD',
-    broker: 'paper',
-    oandaSymbol: null,
-    rateChangeTh: 25,
-    tpSlHint: 'SLは$400〜$2500（ATRの0.7〜4倍）、TPはSLの最大8倍まで自由（RR1.5以上推奨）',
-    tpSlMin: 400,    // H1-ATR≈$600。$400未満は拒否
-    tpSlMax: 2500,   // SLは$2500以内（ATR×4）
-    rrMax: 8,        // RR最大8倍
-    pnlUnit: '円',
-    pnlMultiplier: 1,
-    trailingActivation: 280,   // 旧400
-    trailingDistance: 150,     // 旧200
-    correlationGroup: 'risk_on',
-    tier: 'D', tierLotMultiplier: 0.3,
-  },
+  // US10Y: RR=0.13, Kelly=-3.67 → 除外（2026-03-24 テスタ理論E2E評価）
+  // {
+  //   pair: 'US10Y',
+  //   broker: 'oanda', oandaSymbol: 'USB10Y_USD',
+  //   // 実績: 15取引, 7勝, avg_win=12.9円, avg_loss=-100円 → 損失確定銘柄
+  // },
+  // BTC/USD: RR=0.85, Kelly=-0.117, 累積-1312円 → 除外（2026-03-24 テスタ理論E2E評価）
+  // {
+  //   pair: 'BTC/USD',
+  //   broker: 'paper', oandaSymbol: null,
+  //   // 実績: 35取引, 17勝, avg_win=319.3円, avg_loss=-374.4円 → Kelly負
+  // },
   {
     pair: 'Gold',
     broker: 'oanda',
@@ -150,22 +130,12 @@ export const INSTRUMENTS: InstrumentConfig[] = [
     correlationGroup: 'europe',
     tier: 'A', tierLotMultiplier: 1.0,
   },
-  {
-    pair: 'ETH/USD',
-    broker: 'paper',
-    oandaSymbol: null,
-    rateChangeTh: 8,
-    tpSlHint: 'SLは$20〜$120（ATRの0.7〜4倍）、TPはSLの最大8倍まで自由（RR1.5以上推奨）',
-    tpSlMin: 20,     // H1-ATR≈$30。$20未満は拒否
-    tpSlMax: 120,    // SLは$120以内（ATR×4）
-    rrMax: 8,        // RR最大8倍
-    pnlUnit: '円',
-    pnlMultiplier: 1,
-    trailingActivation: 20,    // 旧30
-    trailingDistance: 12,      // 旧15
-    correlationGroup: 'standalone',
-    tier: 'D', tierLotMultiplier: 0.3,
-  },
+  // ETH/USD: 7取引0勝, Kelly=-∞ → 除外（2026-03-24 テスタ理論E2E評価）
+  // {
+  //   pair: 'ETH/USD',
+  //   broker: 'paper', oandaSymbol: null,
+  //   // 実績: 7取引, 0勝 → 統計的に存在意義なし
+  // },
   {
     pair: 'CrudeOil',
     broker: 'oanda',

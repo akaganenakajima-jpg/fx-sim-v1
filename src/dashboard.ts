@@ -308,6 +308,31 @@ export function getDashboardHtml(): string {
         <h3 style="font-size:13px;font-weight:600;margin:0 0 8px;color:var(--text)">手法 × 環境 マトリクス</h3>
         <div id="strategy-matrix"></div>
       </div>
+
+      <!-- ─── パラメーター管理セクション ─── -->
+      <div class="card" style="margin-top:8px">
+        <!-- 緊急ニュースバナー（EMERGENCY検出10分以内に表示） -->
+        <div id="emergency-news-banner" class="emergency-news-banner" role="alert" aria-live="assertive">
+          <span>⚡</span>
+          <span class="emergency-news-title" style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">—</span>
+        </div>
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">
+          <h3 style="font-size:13px;font-weight:600;margin:0;color:var(--text)">ロジックパラメーター</h3>
+          <div style="display:flex;gap:6px">
+            <button id="params-tab-current" class="params-tab-btn active" onclick="showParamsTab('current')">現在値</button>
+            <button id="params-tab-history" class="params-tab-btn" onclick="showParamsTab('history')">変更履歴</button>
+          </div>
+        </div>
+        <div id="params-loading" style="color:var(--label-secondary);font-size:12px;padding:8px 0">読み込み中…</div>
+        <!-- 現在のパラメーター一覧 -->
+        <div id="params-current" style="display:block">
+          <div id="params-table-wrap" style="overflow-x:auto;-webkit-overflow-scrolling:touch"></div>
+        </div>
+        <!-- 変更履歴 -->
+        <div id="params-history" style="display:none">
+          <div id="params-history-list"></div>
+        </div>
+      </div>
     </div>
 
     <!-- ─── タブバー ─── -->
@@ -382,6 +407,10 @@ export function getDashboardHtml(): string {
       <div class="panel-content" data-panel="tab-log">
         <div class="panel-header">🛡️ RiskGuard</div>
         <div id="panel-riskguard"></div>
+      </div>
+      <div class="panel-content" data-panel="tab-strategy">
+        <div class="panel-header">🔬 最新レビュー</div>
+        <div id="panel-params-review"></div>
       </div>
     </aside>
 
