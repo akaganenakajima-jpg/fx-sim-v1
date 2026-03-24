@@ -164,6 +164,28 @@ export async function setCacheValue(
 }
 
 /**
+ * TP後クールダウンチェック用: 同銘柄・逆方向のTP決済が cooldownMin 分以内に存在するか確認
+ */
+export async function getRecentTPOpposite(
+  db: D1Database,
+  pair: string,
+  direction: 'BUY' | 'SELL',
+  cooldownMin: number
+): Promise<{ id: number; direction: string; closed_at: string } | null> {
+  const oppositeDir = direction === 'BUY' ? 'SELL' : 'BUY';
+  const row = await db
+    .prepare(
+      `SELECT id, direction, closed_at FROM positions
+       WHERE pair = ? AND close_reason = 'TP' AND direction = ?
+         AND closed_at >= datetime('now', '-' || ? || ' minutes')
+       ORDER BY closed_at DESC LIMIT 1`
+    )
+    .bind(pair, oppositeDir, cooldownMin)
+    .first<{ id: number; direction: string; closed_at: string }>();
+  return row ?? null;
+}
+
+/**
  * ポジションクローズ時に対応するdecisionのoutcomeを更新（AI的中率トラッキング用）
  * 同ペア・同方向で entry_at 直前に作成された最新の未評価 BUY/SELL decision を対象とする。
  */

@@ -1,7 +1,7 @@
 // ポジション管理（TP/SL チェック + ブローカー統合）
 // 同時オープンポジションは銘柄ごとに最大1件
 
-import { getOpenPositions, getOpenPositionByPair, closePosition, insertSystemLog, updateDecisionOutcome } from './db';
+import { getOpenPositions, getOpenPositionByPair, closePosition, insertSystemLog, updateDecisionOutcome, getRecentTPOpposite } from './db';
 import type { Position } from './db';
 import type { InstrumentConfig } from './instruments';
 import { getBroker, withFallback, type BrokerEnv } from './broker';
@@ -275,6 +275,18 @@ export async function openPosition(
   const existing = await getOpenPositionByPair(db, pair);
   if (existing) {
     console.log(`[position] Already has open position for ${pair}, skipping`);
+    return;
+  }
+
+  // TP後クールダウン: 同銘柄の逆方向TPから60分以内は逆張りエントリー禁止
+  const TP_COOLDOWN_MIN = 60;
+  const recentTP = await getRecentTPOpposite(db, pair, direction, TP_COOLDOWN_MIN);
+  if (recentTP) {
+    const minAgo = Math.round((Date.now() - new Date(recentTP.closed_at).getTime()) / 60000);
+    await insertSystemLog(db, 'INFO', 'COOLDOWN',
+      `TP後クールダウン: ${pair} ${direction}エントリーをブロック (${minAgo}分前に逆${recentTP.direction}がTP)`,
+      JSON.stringify({ pair, blockedDir: direction, tpId: recentTP.id, tpDir: recentTP.direction, minAgo, cooldownMin: TP_COOLDOWN_MIN }));
+    console.log(`[position] TP-cooldown block: ${pair} ${direction} (${minAgo}min after ${recentTP.direction} TP)`);
     return;
   }
 
