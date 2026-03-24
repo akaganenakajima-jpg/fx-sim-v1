@@ -43,6 +43,7 @@ import { generateWeeklyReview, generateMonthlyReview } from './trade-journal';
 // import { detectBreakout } from './breakout';
 import { isValidStrategy } from './strategy-tag';
 import { getWeekendStatus, lockProfitsForWeekend, forceCloseAllForWeekend } from './weekend';
+import { runLogicDecisions } from './logic-trading';
 
 interface Env {
   DB: D1Database;
@@ -1299,6 +1300,23 @@ async function run(env: Env): Promise<void> {
       await insertSystemLog(env.DB, 'INFO', 'WEEKEND',
         `Phase 3 強制決済: ${closedCount}件`, weekendStatus.label);
       // Phase 3 では非クリプトの新規分析は不要 → cryptoOnlyMode で継続
+    }
+
+    // 2.7 ロジックトレーディング（Ph.3: AIを呼ばない定量エントリー）
+    // TP/SLチェック後・Path B/A前に実行 → ロジックポジションがOPEN枠に先に入る
+    if (!cryptoOnlyMode && !economicEventGuard.highImpactNearby) {
+      try {
+        const tLogic = Date.now();
+        const logicResult = await runLogicDecisions(env.DB, prices, indicators, brokerEnv, now);
+        if (logicResult.entered > 0) {
+          await insertSystemLog(env.DB, 'INFO', 'FLOW',
+            `LOGIC完了: ${logicResult.entered}件エントリー`,
+            JSON.stringify({ ms: Date.now() - tLogic, entered: logicResult.entered }));
+        }
+      } catch (e) {
+        // ロジックトレーディング失敗はAIパスをブロックしない
+        console.warn(`[fx-sim] runLogicDecisions error: ${String(e).slice(0, 100)}`);
+      }
     }
 
     // 3. 共有ニュースストア構築 + Path B 実行（計測開始）
