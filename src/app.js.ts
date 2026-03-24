@@ -420,35 +420,35 @@ export const JS = `
     card.style.display = '';
 
     var textEl = el('story-text');
-    if (textEl) textEl.textContent = cs.narrative || '';
+    if (textEl) textEl.innerHTML = cs.narrative || '';
 
-    // ドライバーカード
+    // ドライバーカード（モックアップ: .drivers > .drv 構造）
     var driversEl = el('causal-drivers');
     if (driversEl && cs.drivers) {
       var html = '';
       if (cs.drivers.profitTop) {
         var p = cs.drivers.profitTop;
-        html += '<div class="driver-card pos" onclick="switchTab(\\'' + 'tab-stats\\', \\'perf-' + (p.pair || '').replace(/[\\/\\s]/g, '-') + '\\')">' +
-          '<div class="driver-label">利益Top</div><div class="driver-pair">' + escHtml(p.pair) + '</div>' +
-          '<div class="driver-pnl">+' + Math.round(p.pnl) + '円</div>' +
-          '<div class="driver-reason">' + escHtml(p.reason || '') + '</div></div>';
+        html += '<div class="drv" onclick="switchTab(\\'' + 'tab-stats\\', \\'perf-' + (p.pair || '').replace(/[\\/\\s]/g, '-') + '\\')">' +
+          '<div class="drv-tag profit">利益TOP</div><div class="drv-pair">' + escHtml(p.pair) + '</div>' +
+          '<div class="drv-pnl" style="color:var(--green)">+' + Math.round(p.pnl) + '</div>' +
+          '<div class="drv-reason">' + escHtml(p.reason || '') + '</div></div>';
       }
       if (cs.drivers.lossTop) {
         var l = cs.drivers.lossTop;
-        html += '<div class="driver-card neg" onclick="switchTab(\\'' + 'tab-stats\\', \\'perf-' + (l.pair || '').replace(/[\\/\\s]/g, '-') + '\\')">' +
-          '<div class="driver-label">損失Top</div><div class="driver-pair">' + escHtml(l.pair) + '</div>' +
-          '<div class="driver-pnl">' + Math.round(l.pnl) + '円</div>' +
-          '<div class="driver-reason">' + escHtml(l.reason || '') + '</div></div>';
+        html += '<div class="drv" onclick="switchTab(\\'' + 'tab-stats\\', \\'perf-' + (l.pair || '').replace(/[\\/\\s]/g, '-') + '\\')">' +
+          '<div class="drv-tag loss">損失TOP</div><div class="drv-pair">' + escHtml(l.pair) + '</div>' +
+          '<div class="drv-pnl" style="color:var(--red)">' + Math.round(l.pnl) + '</div>' +
+          '<div class="drv-reason">' + escHtml(l.reason || '') + '</div></div>';
       }
       driversEl.innerHTML = html;
     }
 
-    // 要因バッジ
+    // 要因バッジ（モックアップ: .chips > .chip.w / .chip.i 構造）
     var chipsEl = el('causal-chips');
     if (chipsEl && cs.drivers && cs.drivers.factors) {
       chipsEl.innerHTML = cs.drivers.factors.map(function(f) {
-        var cls = f.severity === 'high' ? 'factor-high' : f.severity === 'medium' ? 'factor-medium' : 'factor-low';
-        return '<span class="factor-badge ' + cls + '">' + escHtml(f.label) + '</span>';
+        var cls = f.severity === 'high' ? 'w' : f.severity === 'medium' ? 'w' : 'i';
+        return '<span class="chip ' + cls + '">' + escHtml(f.label) + '</span>';
       }).join('');
     }
 
@@ -467,14 +467,15 @@ export const JS = `
     var cols = ['銘柄', 'PnL', 'VIX', 'PR', 'ニュース'];
     var keys = ['pnl_closed', 'vix_effect', 'param_changed', 'news_impact'];
     var html = '';
-    for (var h = 0; h < cols.length; h++) html += '<div class="hm-header">' + cols[h] + '</div>';
-    for (var i = 0; i < heatmapData.length; i++) {
+    for (var h = 0; h < cols.length; h++) html += '<div class="hm-h">' + cols[h] + '</div>';
+    var limit = Math.min(heatmapData.length, 8);
+    for (var i = 0; i < limit; i++) {
       var row = heatmapData[i];
-      html += '<div class="hm-pair">' + escHtml(row.pair) + '</div>';
+      html += '<div class="hm-p">' + escHtml(row.pair) + '</div>';
       for (var k = 0; k < keys.length; k++) {
         var val = (row.factors && row.factors[keys[k]]) || 0;
         var bg = hmColor(val, keys[k]);
-        html += '<div class="hm-cell" style="background:' + bg + '">' + hmLabel(val, keys[k]) + '</div>';
+        html += '<div class="hm-c" style="background:' + bg + '">' + hmLabel(val, keys[k]) + '</div>';
       }
     }
     gridEl.innerHTML = html;
@@ -511,16 +512,18 @@ export const JS = `
 
     feedEl.innerHTML = items.map(function(n) {
       var score = n.impact ? parseInt(n.impact) : 0;
+      if (isNaN(score)) score = 0;
       var badgeCls = score >= 90 ? 'nf-badge-emergency' : score >= 70 ? 'nf-badge-trend' : 'nf-badge-info';
       var badgeText = score >= 90 ? '緊急' : score >= 70 ? 'トレンド' : '情報';
-      var borderCls = score >= 90 ? 'nf-emergency' : score >= 70 ? 'nf-trend' : 'nf-info';
-      var aiText = n.title_ja || n.title || '';
+      var borderCls = score >= 90 ? 'nf-emergency' : score >= 70 ? 'nf-trend' : '';
+      var headline = n.title_ja || n.title || '';
+      var aiText = n.desc_ja || n.title_ja || n.title || '';
 
       return '<div class="nf-item ' + borderCls + '" onclick="switchTab(\\'tab-news\\')">' +
         '<div class="nf-header"><span class="nf-badge ' + badgeCls + '">' + badgeText + ' · score ' + score + '</span>' +
         '<span class="nf-time">' + fmtTimeAgo(n.analyzed_at || '') + '</span></div>' +
-        '<div class="nf-headline">' + escHtml(aiText) + '</div>' +
-        '<div class="nf-ai"><span class="nf-ai-label">AI</span><span class="nf-ai-text">' + escHtml(aiText) + '</span></div>' +
+        '<div class="nf-headline">' + escHtml(headline) + '</div>' +
+        '<div class="nf-ai"><span class="nf-ai-label">AI判断</span><span class="nf-ai-text">' + escHtml(aiText) + '</span></div>' +
         '</div>';
     }).join('');
   }
@@ -538,6 +541,24 @@ export const JS = `
       return;
     }
 
+    // ヘッダー更新（保有件数・含み損益）
+    var headerEl = el('positions-header');
+    if (headerEl) {
+      var totalUnrealized = 0;
+      for (var u = 0; u < opens.length; u++) {
+        var ui = findInstr(opens[u].pair);
+        var ucr = getCurrentRate(opens[u].pair);
+        if (ui && ucr != null) {
+          totalUnrealized += opens[u].direction === 'BUY'
+            ? (ucr - opens[u].entry_rate) * ui.multiplier * (opens[u].lot || 1)
+            : (opens[u].entry_rate - ucr) * ui.multiplier * (opens[u].lot || 1);
+        }
+      }
+      var unrealColor = totalUnrealized >= 0 ? 'var(--green)' : 'var(--red)';
+      var unrealSign = totalUnrealized >= 0 ? '+' : '';
+      headerEl.innerHTML = '保有中 · ' + opens.length + '件 · 含み <span style="color:' + unrealColor + '">' + unrealSign + fmtYen(totalUnrealized) + '</span>';
+    }
+
     listEl.innerHTML = opens.map(function(pos) {
       var instr = findInstr(pos.pair);
       var cr = getCurrentRate(pos.pair);
@@ -548,44 +569,45 @@ export const JS = `
           : (pos.entry_rate - cr) * instr.multiplier * (pos.lot || 1);
       }
       var pnlF = fmtPnl(unrealized, instr ? instr.unit : '');
-      var pnlColor = unrealized > 0 ? 'var(--green)' : unrealized < 0 ? 'var(--red)' : 'var(--tertiary)';
-      var dirBadge = pos.direction === 'BUY'
-        ? '<span class="dir-badge buy">B</span>'
-        : '<span class="dir-badge sell">S</span>';
+      var winLose = unrealized >= 0 ? 'win' : 'lose';
+      var pnlCls = unrealized > 0 ? 'pos' : unrealized < 0 ? 'neg' : '';
+      var dirCls = pos.direction === 'BUY' ? 'b' : 's';
+      var dirLetter = pos.direction === 'BUY' ? 'B' : 'S';
 
       // 保有時間
       var holdTime = '';
+      var holdHrs = 0;
       if (pos.entry_at) {
         var holdMs = Date.now() - new Date(pos.entry_at).getTime();
-        var holdH = Math.floor(holdMs / 3600000);
-        holdTime = holdH < 1 ? Math.floor(holdMs / 60000) + '分' : holdH + 'h';
+        holdHrs = Math.floor(holdMs / 3600000);
+        holdTime = holdHrs < 1 ? Math.floor(holdMs / 60000) + '分' : holdHrs + 'h';
       }
+      var timeWarnCls = holdHrs >= 8 ? ' time-warn' : '';
 
       // RR
       var rrText = '';
       if (pos.tp_rate != null && pos.sl_rate != null && pos.entry_rate) {
         var tpDist = Math.abs(pos.tp_rate - pos.entry_rate);
         var slDist = Math.abs(pos.sl_rate - pos.entry_rate);
-        if (slDist > 0) rrText = 'RR ' + (tpDist / slDist).toFixed(1);
+        if (slDist > 0) rrText = 'RR' + (tpDist / slDist).toFixed(1);
       }
 
       // スパークライン
       var sparkPts = data.sparklines && data.sparklines[pos.pair];
-      var sparkColor = unrealized >= 0 ? 'var(--green)' : 'var(--red)';
-      var sparkSvg = drawSparkline(sparkPts, sparkColor, 60, 28);
+      var sparkColor = unrealized >= 0 ? '#30D158' : '#FF453A';
+      var sparkSvg = drawSparkline(sparkPts, sparkColor, 48, 16);
 
-      return '<div class="pos-card" onclick="openSheet(\\'' + escHtml(pos.pair) + '\\')">' +
-        '<div class="pos-top">' +
-          dirBadge +
-          '<span class="pos-pair">' + escHtml(instr ? instr.label : pos.pair) + '</span>' +
-          '<span class="pos-pnl" style="color:' + pnlColor + '">' + pnlF.text + '</span>' +
+      return '<div class="pos ' + winLose + '" onclick="openSheet(\\'' + escHtml(pos.pair) + '\\')">' +
+        '<div class="pos-dir ' + dirCls + '">' + dirLetter + '</div>' +
+        '<div class="pos-body">' +
+          '<div class="pos-top"><span class="pos-pair">' + escHtml(instr ? instr.label : pos.pair) + '</span>' +
+          '<span class="pos-pnl ' + pnlCls + '">' + pnlF.text + '</span></div>' +
+          '<div class="pos-bot"><span class="pos-meta">' +
+            fmtPrice(pos.pair, pos.entry_rate) + '\\u2192' + fmtPrice(pos.pair, cr) +
+            ' · <span class="' + timeWarnCls.trim() + '">' + holdTime + '</span>' +
+            (rrText ? ' · ' + rrText : '') +
+          '</span>' + sparkSvg + '</div>' +
         '</div>' +
-        '<div class="pos-mid">' +
-          '<span>' + fmtPrice(pos.pair, pos.entry_rate) + ' → ' + fmtPrice(pos.pair, cr) + '</span>' +
-          '<span>' + holdTime + '</span>' +
-          (rrText ? '<span>' + rrText + '</span>' : '') +
-        '</div>' +
-        (sparkSvg ? '<div class="pos-spark">' + sparkSvg + '</div>' : '') +
       '</div>';
     }).join('');
   }
@@ -600,17 +622,19 @@ export const JS = `
     var ld = data.latestDecision;
     var items = [];
     if (ld) {
-      if (ld.vix != null)   items.push({ label: 'VIX', value: fmt(ld.vix, 1), color: ld.vix > 20 ? 'var(--orange)' : '' });
-      if (ld.us10y != null) items.push({ label: 'US10Y', value: fmt(ld.us10y, 2) + '%', color: '' });
+      if (ld.vix != null)   items.push({ label: 'VIX', value: fmt(ld.vix, 1), color: ld.vix > 20 ? 'var(--orange)' : '', delta: '' });
+      if (ld.us10y != null) items.push({ label: 'US10Y', value: fmt(ld.us10y, 2) + '%', color: '', delta: '' });
     }
-    if (data.rate != null) items.push({ label: 'USD/JPY', value: fmt(data.rate, 2), color: '' });
     if (ld) {
-      if (ld.nikkei != null) items.push({ label: '日経', value: Number(ld.nikkei).toLocaleString('ja-JP', { maximumFractionDigits: 0 }), color: '' });
-      if (ld.sp500 != null)  items.push({ label: 'S&P', value: Number(ld.sp500).toLocaleString('en-US', { maximumFractionDigits: 0 }), color: '' });
+      if (ld.nikkei != null) items.push({ label: '日経', value: Number(ld.nikkei).toLocaleString('ja-JP', { maximumFractionDigits: 0 }), color: '', delta: '' });
+      if (ld.sp500 != null)  items.push({ label: 'S&P', value: Number(ld.sp500).toLocaleString('en-US', { maximumFractionDigits: 0 }), color: '', delta: '' });
     }
     if (items.length === 0) { bar.innerHTML = ''; return; }
     bar.innerHTML = items.map(function(it) {
-      return '<div class="mkt-item"><div class="mkt-lbl">' + it.label + '</div><div class="mkt-val"' + (it.color ? ' style="color:' + it.color + '"' : '') + '>' + it.value + '</div></div>';
+      return '<div class="mkt"><div class="mkt-v"' + (it.color ? ' style="color:' + it.color + '"' : '') + '>' + it.value + '</div>' +
+        '<div class="mkt-l">' + it.label + '</div>' +
+        (it.delta ? '<div class="mkt-d ' + (it.delta.indexOf('-') === 0 ? 'dn' : 'up') + '">' + it.delta + '</div>' : '') +
+      '</div>';
     }).join('');
   }
 
@@ -626,11 +650,15 @@ export const JS = `
     var waitItems = INSTRUMENTS.filter(function(i) { return !posMap[i.pair]; });
     if (waitItems.length === 0) { grid.innerHTML = ''; return; }
 
+    // 待機ヘッダー更新
+    var waitHeader = el('wait-header');
+    if (waitHeader) waitHeader.textContent = '待機 · ' + waitItems.length + '銘柄';
+
     grid.innerHTML = waitItems.map(function(instr) {
       var rate = getCurrentRate(instr.pair);
-      return '<div class="wait-item">' +
-        '<div class="wait-name">' + escHtml(instr.label) + '</div>' +
-        '<div class="wait-rate">' + fmtPrice(instr.pair, rate) + '</div>' +
+      return '<div class="wt">' +
+        '<div class="wt-pair">' + escHtml(instr.label) + '</div>' +
+        '<div class="wt-price">' + fmtPrice(instr.pair, rate) + '</div>' +
       '</div>';
     }).join('');
   }
@@ -691,10 +719,12 @@ export const JS = `
     var score = n.impact ? parseInt(n.impact) : 0;
     var badgeCls = score >= 90 ? 'nf-badge-emergency' : score >= 70 ? 'nf-badge-trend' : 'nf-badge-info';
     var badgeText = score >= 90 ? '緊急' : score >= 70 ? 'トレンド' : '情報';
-    return '<div class="nf-item' + (highlight ? ' nf-highlight' : '') + '">' +
-      '<div class="nf-header"><span class="nf-badge ' + badgeCls + '">' + badgeText + '</span><span class="nf-time">' + fmtTimeAgo(n.analyzed_at || '') + '</span></div>' +
+    var borderCls = score >= 90 ? 'nf-emergency' : score >= 70 ? 'nf-trend' : '';
+    return '<div class="nf-item ' + borderCls + '">' +
+      '<div class="nf-header"><span class="nf-badge ' + badgeCls + '">' + badgeText + ' · score ' + score + '</span><span class="nf-time">' + fmtTimeAgo(n.analyzed_at || '') + '</span></div>' +
       '<div class="nf-headline">' + escHtml(n.title_ja || n.title || '') + '</div>' +
-      (n.impact ? '<div class="nf-ai"><span class="nf-ai-label">AI</span><span class="nf-ai-text">' + escHtml(String(n.impact)) + '</span></div>' : '') +
+      (n.desc_ja ? '<div class="nf-ai"><span class="nf-ai-label">AI判断</span><span class="nf-ai-text">' + escHtml(n.desc_ja) + '</span></div>' : '') +
+      (n.action_text ? '<div class="nf-action"><span style="font-size:12px;color:var(--tertiary)">\\u2192</span><span class="nf-action-text">' + n.action_text + '</span></div>' : '') +
     '</div>';
   }
 
@@ -1007,9 +1037,11 @@ export const JS = `
       { name: 'RiskGuard', ok: data.riskStatus != null },
     ];
     container.innerHTML = checks.map(function(c) {
-      var icon = c.ok ? '<span style="color:var(--green)">\\u2713</span>' : '<span style="color:var(--red)">\\u2717</span>';
-      return '<div style="display:flex;justify-content:space-between;padding:10px 16px;border-bottom:1px solid var(--separator)">' +
-        '<span style="font-size:13px">' + c.name + '</span>' + icon + '</div>';
+      var cls = c.ok ? 'ok' : 'error';
+      var icon = c.ok ? '\\u2713' : '\\u2717';
+      return '<div class="hc">' +
+        '<div class="hc-row"><div class="hc-left"><span class="dot ' + (c.ok ? 'ok' : 'danger') + '"></span><span class="hc-label">' + c.name + '</span></div>' +
+        '<span class="hc-value ' + cls + '">' + icon + '</span></div></div>';
     }).join('');
   }
 
@@ -1023,11 +1055,12 @@ export const JS = `
       return;
     }
     logList.innerHTML = abnormal.slice(0, 20).map(function(l) {
-      var color = l.level === 'ERROR' ? 'var(--red)' : 'var(--orange)';
-      return '<div style="padding:8px 0;border-bottom:1px solid var(--separator)">' +
-        '<span style="font-size:10px;font-weight:700;color:' + color + '">' + l.level + '</span>' +
-        '<span style="font-size:11px;color:var(--tertiary);margin-left:8px">' + fmtTimeAgo(l.created_at) + '</span>' +
-        '<div style="font-size:12px;margin-top:2px">' + escHtml(l.message || '') + '</div>' +
+      var lvlCls = l.level === 'ERROR' ? 'error' : 'warn';
+      return '<div class="log-item">' +
+        '<div class="log-header"><span class="log-level ' + lvlCls + '">' + l.level + '</span>' +
+        '<span class="log-cat">' + (l.category || '') + '</span>' +
+        '<span class="log-time">' + fmtTimeAgo(l.created_at) + '</span></div>' +
+        '<div class="log-msg">' + escHtml(l.message || '') + '</div>' +
       '</div>';
     }).join('');
 
