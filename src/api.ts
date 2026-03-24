@@ -149,6 +149,64 @@ export interface StatusResponse {
   todayDecisionCount: number;
   todayBuyCount: number;
   todaySellCount: number;
+  /** Ph.6: 因果サマリー — ナラティブ+キードライバー+ヒートマップ */
+  causalSummary: {
+    narrative: string;
+    drivers: {
+      profitTop: { pair: string; pnl: number; reason: string } | null;
+      lossTop: { pair: string; pnl: number; reason: string } | null;
+      factors: Array<{
+        type: 'vix' | 'macro' | 'param_review' | 'news' | 'trailing' | 'delisted';
+        label: string;
+        severity: 'high' | 'medium' | 'low';
+      }>;
+    };
+    heatmap: Array<{
+      pair: string;
+      pnlToday: number;
+      factors: Record<string, number>;
+    }>;
+  } | null;
+  /** 取引トレーサビリティ: OPENポジションの裏側を完全表示 */
+  tradeContext: Record<string, {
+    entryReasoning: string | null;
+    entryDecisionAt: string | null;
+    entryStrategy: string | null;
+    entryTrigger: string | null;
+    entryConfidence: number | null;
+    tpSlBreakdown: {
+      atr: number | null;
+      atrTpMultiplier: number;
+      atrSlMultiplier: number;
+      vixTpScale: number;
+      vixSlScale: number;
+      macroSlScale: number;
+      currentVix: number | null;
+      vixAlertActive: boolean;
+      formulaTp: string;
+      formulaSl: string;
+    } | null;
+    currentParams: {
+      rsiOversold: number;
+      rsiOverbought: number;
+      atrTpMultiplier: number;
+      atrSlMultiplier: number;
+      vixTpScale: number;
+      vixSlScale: number;
+      macroSlScale: number;
+      strategyPrimary: string;
+      minSignalStrength: number;
+      paramVersion: number;
+      lastReviewedAt: string | null;
+    } | null;
+    paramHistory: Array<{
+      version: number;
+      reason: string;
+      changedAt: string;
+      winRate: number | null;
+      rr: number | null;
+    }>;
+  }> | null;
   /** テスタ施策21: 戦略マップデータ */
   strategyMap: {
     strategyStats: Array<{
@@ -512,8 +570,299 @@ export async function getApiStatus(db: D1Database, tradingEnv?: { TRADING_ENABLE
     todayDecisionCount: todayDecisionCountRow?.total ?? 0,
     todayBuyCount:      todayDecisionCountRow?.buyCount ?? 0,
     todaySellCount:     todayDecisionCountRow?.sellCount ?? 0,
+    causalSummary: await buildCausalSummary(db),
     strategyMap: await getStrategyMapData(db),
+    tradeContext: (openPositions.results ?? []).length > 0
+      ? await buildTradeContext(db, openPositions.results ?? [])
+      : null,
   };
+}
+
+// ─── Ph.6: 因果サマリー構築 ────────────────────────
+type CausalSummary = NonNullable<StatusResponse['causalSummary']>;
+
+async function buildCausalSummary(db: D1Database): Promise<CausalSummary | null> {
+  try {
+    // 1. 当日の確定ポジション
+    const closedToday = await db.prepare(
+      `SELECT pair, pnl, close_reason FROM positions
+       WHERE status='CLOSED' AND closed_at > datetime('now', 'start of day')
+       ORDER BY pnl DESC`
+    ).all<{ pair: string; pnl: number; close_reason: string | null }>();
+    const closedRows = closedToday.results ?? [];
+
+    // 2. 最新VIX（decisionsテーブルの最新行から取得）
+    const latestIndicators = await db.prepare(
+      `SELECT vix, nikkei, sp500 FROM decisions ORDER BY id DESC LIMIT 1`
+    ).first<{ vix: number | null; nikkei: number | null; sp500: number | null }>();
+
+    // 3. 直近のニューストリガー
+    let newsTriggers: Array<{ trigger_type: string; news_title: string; news_score: number; created_at: string }> = [];
+    try {
+      const ntRaw = await db.prepare(
+        `SELECT trigger_type, news_title, news_score, created_at FROM news_trigger_log
+         WHERE created_at > datetime('now', '-12 hours')
+         ORDER BY created_at DESC LIMIT 5`
+      ).all<{ trigger_type: string; news_title: string; news_score: number; created_at: string }>();
+      newsTriggers = ntRaw.results ?? [];
+    } catch { /* テーブル未存在 */ }
+
+    // 4. 直近のParam Review
+    let paramReviews: Array<{ pair: string; old_params: string; new_params: string; reason: string; created_at: string }> = [];
+    try {
+      const prRaw = await db.prepare(
+        `SELECT pair, old_params, new_params, reason, created_at FROM param_review_log
+         WHERE created_at > datetime('now', '-12 hours')
+         ORDER BY created_at DESC LIMIT 3`
+      ).all<{ pair: string; old_params: string; new_params: string; reason: string; created_at: string }>();
+      paramReviews = prRaw.results ?? [];
+    } catch { /* テーブル未存在 */ }
+
+    // --- profitTop / lossTop ---
+    const profitTop = closedRows.length > 0 && closedRows[0].pnl > 0
+      ? { pair: closedRows[0].pair, pnl: closedRows[0].pnl, reason: closedRows[0].close_reason ?? 'MANUAL' }
+      : null;
+    const lossTop = closedRows.length > 0 && closedRows[closedRows.length - 1].pnl < 0
+      ? { pair: closedRows[closedRows.length - 1].pair, pnl: closedRows[closedRows.length - 1].pnl, reason: closedRows[closedRows.length - 1].close_reason ?? 'MANUAL' }
+      : null;
+
+    // --- factors ---
+    const factors: CausalSummary['drivers']['factors'] = [];
+    const vix = latestIndicators?.vix ?? null;
+
+    if (vix != null && vix > 25) {
+      factors.push({ type: 'vix', label: `VIX=${vix.toFixed(0)}で高水準`, severity: vix > 35 ? 'high' : 'medium' });
+    }
+
+    // マクロ下落検出（簡易: sp500/nikkei が直近 decisions で下落傾向）
+    // ここではVIX以外のマクロを簡易判定
+    if (latestIndicators?.sp500 != null && latestIndicators?.nikkei != null) {
+      // sp500/nikkeiの値自体からは変化率が取れないため、VIX > 20 かつ存在する場合のみマクロ警告
+      if (vix != null && vix > 20 && vix <= 25) {
+        factors.push({ type: 'macro', label: '市場やや不安定', severity: 'low' });
+      }
+    }
+
+    if (paramReviews.length > 0) {
+      factors.push({
+        type: 'param_review',
+        label: `パラメータレビュー${paramReviews.length}件(${paramReviews.map(r => r.pair).join(',')})`,
+        severity: paramReviews.length >= 3 ? 'high' : 'medium',
+      });
+    }
+
+    const emergencyNews = newsTriggers.filter(n => n.trigger_type === 'EMERGENCY');
+    const trendNews = newsTriggers.filter(n => n.trigger_type === 'TREND_INFLUENCE');
+    if (emergencyNews.length > 0) {
+      factors.push({ type: 'news', label: `緊急ニュース${emergencyNews.length}件`, severity: 'high' });
+    } else if (trendNews.length > 0) {
+      factors.push({ type: 'news', label: `トレンドニュース${trendNews.length}件`, severity: 'medium' });
+    }
+
+    // --- narrative ---
+    const narrative = buildNarrative(profitTop, lossTop, vix, paramReviews);
+
+    // --- heatmap ---
+    const pairMap = new Map<string, { pnl: number; paramChanged: boolean; newsImpact: number }>();
+    for (const row of closedRows) {
+      const entry = pairMap.get(row.pair) ?? { pnl: 0, paramChanged: false, newsImpact: 0 };
+      entry.pnl += row.pnl;
+      pairMap.set(row.pair, entry);
+    }
+    // param_review の銘柄にフラグ
+    for (const pr of paramReviews) {
+      const entry = pairMap.get(pr.pair);
+      if (entry) entry.paramChanged = true;
+    }
+    // ニュースの影響度を銘柄に紐付け（affected_pairs が null の場合はスキップ）
+    // news_trigger_log.news_score を最大スコアとして使用
+    for (const nt of newsTriggers) {
+      const maxScore = nt.news_score ?? 0;
+      // 全銘柄に均等適用（affected_pairsはINSERT時にNULLの場合もある）
+      for (const [, entry] of pairMap) {
+        entry.newsImpact = Math.max(entry.newsImpact, maxScore);
+      }
+    }
+
+    const vixEffect = vix != null ? Math.min(1, Math.max(0, (vix - 15) / 25)) : 0;
+
+    const heatmap: CausalSummary['heatmap'] = [];
+    for (const [pair, data] of pairMap) {
+      heatmap.push({
+        pair,
+        pnlToday: Math.round(data.pnl * 100) / 100,
+        factors: {
+          pnl_closed: Math.round(data.pnl * 100) / 100,
+          vix_effect: Math.round(vixEffect * 100) / 100,
+          param_changed: data.paramChanged ? 1 : 0,
+          news_impact: Math.min(100, Math.round(data.newsImpact)),
+        },
+      });
+    }
+
+    return {
+      narrative,
+      drivers: { profitTop, lossTop, factors },
+      heatmap,
+    };
+  } catch {
+    return null;
+  }
+}
+
+function buildNarrative(
+  profitTop: { pair: string; pnl: number; reason: string } | null,
+  lossTop: { pair: string; pnl: number; reason: string } | null,
+  vix: number | null,
+  paramReviews: Array<{ pair: string }>,
+): string {
+  const parts: string[] = [];
+
+  if (profitTop && profitTop.pnl > 0) {
+    parts.push(`${profitTop.pair}が+${Math.round(profitTop.pnl)}円(${profitTop.reason})`);
+  }
+
+  if (lossTop && lossTop.pnl < 0 && (!profitTop || lossTop.pair !== profitTop.pair)) {
+    parts.push(`${lossTop.pair}が${Math.round(lossTop.pnl)}円`);
+  }
+
+  if (vix != null && vix > 25) {
+    parts.push(`VIX=${vix.toFixed(0)}で警戒中`);
+  }
+
+  if (paramReviews.length > 0) {
+    parts.push(`PR${paramReviews.length}件実行`);
+  }
+
+  if (parts.length === 0) {
+    return '本日はまだ取引がありません。';
+  }
+
+  let result = parts.join('。');
+  if (result.length > 100) result = result.substring(0, 97) + '...';
+  return result;
+}
+
+// ─── 取引トレーサビリティ: OPENポジションの裏側データ構築 ────────────────
+async function buildTradeContext(
+  db: D1Database,
+  openPositions: Position[],
+): Promise<StatusResponse['tradeContext']> {
+  if (openPositions.length === 0) return null;
+  const result: NonNullable<StatusResponse['tradeContext']> = {};
+
+  for (const pos of openPositions) {
+    try {
+      // 1. エントリー判断の reasoning を取得
+      const decisionRow = await db.prepare(
+        `SELECT reasoning, created_at FROM decisions
+         WHERE pair = ? AND decision = ? AND created_at <= ?
+         ORDER BY created_at DESC LIMIT 1`
+      ).bind(pos.pair, pos.direction, pos.entry_at).first<{ reasoning: string | null; created_at: string }>();
+
+      // 直近VIXを取得（TP/SL計算の内訳用）
+      const vixRow = await db.prepare(
+        `SELECT vix FROM decisions WHERE pair = ? AND vix IS NOT NULL ORDER BY id DESC LIMIT 1`
+      ).bind(pos.pair).first<{ vix: number | null }>();
+
+      // 2. 現在のパラメーターを取得
+      const paramRow = await db.prepare(
+        `SELECT rsi_oversold, rsi_overbought, atr_tp_multiplier, atr_sl_multiplier,
+                vix_tp_scale, vix_sl_scale, macro_sl_scale, strategy_primary,
+                min_signal_strength, param_version, last_reviewed_at
+         FROM instrument_params WHERE pair = ?`
+      ).bind(pos.pair).first<{
+        rsi_oversold: number; rsi_overbought: number;
+        atr_tp_multiplier: number; atr_sl_multiplier: number;
+        vix_tp_scale: number; vix_sl_scale: number; macro_sl_scale: number;
+        strategy_primary: string; min_signal_strength: number;
+        param_version: number; last_reviewed_at: string | null;
+      }>();
+
+      // 3. パラメーター変更履歴（直近3件）
+      const historyRows = await db.prepare(
+        `SELECT param_version, reason, created_at, win_rate, actual_rr
+         FROM param_review_log WHERE pair = ?
+         ORDER BY id DESC LIMIT 3`
+      ).bind(pos.pair).all<{
+        param_version: number; reason: string; created_at: string;
+        win_rate: number | null; actual_rr: number | null;
+      }>();
+
+      // 4. TP/SL計算の内訳を構築
+      let tpSlBreakdown: NonNullable<StatusResponse['tradeContext']>[string]['tpSlBreakdown'] = null;
+      if (pos.tp_rate != null && pos.sl_rate != null && paramRow) {
+        const currentVix = vixRow?.vix ?? null;
+        const tpMult = paramRow.atr_tp_multiplier;
+        const slMult = paramRow.atr_sl_multiplier;
+        const vixTpScale = paramRow.vix_tp_scale;
+        const vixSlScale = paramRow.vix_sl_scale;
+        const macroSlScale = paramRow.macro_sl_scale;
+
+        // ATRを逆算: TP = entry ± ATR × tpMult × vixTpScale
+        // isBuy: TP = entry + ATR × tpMult × vixTpScale → ATR = (TP - entry) / (tpMult × vixTpScale)
+        // isSell: TP = entry - ATR × tpMult × vixTpScale → ATR = (entry - TP) / (tpMult × vixTpScale)
+        const isBuy = pos.direction === 'BUY';
+        const tpDiff = isBuy ? (pos.tp_rate - pos.entry_rate) : (pos.entry_rate - pos.tp_rate);
+        const estimatedAtr = (tpMult * vixTpScale) > 0 ? tpDiff / (tpMult * vixTpScale) : null;
+
+        // VIXアラート判定
+        const vixAlertActive = currentVix != null && paramRow ? currentVix > (paramRow as any).vix_max * 0.7 : false;
+
+        const sign = isBuy ? '+' : '-';
+        const signSl = isBuy ? '-' : '+';
+        const atrStr = estimatedAtr != null ? estimatedAtr.toFixed(3) : '?';
+        const formulaTp = `${pos.entry_rate.toFixed(3)} ${sign} ${atrStr}x${tpMult}x${vixTpScale} = ${pos.tp_rate.toFixed(3)}`;
+        const formulaSl = `${pos.entry_rate.toFixed(3)} ${signSl} ${atrStr}x${slMult}x${vixSlScale} = ${pos.sl_rate.toFixed(3)}`;
+
+        tpSlBreakdown = {
+          atr: estimatedAtr,
+          atrTpMultiplier: tpMult,
+          atrSlMultiplier: slMult,
+          vixTpScale,
+          vixSlScale,
+          macroSlScale,
+          currentVix,
+          vixAlertActive,
+          formulaTp,
+          formulaSl,
+        };
+      }
+
+      result[pos.pair] = {
+        entryReasoning: decisionRow?.reasoning ?? null,
+        entryDecisionAt: decisionRow?.created_at ?? null,
+        entryStrategy: pos.strategy ?? null,
+        entryTrigger: pos.trigger ?? null,
+        entryConfidence: pos.confidence ?? null,
+        tpSlBreakdown,
+        currentParams: paramRow ? {
+          rsiOversold: paramRow.rsi_oversold,
+          rsiOverbought: paramRow.rsi_overbought,
+          atrTpMultiplier: paramRow.atr_tp_multiplier,
+          atrSlMultiplier: paramRow.atr_sl_multiplier,
+          vixTpScale: paramRow.vix_tp_scale,
+          vixSlScale: paramRow.vix_sl_scale,
+          macroSlScale: paramRow.macro_sl_scale,
+          strategyPrimary: paramRow.strategy_primary,
+          minSignalStrength: paramRow.min_signal_strength,
+          paramVersion: paramRow.param_version,
+          lastReviewedAt: paramRow.last_reviewed_at,
+        } : null,
+        paramHistory: (historyRows.results ?? []).map(r => ({
+          version: r.param_version,
+          reason: r.reason,
+          changedAt: r.created_at,
+          winRate: r.win_rate,
+          rr: r.actual_rr,
+        })),
+      };
+    } catch {
+      // 個別銘柄の失敗は無視して次へ
+    }
+  }
+
+  return Object.keys(result).length > 0 ? result : null;
 }
 
 async function getStrategyMapData(db: D1Database): Promise<StatusResponse['strategyMap']> {

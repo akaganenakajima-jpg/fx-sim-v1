@@ -14,30 +14,31 @@ export function getDashboardHtml(): string {
   <link rel="stylesheet" href="/style.css?v=13">
 </head>
 <body>
+  <div id="alert-banner-container" class="alert-banner-container"></div>
   <div id="app">
 
     <!-- PC: 左サイドバー -->
     <nav class="pc-sidebar" aria-label="メインナビゲーション">
       <div class="sidebar-logo">FX</div>
-      <button class="sidebar-tab active" data-tab="tab-portfolio" aria-label="資産">
+      <button class="sidebar-tab active" data-tab="tab-portfolio" aria-label="ダッシュボード">
         <svg viewBox="0 0 24 24"><path d="M3 9l9-6 9 6v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V9z"/><path d="M9 22V12h6v10"/></svg>
-        <span>資産</span>
-      </button>
-      <button class="sidebar-tab" data-tab="tab-ai" aria-label="AI判断">
-        <svg viewBox="0 0 24 24"><circle cx="12" cy="8" r="4"/><path d="M8 14h8a4 4 0 0 1 4 4v2H4v-2a4 4 0 0 1 4-4z"/></svg>
-        <span>AI</span>
+        <span>ダッシュボード</span>
       </button>
       <button class="sidebar-tab" data-tab="tab-stats" aria-label="統計">
         <svg viewBox="0 0 24 24"><path d="M18 20V10M12 20V4M6 20v-6"/></svg>
         <span>統計</span>
       </button>
-      <button class="sidebar-tab" data-tab="tab-log" aria-label="ログ">
-        <svg viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/><path d="M8 13h8M8 17h5"/></svg>
-        <span>ログ</span>
+      <button class="sidebar-tab" data-tab="tab-ai" aria-label="AI・ニュース">
+        <svg viewBox="0 0 24 24"><circle cx="12" cy="8" r="4"/><path d="M8 14h8a4 4 0 0 1 4 4v2H4v-2a4 4 0 0 1 4-4z"/></svg>
+        <span>AI・ニュース</span>
       </button>
       <button class="sidebar-tab" data-tab="tab-strategy" aria-label="戦略">
         <svg viewBox="0 0 24 24"><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/></svg>
         <span>戦略</span>
+      </button>
+      <button class="sidebar-tab" data-tab="tab-log" aria-label="システム">
+        <svg viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/><path d="M8 13h8M8 17h5"/></svg>
+        <span>システム</span>
       </button>
       <div class="sidebar-spacer"></div>
       <button class="sidebar-tab sidebar-bottom" id="sidebar-settings" aria-label="設定">
@@ -50,23 +51,23 @@ export function getDashboardHtml(): string {
     <nav class="pc-tabbar" aria-label="タブナビゲーション">
       <button class="pc-tabbar-item active" data-tab="tab-portfolio">
         <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M3 9l9-6 9 6v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V9z"/><path d="M9 22V12h6v10"/></svg>
-        資産
-      </button>
-      <button class="pc-tabbar-item" data-tab="tab-ai">
-        <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="8" r="4"/><path d="M8 14h8a4 4 0 0 1 4 4v2H4v-2a4 4 0 0 1 4-4z"/></svg>
-        AI判断
+        ダッシュボード
       </button>
       <button class="pc-tabbar-item" data-tab="tab-stats">
         <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 20V10M12 20V4M6 20v-6"/></svg>
         統計
       </button>
-      <button class="pc-tabbar-item" data-tab="tab-log">
-        <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/><path d="M8 13h8M8 17h5"/></svg>
-        ログ
+      <button class="pc-tabbar-item" data-tab="tab-ai">
+        <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="8" r="4"/><path d="M8 14h8a4 4 0 0 1 4 4v2H4v-2a4 4 0 0 1 4-4z"/></svg>
+        AI・ニュース
       </button>
       <button class="pc-tabbar-item" data-tab="tab-strategy">
         <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/></svg>
         戦略
+      </button>
+      <button class="pc-tabbar-item" data-tab="tab-log">
+        <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/><path d="M8 13h8M8 17h5"/></svg>
+        システム
       </button>
     </nav>
 
@@ -159,26 +160,19 @@ export function getDashboardHtml(): string {
         </div>
       </section>
 
+      <!-- 因果サマリー -->
+      <section id="causal-summary" class="causal-summary" style="display:none">
+        <div id="causal-narrative" class="causal-narrative"></div>
+        <div class="causal-drivers">
+          <div id="causal-profit-top" class="driver-card driver-profit"></div>
+          <div id="causal-loss-top" class="driver-card driver-loss"></div>
+        </div>
+        <div id="causal-factors" class="causal-factors"></div>
+        <div id="causal-heatmap" class="causal-heatmap"></div>
+      </section>
+
       <!-- 市場状態サマリーバー -->
       <div id="market-state-bar" class="market-state-bar" style="display:none"></div>
-
-      <!-- AI期待銘柄ランキング -->
-      <div id="ai-ranking-section" style="display:none">
-        <div class="ai-ranking-header">AI 期待銘柄ランキング</div>
-        <div class="ai-ranking-list" id="ai-ranking-list"></div>
-      </div>
-
-      <!-- AI最新判断（リッチカード） -->
-      <div class="ai-rich-card" id="ai-card">
-        <div class="ai-rich-top">
-          <span id="ai-badge" class="badge badge-hold ai-badge">—</span>
-          <span id="ai-pair" class="ai-rich-pair">—</span>
-          <span id="ai-rate" class="ai-rich-rate">—</span>
-          <span id="ai-time" class="ai-rich-time">—</span>
-        </div>
-        <div id="ai-reasoning" class="ai-rich-reasoning">読み込み中…</div>
-        <div id="ai-status" class="ai-rich-status">—</div>
-      </div>
 
       <!-- 銘柄ウォッチリスト -->
       <section class="card card-watchlist" aria-label="銘柄一覧">
@@ -342,15 +336,7 @@ export function getDashboardHtml(): string {
           <path d="M3 9l9-6 9 6v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V9z" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
           <path d="M9 22V12h6v10" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
         </svg>
-        資産
-      </button>
-      <button class="tab-item" role="tab" aria-selected="false" data-tab="tab-ai" aria-controls="tab-ai">
-        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-          <path d="M12 2a4 4 0 0 1 4 4c0 1.5-.8 2.8-2 3.5V11h3a3 3 0 0 1 3 3v1.5a2.5 2.5 0 0 1-2.5 2.5H17v2a2 2 0 0 1-2 2H9a2 2 0 0 1-2-2v-2h-.5A2.5 2.5 0 0 1 4 15.5V14a3 3 0 0 1 3-3h3V9.5A4 4 0 0 1 12 2z" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/>
-          <circle cx="9.5" cy="15" r="1" fill="currentColor"/>
-          <circle cx="14.5" cy="15" r="1" fill="currentColor"/>
-        </svg>
-        AI判断
+        ダッシュボード
       </button>
       <button class="tab-item" role="tab" aria-selected="false" data-tab="tab-stats" aria-controls="tab-stats">
         <svg width="22" height="22" viewBox="0 0 24 24" fill="none" aria-hidden="true">
@@ -358,13 +344,13 @@ export function getDashboardHtml(): string {
         </svg>
         統計
       </button>
-      <button class="tab-item" role="tab" aria-selected="false" data-tab="tab-log" aria-controls="tab-log">
+      <button class="tab-item" role="tab" aria-selected="false" data-tab="tab-ai" aria-controls="tab-ai">
         <svg width="22" height="22" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-          <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/>
-          <path d="M14 2v6h6" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
-          <path d="M8 13h8M8 17h5" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>
+          <path d="M12 2a4 4 0 0 1 4 4c0 1.5-.8 2.8-2 3.5V11h3a3 3 0 0 1 3 3v1.5a2.5 2.5 0 0 1-2.5 2.5H17v2a2 2 0 0 1-2 2H9a2 2 0 0 1-2-2v-2h-.5A2.5 2.5 0 0 1 4 15.5V14a3 3 0 0 1 3-3h3V9.5A4 4 0 0 1 12 2z" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/>
+          <circle cx="9.5" cy="15" r="1" fill="currentColor"/>
+          <circle cx="14.5" cy="15" r="1" fill="currentColor"/>
         </svg>
-        ログ
+        AI・ニュース
       </button>
       <button class="tab-item" role="tab" aria-selected="false" data-tab="tab-strategy" aria-controls="tab-strategy">
         <svg width="22" height="22" viewBox="0 0 24 24" fill="none" aria-hidden="true">
@@ -372,6 +358,14 @@ export function getDashboardHtml(): string {
           <path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/>
         </svg>
         戦略
+      </button>
+      <button class="tab-item" role="tab" aria-selected="false" data-tab="tab-log" aria-controls="tab-log">
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+          <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/>
+          <path d="M14 2v6h6" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
+          <path d="M8 13h8M8 17h5" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>
+        </svg>
+        システム
       </button>
     </nav>
 
