@@ -2519,4 +2519,50 @@ body.sheet-open .tab-bar {
 .alert-red { background: #FF453A; color: #fff; }
 .alert-orange { background: #FF9F0A; color: #fff; }
 .alert-yellow { background: #FFD60A; color: #1C1C1E; }
+
+/* ─── ヒートマップ（Task 6） ─── */
+.causal-heatmap {
+  margin-top: 10px;
+}
+.heatmap-grid {
+  display: grid;
+  gap: 1px;
+  font-size: 11px;
+  border-radius: 6px;
+  overflow: hidden;
+}
+.hm-header {
+  padding: 4px 6px;
+  font-weight: 600;
+  font-size: 10px;
+  color: var(--label-secondary, #8E8E93);
+  text-align: center;
+  background: var(--bg-elevated, #1C1C1E);
+}
+.hm-header:first-child { text-align: left; }
+.hm-pair {
+  padding: 4px 6px;
+  font-weight: 500;
+  font-size: 11px;
+  background: var(--bg, #000);
+  white-space: nowrap;
+}
+.hm-cell {
+  padding: 4px 6px;
+  text-align: center;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  color: var(--label, #fff);
+}
+
+/* ─── ディープリンク フラッシュ（Task 7） ─── */
+.highlight-flash {
+  animation: flash-bg 0.8s ease-out;
+}
+@keyframes flash-bg {
+  0% { background-color: rgba(0,122,255,0.15); }
+  100% { background-color: transparent; }
+}
+.factor-badge { cursor: pointer; }
+.driver-card { cursor: pointer; }
 `;

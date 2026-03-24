@@ -173,7 +173,8 @@ export const JS = `
   }
 
   // ── タブ切替 ──
-  function switchTab(targetId) {
+  window.switchTab = switchTab;
+  function switchTab(targetId, scrollTo) {
     document.querySelectorAll('.tab-panel').forEach(function(p) {
       p.classList.toggle('active', p.id === targetId);
     });
@@ -207,6 +208,18 @@ export const JS = `
     // 統計タブ表示時: チャートを正しい幅で再描画
     if (targetId === 'tab-stats' && lastData) {
       requestAnimationFrame(function() { renderEquityChart(lastData); });
+    }
+
+    // ディープリンク: scrollTo が指定されていればスムーズスクロール + フラッシュ
+    if (scrollTo) {
+      setTimeout(function() {
+        var scrollEl = document.getElementById(scrollTo);
+        if (scrollEl) {
+          scrollEl.scrollIntoView({ behavior: 'smooth', block: 'start' });
+          scrollEl.classList.add('highlight-flash');
+          setTimeout(function() { scrollEl.classList.remove('highlight-flash'); }, 800);
+        }
+      }, 150);
     }
   }
 
@@ -2842,6 +2855,65 @@ export const JS = `
 
   // ─── 因果サマリー描画（Task 3-B） ──────────────────────────────────────────
 
+  // ─── ヒートマップ描画（Task 6） ──────────────────────────────────────────
+
+  function heatmapColor(val, key) {
+    if (key === 'pnl_closed') {
+      if (val > 0) return 'rgba(48,209,88,' + Math.min(Math.abs(val) / 500, 0.6) + ')';
+      if (val < 0) return 'rgba(255,69,58,' + Math.min(Math.abs(val) / 500, 0.6) + ')';
+      return 'transparent';
+    }
+    if (key === 'vix_effect') {
+      return val > 0 ? 'rgba(255,159,10,' + Math.min(val, 0.6) + ')' : 'transparent';
+    }
+    if (key === 'param_changed') {
+      return val > 0 ? 'rgba(10,132,255,0.3)' : 'transparent';
+    }
+    if (key === 'news_impact') {
+      return val > 0 ? 'rgba(255,69,58,' + Math.min(val / 100 * 0.6, 0.6) + ')' : 'transparent';
+    }
+    return 'transparent';
+  }
+
+  function heatmapLabel(val, key) {
+    if (key === 'pnl_closed') return val !== 0 ? (val > 0 ? '+' : '') + Math.round(val) : '\\u2014';
+    if (key === 'vix_effect') return val > 0 ? val.toFixed(1) : '\\u2014';
+    if (key === 'param_changed') return val > 0 ? '\\u2713' : '\\u2014';
+    if (key === 'news_impact') return val > 0 ? Math.round(val) : '\\u2014';
+    return '\\u2014';
+  }
+
+  function renderHeatmap(heatmapData) {
+    var hmEl = document.getElementById('causal-heatmap');
+    if (!hmEl) return;
+    if (!heatmapData || heatmapData.length === 0) {
+      hmEl.style.display = 'none';
+      return;
+    }
+    hmEl.style.display = '';
+
+    var cols = ['\\u9298\\u67C4', 'PnL', 'VIX', 'PR', '\\u30CB\\u30E5\\u30FC\\u30B9'];
+    var keys = ['pnl_closed', 'vix_effect', 'param_changed', 'news_impact'];
+
+    var html = '<div class="heatmap-grid" style="grid-template-columns: auto repeat(' + keys.length + ', 1fr)">';
+
+    for (var h = 0; h < cols.length; h++) {
+      html += '<div class="hm-header">' + cols[h] + '</div>';
+    }
+
+    for (var i = 0; i < heatmapData.length; i++) {
+      var row = heatmapData[i];
+      html += '<div class="hm-pair">' + row.pair + '</div>';
+      for (var k = 0; k < keys.length; k++) {
+        var val = (row.factors && row.factors[keys[k]]) || 0;
+        var bg = heatmapColor(val, keys[k]);
+        html += '<div class="hm-cell" style="background:' + bg + '">' + heatmapLabel(val, keys[k]) + '</div>';
+      }
+    }
+    html += '</div>';
+    hmEl.innerHTML = html;
+  }
+
   function renderCausalSummary(data) {
     var section = document.getElementById('causal-summary');
     if (!section) return;
@@ -2863,6 +2935,7 @@ export const JS = `
           '<div class="driver-pnl positive">+' + Math.round(p.pnl) + '\\u5186</div>' +
           '<div class="driver-reason">' + (p.reason || '') + '</div>';
         profitEl.style.display = '';
+        profitEl.onclick = function() { switchTab('tab-stats', 'perf-' + p.pair.replace(/[\\/\\s]/g, '-')); };
       } else {
         profitEl.style.display = 'none';
       }
@@ -2878,19 +2951,41 @@ export const JS = `
           '<div class="driver-pnl negative">' + Math.round(l.pnl) + '\\u5186</div>' +
           '<div class="driver-reason">' + (l.reason || '') + '</div>';
         lossEl.style.display = '';
+        lossEl.onclick = function() { switchTab('tab-stats', 'perf-' + l.pair.replace(/[\\/\\s]/g, '-')); };
       } else {
         lossEl.style.display = 'none';
       }
     }
 
     // 要因バッジ (factors)
+    var tabMap = {
+      'vix': 'tab-strategy',
+      'macro': 'tab-strategy',
+      'param_review': 'tab-strategy',
+      'news': 'tab-ai',
+      'trailing': 'tab-stats',
+      'delisted': 'tab-log'
+    };
+    var scrollMap = {
+      'vix': '',
+      'macro': '',
+      'param_review': 'review-history',
+      'news': 'news-analysis',
+      'trailing': '',
+      'delisted': ''
+    };
     var factorsEl = document.getElementById('causal-factors');
     if (factorsEl && cs.drivers && cs.drivers.factors) {
       factorsEl.innerHTML = cs.drivers.factors.map(function(f) {
         var cls = f.severity === 'high' ? 'factor-high' : f.severity === 'medium' ? 'factor-medium' : 'factor-low';
-        return '<span class="factor-badge ' + cls + '">' + f.label + '</span>';
+        var targetTab = tabMap[f.type] || 'tab-log';
+        var targetScroll = scrollMap[f.type] || '';
+        return '<span class="factor-badge ' + cls + '" onclick="switchTab(\\'' + targetTab + '\\', \\'' + targetScroll + '\\')">' + f.label + '</span>';
       }).join('');
     }
+
+    // ヒートマップ
+    renderHeatmap(cs.heatmap);
   }
 
   // ─── 警報バナー描画（Task 4-B） ──────────────────────────────────────────
