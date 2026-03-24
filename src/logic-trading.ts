@@ -194,10 +194,20 @@ export async function runLogicDecisions(
       continue;
     }
 
-    // ── Ph.6 拡張パラメーター適用 ── ─────────────────────────────────────
+    // ── Ph.7 重みつきエントリースコアリング ──────────────────────────
 
-    // 1. min_signal_strength フィルタ（RSI偏差 + ER の複合強度チェック）
-    if (techSignal.rsi != null && techSignal.er != null && params.min_signal_strength > 0) {
+    // スコアが計算されている場合のみチェック
+    if (techSignal.scores && params.entry_score_min > 0) {
+      if (techSignal.scores.total < params.entry_score_min) {
+        summary.skipped++;
+        summary.signals.push({ pair, signal: 'SKIP',
+          reason: `entry_score=${techSignal.scores.total.toFixed(2)}<${params.entry_score_min} [${techSignal.scores.breakdown}]` });
+        continue;
+      }
+    }
+
+    // フォールバック: min_signal_strength が設定済みで scores 未計算の場合（後方互換性）
+    if (!techSignal.scores && techSignal.rsi != null && techSignal.er != null && params.min_signal_strength > 0) {
       const rsiDev = techSignal.signal === 'BUY'
         ? Math.max(0, (params.rsi_oversold - techSignal.rsi) / Math.max(1, params.rsi_oversold))
         : Math.max(0, (techSignal.rsi - params.rsi_overbought) / Math.max(1, 100 - params.rsi_overbought));
@@ -206,17 +216,6 @@ export async function runLogicDecisions(
         summary.skipped++;
         summary.signals.push({ pair, signal: 'SKIP',
           reason: `signal_str=${signalStrength.toFixed(2)}<${params.min_signal_strength}(min)` });
-        continue;
-      }
-    }
-
-    // 2. strategy_primary フィルタ（trend_follow はER閾値を25%強化）
-    if (params.strategy_primary === 'trend_follow' && techSignal.er != null) {
-      const strictErThreshold = (params.adx_min / 60) * 1.25;
-      if (techSignal.er < strictErThreshold) {
-        summary.skipped++;
-        summary.signals.push({ pair, signal: 'SKIP',
-          reason: `trend_follow: ER=${techSignal.er.toFixed(3)}<${strictErThreshold.toFixed(3)}` });
         continue;
       }
     }
@@ -259,6 +258,18 @@ export async function runLogicDecisions(
       }
     }
 
+    // ── Ph.7 RR比チェック（スケール適用後）──────────────────────────
+    const tpDist = Math.abs(scaledTp - currentRate);
+    const slDist = Math.abs(scaledSl - currentRate);
+    const actualRR = slDist > 0 ? tpDist / slDist : 0;
+
+    if (actualRR < params.min_rr_ratio) {
+      summary.skipped++;
+      summary.signals.push({ pair, signal: 'SKIP',
+        reason: `RR=${actualRR.toFixed(2)}<${params.min_rr_ratio}(min)` });
+      continue;
+    }
+
     const sanity = checkTpSlSanity({
       direction: techSignal.signal,
       rate: currentRate,
@@ -298,7 +309,7 @@ export async function runLogicDecisions(
     }
 
     // decisions テーブルに記録
-    const reasoning = `[LOGIC] ${techSignal.reason}`;
+    const reasoning = `[LOGIC] ${techSignal.reason} score=${techSignal.scores?.total.toFixed(2) ?? '-'} [${techSignal.scores?.breakdown ?? ''}] RR=${actualRR.toFixed(2)}`;
     await insertDecision(db, {
       pair,
       rate: currentRate,

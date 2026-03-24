@@ -188,6 +188,12 @@ const MIGRATIONS: Array<{ version: number; description: string; sql: string }> =
     description: 'instrument_params に拡張ロジックパラメーター5カラム追加（Ph.6 Path A廃止 v212衝突回避）',
     sql: `CREATE TABLE IF NOT EXISTS _dummy_v214 (id INTEGER PRIMARY KEY)`,
   },
+  // Ph.7: 重みつきエントリースコアリング
+  {
+    version: 215,
+    description: '重みつきエントリースコアリング パラメーター追加（w_rsi/w_er/w_mtf/w_sr/w_pa/entry_score_min/min_rr_ratio）',
+    sql: `CREATE TABLE IF NOT EXISTS _dummy_v215 (id INTEGER PRIMARY KEY)`,
+  },
 ];
 
 export async function runMigrations(db: D1Database): Promise<void> {
@@ -347,6 +353,26 @@ export async function runMigrations(db: D1Database): Promise<void> {
         "ALTER TABLE instrument_params ADD COLUMN strategy_primary TEXT NOT NULL DEFAULT 'mean_reversion'",
         'ALTER TABLE instrument_params ADD COLUMN min_signal_strength REAL NOT NULL DEFAULT 0.0',
         'ALTER TABLE instrument_params ADD COLUMN macro_sl_scale REAL NOT NULL DEFAULT 1.0',
+      ]) {
+        try { await db.prepare(col).run(); } catch {}
+      }
+      await db.prepare(
+        'INSERT OR IGNORE INTO schema_version (version, description, applied_at) VALUES (?, ?, ?)'
+      ).bind(m.version, m.description, new Date().toISOString()).run();
+      console.log(`[migration] Applied v${m.version}: ${m.description}`);
+      continue;
+    }
+
+    // version 215: Ph.7 重みつきエントリースコアリング パラメーター追加
+    if (m.version === 215) {
+      for (const col of [
+        'ALTER TABLE instrument_params ADD COLUMN w_rsi REAL NOT NULL DEFAULT 0.35',
+        'ALTER TABLE instrument_params ADD COLUMN w_er REAL NOT NULL DEFAULT 0.25',
+        'ALTER TABLE instrument_params ADD COLUMN w_mtf REAL NOT NULL DEFAULT 0.20',
+        'ALTER TABLE instrument_params ADD COLUMN w_sr REAL NOT NULL DEFAULT 0.10',
+        'ALTER TABLE instrument_params ADD COLUMN w_pa REAL NOT NULL DEFAULT 0.10',
+        'ALTER TABLE instrument_params ADD COLUMN entry_score_min REAL NOT NULL DEFAULT 0.30',
+        'ALTER TABLE instrument_params ADD COLUMN min_rr_ratio REAL NOT NULL DEFAULT 1.5',
       ]) {
         try { await db.prepare(col).run(); } catch {}
       }
