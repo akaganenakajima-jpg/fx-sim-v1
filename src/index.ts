@@ -12,6 +12,7 @@ import {
   getCacheValue,
   setCacheValue,
   closePosition,
+  getOpenPositions,
 } from './db';
 import { slPatternAnalysis } from './stats';
 import { getDashboardHtml } from './dashboard';
@@ -665,6 +666,22 @@ async function run(env: Env): Promise<void> {
         }
       }
     } catch { /* カレンダー失敗は無視 */ }
+
+    // 1.9 除外銘柄の孤立ポジション自動キャンセル
+    // instruments.ts から除外された銘柄の OPEN ポジションが残っていると、
+    // pnlMultiplier 不明で誤った損益計算が発生するため、即座にキャンセルする
+    {
+      const activePairs = new Set(INSTRUMENTS.map(i => i.pair));
+      const openPositions = await getOpenPositions(env.DB);
+      const orphaned = openPositions.filter(p => !activePairs.has(p.pair));
+      for (const p of orphaned) {
+        console.warn(`[fx-sim] ⚠️ 孤立ポジション検出: ${p.pair} id=${p.id} — 銘柄除外済みのため pnl=0 でキャンセル`);
+        await closePosition(env.DB, p.id, p.entry_rate, 'DELISTED', 0, 0);
+        await insertSystemLog(env.DB, 'WARN', 'POSITION',
+          `孤立ポジションキャンセル: ${p.pair} id=${p.id} (銘柄除外済み)`,
+          JSON.stringify({ pair: p.pair, direction: p.direction, entry_rate: p.entry_rate }));
+      }
+    }
 
     // 2. 全銘柄のTP/SLを一括チェック（OANDA実弾ポジションはブローカー経由でクローズ）
     const t1 = Date.now();

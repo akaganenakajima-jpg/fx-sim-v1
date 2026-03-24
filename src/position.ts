@@ -51,7 +51,12 @@ export async function checkAndCloseAllPositions(
     if (currentRate == null) continue;
 
     const instr = instrMap.get(pos.pair);
-    const multiplier = instr?.pnlMultiplier ?? 100;
+    if (!instr) {
+      // 除外銘柄のポジション — 誤った pnlMultiplier で計算すると大事故になるためスキップ
+      console.log(`[position] WARN: ${pos.pair} id=${pos.id} は有効銘柄リストに存在しない → TP/SLチェック スキップ`);
+      continue;
+    }
+    const multiplier = instr.pnlMultiplier;
 
     // トレイリングストップ: 含み益が activation 幅を超えたらSLを引き上げ
     if (instr && pos.sl_rate != null) {
@@ -325,7 +330,7 @@ export async function openPosition(
   // テスタ施策9: SL幅ベースポジションサイズ（1%ルール）
   if (slRate != null) {
     const slPips = Math.abs(entryRate - slRate);
-    const multiplier = extra?.pnlMultiplier ?? 100;
+    const multiplier = extra?.pnlMultiplier ?? 1;  // フォールバックは安全側（×1）
     const riskPerLot = slPips * multiplier;
     // balance 取得は高コストなので初期資産10000で近似
     const maxRisk = 10000 * 0.01; // 1%ルール
