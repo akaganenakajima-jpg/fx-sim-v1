@@ -759,7 +759,7 @@ export const JS = `
     }
     var crossHtml = '';
     if (n.attention && n.action_pair) {
-      crossHtml = '<div style="margin-top:8px"><span class="cross-link" onclick="switchTab(\'tab-portfolio\')">\\u2192 今タブでポジション確認</span></div>';
+      crossHtml = '<div style="margin-top:8px"><span class="cross-link" onclick="switchTab(\\\'tab-portfolio\\\')">\\u2192 今タブでポジション確認</span></div>';
     }
     return '<div class="nf-item ' + borderCls + '">' +
       '<div class="nf-header"><span class="nf-badge ' + badgeCls + '">' + badgeText + ' \\u00b7 score ' + score + '</span><span class="nf-time">' + fmtTimeAgo(n.analyzed_at || '') + '</span></div>' +
@@ -942,15 +942,15 @@ export const JS = `
           var whyHtml = '';
           if (c.why_chain && c.why_chain.length > 0) {
             var uid = 'why-evo-' + pairId + '-' + Math.random().toString(36).slice(2, 6);
-            whyHtml = '<div class="why-toggle" onclick="var t=document.getElementById(\'' + uid + '\');t.classList.toggle(\'open\')">\\u25b6 ' + (dotCls === 'improved' ? 'なぜ効いた？' : dotCls === 'worsened' ? 'なぜ効かなかった？' : '根拠') + '</div>' +
+            whyHtml = '<div class="why-toggle" onclick="var t=document.getElementById(\\'' + uid + '\\');t.classList.toggle(\\'open\\')">\\u25b6 ' + (dotCls === 'improved' ? 'なぜ効いた？' : dotCls === 'worsened' ? 'なぜ効かなかった？' : '根拠') + '</div>' +
               '<div class="why-tree" id="' + uid + '">' + buildWhyTree(c.why_chain) + '</div>';
           }
           return '<div class="evo-change"><div class="evo-dot ' + dotCls + '"></div><div style="flex:1">' +
             '<div class="evo-text">' + escHtml(c.description || c.change || '') + '</div>' +
             '<div class="evo-result ' + resCls + '">' + escHtml(c.result_text || '') + '</div>' +
             whyHtml +
-            '<span class="cross-link" onclick="switchTab(\'tab-strategy\')">\\u2192 戦略で詳細</span>' +
-            '<span class="cross-link" style="margin-left:12px" onclick="switchTab(\'tab-ai\')">\\u2192 AIタブで判断を確認</span>' +
+            '<span class="cross-link" onclick="switchTab(\\\'tab-strategy\\\')">\\u2192 戦略で詳細</span>' +
+            '<span class="cross-link" style="margin-left:12px" onclick="switchTab(\\\'tab-ai\\\')">\\u2192 AIタブで判断を確認</span>' +
           '</div></div>';
         }).join('') + '</div>';
       } else {
@@ -1072,13 +1072,13 @@ export const JS = `
     var whyHtml = '';
     if (item.why_chain && item.why_chain.length > 0) {
       var uid = 'why-ai-' + Math.random().toString(36).slice(2, 8);
-      whyHtml = '<div class="why-toggle" onclick="var t=document.getElementById(\'' + uid + '\');t.classList.toggle(\'open\')">\\u25b6 Why\\u00d75 根拠チェーン</div>' +
+      whyHtml = '<div class="why-toggle" onclick="var t=document.getElementById(\\'' + uid + '\\');t.classList.toggle(\\'open\\')">\\u25b6 Why\\u00d75 根拠チェーン</div>' +
         '<div class="why-tree" id="' + uid + '">' + buildWhyTree(item.why_chain) + '</div>';
     }
 
     var crossHtml = '';
     if (item.crossLink) {
-      crossHtml = '<span class="cross-link" onclick="switchTab(\'' + escHtml(item.crossLink.tab || 'tab-stats') + '\')">' + escHtml(item.crossLink.text || '\\u2192 詳細') + '</span>';
+      crossHtml = '<span class="cross-link" onclick="switchTab(\\\'' + escHtml(item.crossLink.tab || 'tab-stats') + '\\\')">' + escHtml(item.crossLink.text || '\\u2192 詳細') + '</span>';
     }
 
     return '<div class="verdict-card ' + cardCls + '">' +
@@ -1247,7 +1247,7 @@ export const JS = `
           if (pc.maxHoldingMinutes) rows.push('<div class="jc-param-row"><span>最大保有</span><span class="val">' + pc.maxHoldingMinutes + '分</span></div>');
           if (pc.cooldownMinutes) rows.push('<div class="jc-param-row"><span>クールダウン</span><span class="val">' + pc.cooldownMinutes + '分</span></div>');
           if (rows.length > 0) {
-            paramsHtml = '<div class="jc-params-toggle" onclick="var t=document.getElementById(\'' + uid + '\');t.classList.toggle(\'open\')">\\u25b6 パラメーター全量</div>' +
+            paramsHtml = '<div class="jc-params-toggle" onclick="var t=document.getElementById(\\'' + uid + '\\');t.classList.toggle(\\'open\\')">\\u25b6 パラメーター全量</div>' +
               '<div class="jc-params" id="' + uid + '">' + rows.join('') + '</div>';
           }
         }
@@ -1257,7 +1257,7 @@ export const JS = `
         '<div class="jc-header"><span class="jc-pair">' + escHtml(instr.label) + '</span><span class="jc-ver">現在 ' + currentVersion + '</span></div>' +
         '<div class="jc-summary">' + escHtml(summaryText) + '</div>' +
         scoreHtml + timelineHtml + paramsHtml +
-        '<span class="cross-link" onclick="switchTab(\'tab-stats\')">\\u2192 学びで成果確認</span>' +
+        '<span class="cross-link" onclick="switchTab(\\\'tab-stats\\\')">\\u2192 学びで成果確認</span>' +
       '</div>';
     }).join('');
   }
@@ -1389,7 +1389,7 @@ export const JS = `
     container.innerHTML = checks.map(function(c) {
       var valCls = c.ok ? 'ok' : 'error';
       var expandHtml = c.expand ? '<div class="hc-expand"><div class="hc-detail"><span class="hc-detail-label">' + escHtml(c.expand) + '</span></div></div>' : '<div class="hc-expand"></div>';
-      return '<div class="hc" onclick="var exp=this.querySelector(\'.hc-expand\');if(exp)exp.classList.toggle(\'open\')">' +
+      return '<div class="hc" onclick="var exp=this.querySelector(\\'.hc-expand\\');if(exp)exp.classList.toggle(\\'open\\')">' +
         '<div class="hc-row"><div class="hc-left"><span class="hc-label">' + escHtml(c.name) + '</span></div>' +
         '<div class="hc-value ' + valCls + '">' + c.value + '</div></div>' +
         expandHtml +
@@ -1407,7 +1407,7 @@ export const JS = `
     } else {
       logList.innerHTML = abnormal.slice(0, 20).map(function(l) {
         var lvlCls = l.level === 'ERROR' ? 'error' : 'warn';
-        var crossHtml = l.relatedPair ? '<span class="cross-link" onclick="switchTab(\'tab-portfolio\')">\\u2192 関連ポジション</span>' : '';
+        var crossHtml = l.relatedPair ? '<span class="cross-link" onclick="switchTab(\\\'tab-portfolio\\\')">\\u2192 関連ポジション</span>' : '';
         return '<div class="log-item">' +
           '<div class="log-header"><span class="log-level ' + lvlCls + '">' + l.level + '</span>' +
           '<span class="log-cat">' + escHtml(l.category || '') + '</span>' +
