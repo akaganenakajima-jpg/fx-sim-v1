@@ -847,6 +847,63 @@ body, #app {
   letter-spacing: -0.3px;
 }
 
+/* ─── 取引トレーサビリティ ─── */
+.trace-section {
+  margin: 12px 0;
+  padding: 10px 12px;
+  background: var(--card-bg, #1C1C1E);
+  border-radius: 8px;
+}
+.trace-title {
+  font-size: 13px;
+  font-weight: 600;
+  margin-bottom: 6px;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.trace-reasoning {
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--secondary, #8E8E93);
+  font-family: 'SF Mono', ui-monospace, monospace;
+  word-break: break-all;
+}
+.trace-formula {
+  font-size: 12px;
+  font-family: 'SF Mono', ui-monospace, monospace;
+  color: var(--text, #fff);
+  padding: 4px 0;
+}
+.trace-note {
+  font-size: 11px;
+  color: var(--orange, #FF9F0A);
+  margin-top: 2px;
+}
+.trace-params {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 4px 12px;
+  font-size: 12px;
+}
+.trace-param-label { color: var(--secondary, #8E8E93); }
+.trace-param-value { font-weight: 500; }
+.trace-history-item {
+  padding: 6px 0;
+  border-bottom: 1px solid var(--separator, #38383A);
+  font-size: 12px;
+}
+.trace-history-item:last-child { border-bottom: none; }
+.trace-history-version {
+  font-weight: 600;
+  color: var(--blue, #0A84FF);
+}
+.trace-history-reason {
+  color: var(--secondary, #8E8E93);
+  margin-top: 2px;
+  line-height: 1.4;
+}
+
 /* ─── 判定履歴 HOLD ディム（Cognitive Load） ─── */
 .decision-row-hold {
   opacity: 0.45;
@@ -2441,4 +2498,128 @@ body.sheet-open .tab-bar {
 .hold-sep { display: flex; align-items: center; gap: 8px; margin: 8px 0; }
 .hold-sep-line { flex: 1; height: 1px; background: var(--separator); }
 .hold-sep-label { font-size: 11px; color: var(--label-tertiary); white-space: nowrap; }
+
+/* ─── 因果サマリー（Task 3-C） ─── */
+.causal-summary {
+  padding: 12px 16px;
+  margin: 8px 0;
+  border-radius: 12px;
+  background: var(--card-bg, #1C1C1E);
+}
+.causal-narrative {
+  font-size: 14px;
+  line-height: 1.5;
+  color: var(--secondary, #8E8E93);
+  margin-bottom: 10px;
+}
+.causal-drivers {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+@media (max-width: 767px) {
+  .causal-drivers { flex-direction: column; }
+}
+.driver-card {
+  flex: 1;
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: var(--bg, #000);
+  border-left: 3px solid transparent;
+}
+.driver-profit { border-left-color: var(--green, #30D158); }
+.driver-loss { border-left-color: var(--red, #FF453A); }
+.driver-label {
+  font-size: 11px;
+  color: var(--secondary, #8E8E93);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  margin-bottom: 2px;
+}
+.driver-pair { font-size: 15px; font-weight: 600; }
+.driver-pnl { font-size: 18px; font-weight: 700; margin: 2px 0; }
+.driver-pnl.positive { color: var(--green, #30D158); }
+.driver-pnl.negative { color: var(--red, #FF453A); }
+.driver-reason { font-size: 12px; color: var(--secondary, #8E8E93); }
+.causal-factors {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+.factor-badge {
+  display: inline-block;
+  padding: 3px 8px;
+  border-radius: 10px;
+  font-size: 11px;
+  font-weight: 500;
+}
+.factor-high { background: rgba(255,69,58,0.2); color: #FF453A; }
+.factor-medium { background: rgba(255,159,10,0.2); color: #FF9F0A; }
+.factor-low { background: rgba(142,142,147,0.2); color: #8E8E93; }
+
+/* ─── 警報バナー（Task 4-C） ─── */
+.alert-banner-container {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100%;
+  z-index: 9999;
+  pointer-events: none;
+}
+.alert-banner {
+  padding: 8px 16px;
+  font-size: 13px;
+  font-weight: 600;
+  text-align: center;
+  pointer-events: auto;
+}
+.alert-red { background: #FF453A; color: #fff; }
+.alert-orange { background: #FF9F0A; color: #fff; }
+.alert-yellow { background: #FFD60A; color: #1C1C1E; }
+
+/* ─── ヒートマップ（Task 6） ─── */
+.causal-heatmap {
+  margin-top: 10px;
+}
+.heatmap-grid {
+  display: grid;
+  gap: 1px;
+  font-size: 11px;
+  border-radius: 6px;
+  overflow: hidden;
+}
+.hm-header {
+  padding: 4px 6px;
+  font-weight: 600;
+  font-size: 10px;
+  color: var(--label-secondary, #8E8E93);
+  text-align: center;
+  background: var(--bg-elevated, #1C1C1E);
+}
+.hm-header:first-child { text-align: left; }
+.hm-pair {
+  padding: 4px 6px;
+  font-weight: 500;
+  font-size: 11px;
+  background: var(--bg, #000);
+  white-space: nowrap;
+}
+.hm-cell {
+  padding: 4px 6px;
+  text-align: center;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  color: var(--label, #fff);
+}
+
+/* ─── ディープリンク フラッシュ（Task 7） ─── */
+.highlight-flash {
+  animation: flash-bg 0.8s ease-out;
+}
+@keyframes flash-bg {
+  0% { background-color: rgba(0,122,255,0.15); }
+  100% { background-color: transparent; }
+}
+.factor-badge { cursor: pointer; }
+.driver-card { cursor: pointer; }
 `;

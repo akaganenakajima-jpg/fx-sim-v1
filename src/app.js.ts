@@ -173,7 +173,8 @@ export const JS = `
   }
 
   // ── タブ切替 ──
-  function switchTab(targetId) {
+  window.switchTab = switchTab;
+  function switchTab(targetId, scrollTo) {
     document.querySelectorAll('.tab-panel').forEach(function(p) {
       p.classList.toggle('active', p.id === targetId);
     });
@@ -207,6 +208,18 @@ export const JS = `
     // 統計タブ表示時: チャートを正しい幅で再描画
     if (targetId === 'tab-stats' && lastData) {
       requestAnimationFrame(function() { renderEquityChart(lastData); });
+    }
+
+    // ディープリンク: scrollTo が指定されていればスムーズスクロール + フラッシュ
+    if (scrollTo) {
+      setTimeout(function() {
+        var scrollEl = document.getElementById(scrollTo);
+        if (scrollEl) {
+          scrollEl.scrollIntoView({ behavior: 'smooth', block: 'start' });
+          scrollEl.classList.add('highlight-flash');
+          setTimeout(function() { scrollEl.classList.remove('highlight-flash'); }, 800);
+        }
+      }, 150);
     }
   }
 
@@ -574,6 +587,83 @@ export const JS = `
       '</div>';
     }
 
+    // ── トレーサビリティセクション構築 ──
+    var traceHtml = '';
+    var tc = lastData && lastData.tradeContext && lastData.tradeContext[pair] ? lastData.tradeContext[pair] : null;
+    if (tc) {
+      // 1. なぜオープンした？
+      traceHtml += '<div class="trace-section">' +
+        '<div class="trace-title">&#x1F4CD; なぜオープンした？</div>' +
+        '<div class="trace-reasoning">' + escHtml(tc.entryReasoning || '—') + '</div>' +
+        '<div style="margin-top:6px;font-size:12px;color:var(--secondary, #8E8E93)">' +
+          (tc.entryStrategy ? '戦略: ' + escHtml(tc.entryStrategy) : '') +
+          (tc.entryTrigger ? ' | トリガー: ' + escHtml(tc.entryTrigger) : '') +
+          (tc.entryConfidence != null ? ' | 確信度: ' + tc.entryConfidence.toFixed(2) : '') +
+        '</div>' +
+        (tc.entryDecisionAt ? '<div style="font-size:11px;color:var(--secondary, #8E8E93);margin-top:2px">エントリー: ' + fmtTime(tc.entryDecisionAt) + '</div>' : '') +
+      '</div>';
+
+      // 2. TP/SLはどう決まった？
+      if (tc.tpSlBreakdown) {
+        var bd = tc.tpSlBreakdown;
+        traceHtml += '<div class="trace-section">' +
+          '<div class="trace-title">&#x1F4CD; TP/SL はどう決まった？</div>' +
+          '<div class="trace-formula">TP = ' + escHtml(bd.formulaTp) + '</div>' +
+          '<div class="trace-formula">SL = ' + escHtml(bd.formulaSl) + '</div>' +
+          (bd.vixAlertActive ? '<div class="trace-note">VIX=' + (bd.currentVix != null ? bd.currentVix.toFixed(1) : '?') + ' — vix_tp_scale=' + bd.vixTpScale + ' 適用中</div>' : '') +
+          (bd.macroSlScale !== 1.0 ? '<div class="trace-note">macro_sl_scale=' + bd.macroSlScale + ' 適用中</div>' : '') +
+        '</div>';
+      }
+
+      // 3. 現在のパラメーター
+      if (tc.currentParams) {
+        var cp = tc.currentParams;
+        var ago = '';
+        if (cp.lastReviewedAt) {
+          var diffMs = Date.now() - new Date(cp.lastReviewedAt).getTime();
+          var diffH = Math.floor(diffMs / 3600000);
+          if (diffH < 1) ago = Math.floor(diffMs / 60000) + '分前';
+          else if (diffH < 24) ago = diffH + 'h前';
+          else ago = Math.floor(diffH / 24) + 'd前';
+        }
+        traceHtml += '<div class="trace-section">' +
+          '<div class="trace-title">&#x1F4CD; 現在のパラメーター（v' + cp.paramVersion + '）</div>' +
+          '<div class="trace-params">' +
+            '<span class="trace-param-label">RSI</span><span class="trace-param-value">' + cp.rsiOversold + ' / ' + cp.rsiOverbought + '</span>' +
+            '<span class="trace-param-label">ATR x TP</span><span class="trace-param-value">' + cp.atrTpMultiplier + '</span>' +
+            '<span class="trace-param-label">ATR x SL</span><span class="trace-param-value">' + cp.atrSlMultiplier + '</span>' +
+            '<span class="trace-param-label">VIX TP/SL</span><span class="trace-param-value">' + cp.vixTpScale + ' / ' + cp.vixSlScale + '</span>' +
+            '<span class="trace-param-label">strategy</span><span class="trace-param-value">' + escHtml(cp.strategyPrimary) + '</span>' +
+            '<span class="trace-param-label">min signal</span><span class="trace-param-value">' + cp.minSignalStrength + '</span>' +
+          '</div>' +
+          (ago ? '<div style="font-size:11px;color:var(--secondary, #8E8E93);margin-top:6px">最終レビュー: ' + ago + '</div>' : '') +
+        '</div>';
+      }
+
+      // 4. パラメーター変更履歴
+      if (tc.paramHistory && tc.paramHistory.length > 0) {
+        var histItems = tc.paramHistory.map(function(h) {
+          var hAgo = '';
+          var hDiffMs = Date.now() - new Date(h.changedAt).getTime();
+          var hDiffH = Math.floor(hDiffMs / 3600000);
+          if (hDiffH < 1) hAgo = Math.floor(hDiffMs / 60000) + '分前';
+          else if (hDiffH < 24) hAgo = hDiffH + 'h前';
+          else hAgo = Math.floor(hDiffH / 24) + 'd前';
+          return '<div class="trace-history-item">' +
+            '<span class="trace-history-version">v' + h.version + '</span>' +
+            ' <span style="color:var(--secondary, #8E8E93);font-size:11px">(' + hAgo + ')</span>' +
+            (h.winRate != null ? ' <span style="font-size:11px;color:var(--secondary, #8E8E93)">WR=' + (h.winRate * 100).toFixed(0) + '%</span>' : '') +
+            (h.rr != null ? ' <span style="font-size:11px;color:var(--secondary, #8E8E93)">RR=' + h.rr.toFixed(1) + '</span>' : '') +
+            '<div class="trace-history-reason">' + escHtml(h.reason) + '</div>' +
+          '</div>';
+        }).join('');
+        traceHtml += '<div class="trace-section">' +
+          '<div class="trace-title">&#x1F4CD; パラメーター変更履歴</div>' +
+          histItems +
+        '</div>';
+      }
+    }
+
     // 取引規模の計算
     var mul = instr ? instr.multiplier : 1;
     var unitLabel = '';
@@ -601,6 +691,7 @@ export const JS = `
       row('取引規模', unitLabel) +
       (notional > 0 ? row('想定元本', fmtYen(notional) + ' <span style="font-size:11px;color:var(--label-secondary)">(' + leverage.toFixed(1) + '倍)</span>') : '') +
       row('エントリー日時', fmtTime(pos.entry_at)) +
+      traceHtml +
       decisionHtml +
       historyHtml;
 
@@ -1280,41 +1371,6 @@ export const JS = `
         '<div class="market-state-label">稼働</div>' +
         '<div class="market-state-value">' + totalRuns.toLocaleString('ja-JP') + '回</div>' +
       '</div>';
-  }
-
-  // ── AI期待銘柄ランキング（階層ベイズ勝率 TOP3） ──
-  function renderAiRanking(data) {
-    var section = el('ai-ranking-section');
-    var listEl  = el('ai-ranking-list');
-    if (!section || !listEl) return;
-    var rates = (data.statistics && data.statistics.hierarchicalWinRates) || [];
-    // n >= 3 のみ対象、bayesRate 降順
-    var ranked = rates
-      .filter(function(r) { return r.n >= 3; })
-      .sort(function(a, b) { return b.bayesRate - a.bayesRate; })
-      .slice(0, 3);
-    if (ranked.length === 0) { section.style.display = 'none'; return; }
-
-    var medals = [
-      '<span class="ai-ranking-medal ai-ranking-medal--1">1</span>',
-      '<span class="ai-ranking-medal ai-ranking-medal--2">2</span>',
-      '<span class="ai-ranking-medal ai-ranking-medal--3">3</span>'
-    ];
-    var html = ranked.map(function(r, i) {
-      var pct = (r.bayesRate * 100).toFixed(1);
-      var barW = Math.round(r.bayesRate * 100);
-      var inst = INSTRUMENTS.find(function(x) { return x.pair === r.pair; });
-      var label = inst ? inst.label : r.pair;
-      return '<div class="ai-ranking-row">' +
-        medals[i] +
-        '<span class="ai-ranking-name">' + escHtml(label) + '</span>' +
-        '<div class="ai-ranking-bar"><div class="ai-ranking-bar-fill" style="width:' + barW + '%"></div></div>' +
-        '<span class="ai-ranking-pct">' + pct + '%</span>' +
-      '</div>';
-    }).join('');
-
-    listEl.innerHTML = html;
-    section.style.display = '';
   }
 
   // ── 統計的有意性プログレスバー（ヒーロー内） ──
@@ -2110,6 +2166,9 @@ export const JS = `
     var prev = lastData;
     lastData = data;
 
+    // 警報バナー（最優先で描画）
+    renderAlertBanner(data);
+
     // ヘッダー: トレーディングモードバッジ
     var modeBadgeEl = document.getElementById('mode-badge');
     if (modeBadgeEl) {
@@ -2148,6 +2207,9 @@ export const JS = `
 
     // TP/SLバナー検出
     detectAndShowBanner(data);
+
+    // 因果サマリー描画
+    renderCausalSummary(data);
 
     // Hero: 資産残高（元手 + 累計PnL）
     var perf = data.performance;
@@ -2206,50 +2268,10 @@ export const JS = `
     // ウォッチリスト
     renderWatchlist(data);
 
-    // AI最新判断（ポートフォリオタブ）— 直近BUY/SELLを表示
-    var ld = data.latestDecision;
-    var recentAction = (data.recentDecisions || []).length > 0 ? data.recentDecisions[0] : null;
-
-    // ポートフォリオタブ: 直近アクション（リッチカード）
-    if (recentAction) {
-      var bc = recentAction.decision === 'BUY' ? 'badge-buy' : 'badge-sell';
-      var b1 = el('ai-badge');
-      if (b1) { b1.textContent = recentAction.decision; b1.className = 'badge ' + bc + ' ai-badge'; }
-      var pairEl = el('ai-pair');
-      if (pairEl) pairEl.textContent = recentAction.pair;
-      var rateEl = el('ai-rate');
-      if (rateEl) rateEl.textContent = '@ ' + fmt(recentAction.rate, recentAction.rate < 10 ? 4 : recentAction.rate < 1000 ? 2 : 0);
-      var r1 = el('ai-reasoning');
-      if (r1) r1.textContent = recentAction.reasoning || '';
-      var t1 = el('ai-time');
-      if (t1) t1.textContent = fmtTime(recentAction.created_at);
-    }
-    // 稼働状況ライン
-    var statusEl = el('ai-status');
-    if (statusEl && data.systemStatus) {
-      var runs = data.systemStatus.totalRuns || 0;
-      // 連勝/連敗ストリーク計算（Variable Reward）
-      var recentC = (data.recentCloses || []).slice();
-      var streak = 0;
-      var streakType = '';
-      for (var si = 0; si < recentC.length; si++) {
-        var isWin = (recentC[si].pnl || 0) > 0;
-        if (si === 0) { streakType = isWin ? 'win' : 'lose'; streak = 1; }
-        else if ((isWin && streakType === 'win') || (!isWin && streakType === 'lose')) { streak++; }
-        else { break; }
-      }
-      var streakText = '';
-      if (streak >= 2 && streakType === 'win') streakText = ' · ' + streak + '連勝中';
-      else if (streak >= 3 && streakType === 'lose') streakText = ' · ' + streak + '連敗中';
-      statusEl.textContent = runs.toLocaleString('ja-JP') + '回監視中 · 次のシグナル待ち' + streakText;
-    }
-
-
     renderAiTab(data);
 
-    // 市場状態バー・AI ランキング・プログレスバー（資産タブ）
+    // 市場状態バー・プログレスバー（資産タブ）
     renderMarketStateBar(data);
-    renderAiRanking(data);
     renderPowerProgress(data);
 
     // 統計タブ
@@ -2804,14 +2826,6 @@ export const JS = `
       });
   }
 
-  // ── AI判断理由の展開トグル ──
-  var aiReasoning = el('ai-reasoning');
-  if (aiReasoning) {
-    aiReasoning.addEventListener('click', function() {
-      aiReasoning.classList.toggle('expanded');
-    });
-  }
-
   // ── イベントリスナー ──
   var btn = el('refresh-btn');
   if (btn) {
@@ -2915,6 +2929,200 @@ export const JS = `
         var loading = el('params-loading');
         if (loading) loading.textContent = 'データ取得失敗';
       });
+  }
+
+  // ─── 因果サマリー描画（Task 3-B） ──────────────────────────────────────────
+
+  // ─── ヒートマップ描画（Task 6） ──────────────────────────────────────────
+
+  function heatmapColor(val, key) {
+    if (key === 'pnl_closed') {
+      if (val > 0) return 'rgba(48,209,88,' + Math.min(Math.abs(val) / 500, 0.6) + ')';
+      if (val < 0) return 'rgba(255,69,58,' + Math.min(Math.abs(val) / 500, 0.6) + ')';
+      return 'transparent';
+    }
+    if (key === 'vix_effect') {
+      return val > 0 ? 'rgba(255,159,10,' + Math.min(val, 0.6) + ')' : 'transparent';
+    }
+    if (key === 'param_changed') {
+      return val > 0 ? 'rgba(10,132,255,0.3)' : 'transparent';
+    }
+    if (key === 'news_impact') {
+      return val > 0 ? 'rgba(255,69,58,' + Math.min(val / 100 * 0.6, 0.6) + ')' : 'transparent';
+    }
+    return 'transparent';
+  }
+
+  function heatmapLabel(val, key) {
+    if (key === 'pnl_closed') return val !== 0 ? (val > 0 ? '+' : '') + Math.round(val) : '\\u2014';
+    if (key === 'vix_effect') return val > 0 ? val.toFixed(1) : '\\u2014';
+    if (key === 'param_changed') return val > 0 ? '\\u2713' : '\\u2014';
+    if (key === 'news_impact') return val > 0 ? Math.round(val) : '\\u2014';
+    return '\\u2014';
+  }
+
+  function renderHeatmap(heatmapData) {
+    var hmEl = document.getElementById('causal-heatmap');
+    if (!hmEl) return;
+    if (!heatmapData || heatmapData.length === 0) {
+      hmEl.style.display = 'none';
+      return;
+    }
+    hmEl.style.display = '';
+
+    var cols = ['\\u9298\\u67C4', 'PnL', 'VIX', 'PR', '\\u30CB\\u30E5\\u30FC\\u30B9'];
+    var keys = ['pnl_closed', 'vix_effect', 'param_changed', 'news_impact'];
+
+    var html = '<div class="heatmap-grid" style="grid-template-columns: auto repeat(' + keys.length + ', 1fr)">';
+
+    for (var h = 0; h < cols.length; h++) {
+      html += '<div class="hm-header">' + cols[h] + '</div>';
+    }
+
+    for (var i = 0; i < heatmapData.length; i++) {
+      var row = heatmapData[i];
+      html += '<div class="hm-pair">' + row.pair + '</div>';
+      for (var k = 0; k < keys.length; k++) {
+        var val = (row.factors && row.factors[keys[k]]) || 0;
+        var bg = heatmapColor(val, keys[k]);
+        html += '<div class="hm-cell" style="background:' + bg + '">' + heatmapLabel(val, keys[k]) + '</div>';
+      }
+    }
+    html += '</div>';
+    hmEl.innerHTML = html;
+  }
+
+  function renderCausalSummary(data) {
+    var section = document.getElementById('causal-summary');
+    if (!section) return;
+    var cs = data.causalSummary;
+    if (!cs) { section.style.display = 'none'; return; }
+    section.style.display = '';
+
+    // ナラティブ
+    var narEl = document.getElementById('causal-narrative');
+    if (narEl) narEl.textContent = cs.narrative || '';
+
+    // キードライバー — profitTop
+    var profitEl = document.getElementById('causal-profit-top');
+    if (profitEl) {
+      if (cs.drivers && cs.drivers.profitTop) {
+        var p = cs.drivers.profitTop;
+        profitEl.innerHTML = '<div class="driver-label">\\u5229\\u76CATop</div>' +
+          '<div class="driver-pair">' + p.pair + '</div>' +
+          '<div class="driver-pnl positive">+' + Math.round(p.pnl) + '\\u5186</div>' +
+          '<div class="driver-reason">' + (p.reason || '') + '</div>';
+        profitEl.style.display = '';
+        profitEl.onclick = function() { switchTab('tab-stats', 'perf-' + p.pair.replace(/[\\/\\s]/g, '-')); };
+      } else {
+        profitEl.style.display = 'none';
+      }
+    }
+
+    // キードライバー — lossTop
+    var lossEl = document.getElementById('causal-loss-top');
+    if (lossEl) {
+      if (cs.drivers && cs.drivers.lossTop) {
+        var l = cs.drivers.lossTop;
+        lossEl.innerHTML = '<div class="driver-label">\\u640D\\u5931Top</div>' +
+          '<div class="driver-pair">' + l.pair + '</div>' +
+          '<div class="driver-pnl negative">' + Math.round(l.pnl) + '\\u5186</div>' +
+          '<div class="driver-reason">' + (l.reason || '') + '</div>';
+        lossEl.style.display = '';
+        lossEl.onclick = function() { switchTab('tab-stats', 'perf-' + l.pair.replace(/[\\/\\s]/g, '-')); };
+      } else {
+        lossEl.style.display = 'none';
+      }
+    }
+
+    // 要因バッジ (factors)
+    var tabMap = {
+      'vix': 'tab-strategy',
+      'macro': 'tab-strategy',
+      'param_review': 'tab-strategy',
+      'news': 'tab-ai',
+      'trailing': 'tab-stats',
+      'delisted': 'tab-log'
+    };
+    var scrollMap = {
+      'vix': '',
+      'macro': '',
+      'param_review': 'review-history',
+      'news': 'news-analysis',
+      'trailing': '',
+      'delisted': ''
+    };
+    var factorsEl = document.getElementById('causal-factors');
+    if (factorsEl && cs.drivers && cs.drivers.factors) {
+      factorsEl.innerHTML = cs.drivers.factors.map(function(f) {
+        var cls = f.severity === 'high' ? 'factor-high' : f.severity === 'medium' ? 'factor-medium' : 'factor-low';
+        var targetTab = tabMap[f.type] || 'tab-log';
+        var targetScroll = scrollMap[f.type] || '';
+        return '<span class="factor-badge ' + cls + '" onclick="switchTab(\\'' + targetTab + '\\', \\'' + targetScroll + '\\')">' + f.label + '</span>';
+      }).join('');
+    }
+
+    // ヒートマップ
+    renderHeatmap(cs.heatmap);
+  }
+
+  // ─── 警報バナー描画（Task 4-B） ──────────────────────────────────────────
+
+  function renderAlertBanner(data) {
+    var container = document.getElementById('alert-banner-container');
+    if (!container) return;
+    var alerts = [];
+
+    // DD 警告（赤）
+    if (data.riskStatus && data.riskStatus.killSwitchActive) {
+      alerts.push({ cls: 'red', text: '\\u26A0\\uFE0F DD STOP \\u2014 \\u65E5\\u6B21\\u640D\\u5931\\u4E0A\\u9650\\u8D85\\u904E\\u3002\\u65B0\\u898F\\u30A8\\u30F3\\u30C8\\u30EA\\u30FC\\u505C\\u6B62\\u4E2D' });
+    }
+    // DD 注意（オレンジ）
+    else if (data.riskStatus && data.riskStatus.maxDailyLoss > 0 &&
+             data.riskStatus.todayLoss / data.riskStatus.maxDailyLoss > 0.8) {
+      var pct = Math.round(data.riskStatus.todayLoss / data.riskStatus.maxDailyLoss * 100);
+      alerts.push({ cls: 'orange', text: '\\u26A1 DD\\u6CE8\\u610F \\u2014 \\u65E5\\u6B21\\u640D\\u5931\\u304C\\u4E0A\\u9650\\u306E' + pct + '%\\u306B\\u5230\\u9054' });
+    }
+
+    // 緊急ニュース（赤）
+    if (data.newsAnalysis) {
+      var now = Date.now();
+      var tenMin = 10 * 60 * 1000;
+      data.newsAnalysis.forEach(function(n) {
+        if (n.attention && n.analyzed_at) {
+          var diff = now - new Date(n.analyzed_at).getTime();
+          if (diff < tenMin) {
+            alerts.push({ cls: 'red', text: '\\uD83D\\uDD34 \\u7DCA\\u6025\\u30CB\\u30E5\\u30FC\\u30B9: ' + (n.title_ja || n.title || '\\u901F\\u5831') });
+          }
+        }
+      });
+    }
+
+    // システムエラー（オレンジ）
+    if (data.systemLogs) {
+      var recentErrors = data.systemLogs.slice(0, 5).filter(function(l) { return l.level === 'ERROR'; });
+      if (recentErrors.length > 0) {
+        alerts.push({ cls: 'orange', text: '\\uD83D\\uDD27 \\u30B7\\u30B9\\u30C6\\u30E0\\u30A8\\u30E9\\u30FC\\u691C\\u51FA: ' + recentErrors[0].message });
+      }
+    }
+
+    // 孤立ポジション（黄）
+    if (data.causalSummary && data.causalSummary.drivers && data.causalSummary.drivers.factors) {
+      var delisted = data.causalSummary.drivers.factors.filter(function(f) { return f.type === 'delisted'; });
+      if (delisted.length > 0) {
+        alerts.push({ cls: 'yellow', text: '\\u26A0 \\u5B64\\u7ACB\\u30DD\\u30B8\\u30B7\\u30E7\\u30F3: ' + delisted[0].label });
+      }
+    }
+
+    // 表示
+    if (alerts.length === 0) {
+      container.style.display = 'none';
+      return;
+    }
+    container.style.display = '';
+    container.innerHTML = alerts.map(function(a) {
+      return '<div class="alert-banner alert-' + a.cls + '">' + a.text + '</div>';
+    }).join('');
   }
 
   // ─── 緊急ニュースバナー（4-B） ─────────────────────────────────────────────
