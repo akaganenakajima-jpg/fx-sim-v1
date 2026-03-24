@@ -17,7 +17,7 @@ import {
 } from './db';
 import { slPatternAnalysis } from './stats';
 import { getDashboardHtml } from './dashboard';
-import { getApiStatus } from './api';
+import { getApiStatus, getApiParams } from './api';
 import { CSS } from './style.css';
 import { JS } from './app.js';
 import { INSTRUMENTS, type InstrumentConfig } from './instruments';
@@ -225,6 +225,17 @@ export default {
           return new Response(JSON.stringify({ error: String(e) }), {
             status: 500,
             headers: { 'Content-Type': 'application/json' },
+          });
+        }
+      case '/api/params':
+        try {
+          const paramsData = await getApiParams(env.DB);
+          return new Response(JSON.stringify(paramsData), {
+            headers: { 'Content-Type': 'application/json; charset=utf-8' },
+          });
+        } catch (e) {
+          return new Response(JSON.stringify({ error: String(e) }), {
+            status: 500, headers: { 'Content-Type': 'application/json' },
           });
         }
       default:
