@@ -58,6 +58,24 @@ export async function checkAndCloseAllPositions(
     }
     const multiplier = instr.pnlMultiplier;
 
+    // ── Ph.8: 最大保有時間チェック ──
+    const paramRow = await db.prepare('SELECT max_hold_minutes FROM instrument_params WHERE pair=?').bind(pos.pair).first<{max_hold_minutes: number}>();
+    const maxHold = paramRow?.max_hold_minutes ?? 480;
+    if (maxHold > 0 && maxHold < 9999) {
+      const entryTime = new Date(pos.entry_at).getTime();
+      const holdMinutes = (Date.now() - entryTime) / 60000;
+      if (holdMinutes > maxHold) {
+        const pnl = calcPnl(pos.direction, pos.entry_rate, currentRate, multiplier);
+        const lr = logReturn(pos.entry_rate, currentRate);
+        console.log(`[position] TIME_STOP: ${pos.pair} id=${pos.id} held=${Math.round(holdMinutes)}min > ${maxHold}min pnl=${pnl.toFixed(2)}`);
+        await closePosition(db, pos.id, currentRate, 'TIME_STOP', pnl, lr);
+        await insertSystemLog(db, 'INFO', 'POSITION',
+          `時間切れ決済: ${pos.pair} ${pos.direction} ${Math.round(holdMinutes)}分保有 PnL ${pnl >= 0 ? '+' : ''}${pnl.toFixed(2)}`,
+          JSON.stringify({ id: pos.id, holdMinutes: Math.round(holdMinutes), maxHold, pnl }));
+        continue;
+      }
+    }
+
     // トレイリングストップ: 含み益が activation 幅を超えたらSLを引き上げ
     if (instr && pos.sl_rate != null) {
       const activation = instr.trailingActivation;
@@ -100,7 +118,7 @@ export async function checkAndCloseAllPositions(
       }
     }
 
-    // テスタ施策10: 分割決済 — TP1(RR1:1地点)で50%決済 + 建値ストップ
+    // テスタ施策10: 分割決済 — TP1(RR1:1地点)で決済 + 建値ストップ
     if (pos.sl_rate != null && !pos.tp1_hit && pos.lot > 0) {
       const slDist = Math.abs(pos.entry_rate - pos.sl_rate);
       const isBuy = pos.direction === 'BUY';
@@ -108,16 +126,21 @@ export async function checkAndCloseAllPositions(
       const tp1Hit = isBuy ? currentRate >= tp1Rate : currentRate <= tp1Rate;
 
       if (tp1Hit && slDist > 0) {
-        const halfLot = pos.lot * 0.5;
-        const partialPnl = calcPnl(pos.direction, pos.entry_rate, currentRate, multiplier) * 0.5;
-        console.log(`[position] TP1 hit: ${pos.pair} id=${pos.id} partial_close=50% pnl=${partialPnl.toFixed(2)}`);
+        // Ph.8: tp1_ratio パラメーター化（デフォルト0.5）
+        const tp1Params = await db.prepare(
+          'SELECT tp1_ratio FROM instrument_params WHERE pair=?'
+        ).bind(pos.pair).first<{tp1_ratio: number}>();
+        const tp1Ratio = tp1Params?.tp1_ratio ?? 0.5;
+        const halfLot = pos.lot * tp1Ratio;
+        const partialPnl = calcPnl(pos.direction, pos.entry_rate, currentRate, multiplier) * tp1Ratio;
+        console.log(`[position] TP1 hit: ${pos.pair} id=${pos.id} partial_close=${(tp1Ratio * 100).toFixed(0)}% pnl=${partialPnl.toFixed(2)}`);
 
-        // 50%部分決済 + SLを建値に移動 + tp1_hit フラグ
+        // tp1_ratio部分決済 + SLを建値に移動 + tp1_hit フラグ
         await db.prepare(
-          `UPDATE positions SET lot = lot * 0.5, partial_closed_lot = COALESCE(partial_closed_lot, 0) + ?,
+          `UPDATE positions SET lot = lot * ?, partial_closed_lot = COALESCE(partial_closed_lot, 0) + ?,
            sl_rate = entry_rate, tp1_hit = 1 WHERE id = ?`
-        ).bind(halfLot, pos.id).run();
-        pos.lot = pos.lot * 0.5;
+        ).bind(1 - tp1Ratio, halfLot, pos.id).run();
+        pos.lot = pos.lot * (1 - tp1Ratio);
         pos.sl_rate = pos.entry_rate;
         pos.tp1_hit = 1;
 

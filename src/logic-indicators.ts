@@ -60,6 +60,17 @@ export interface InstrumentParamsRow {
   w_pa:            number;  // プライスアクション（直近高安パターン）の重み
   entry_score_min: number;  // エントリー最低スコア
   min_rr_ratio:    number;  // スケール適用後の最小RR比
+  // Ph.8: 金融理論ベース10パラメーター
+  max_hold_minutes:        number;  // 最大保有時間（分）。超過で自動決済
+  cooldown_after_sl:       number;  // SL後の再エントリー待機（分）
+  consecutive_loss_shrink: number;  // N連敗でロット50%縮小
+  daily_max_entries:       number;  // 1日の最大エントリー回数（銘柄別）
+  trailing_activation_atr: number;  // トレイリング開始（ATR倍）
+  trailing_distance_atr:   number;  // トレイリング追従幅（ATR倍）
+  tp1_ratio:               number;  // TP1分割決済比率
+  session_start_utc:       number;  // 取引開始時刻（UTC時）
+  session_end_utc:         number;  // 取引終了時刻（UTC時）
+  review_min_trades:       number;  // Param Review最低サンプル数
 }
 
 // ─── RSI計算 ─────────────────────────────────────────────────────────────────

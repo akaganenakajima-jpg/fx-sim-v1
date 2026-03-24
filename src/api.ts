@@ -937,6 +937,17 @@ export interface InstrumentParamRow {
   w_pa:                number;  // プライスアクション重み
   entry_score_min:     number;  // エントリー最低スコア（0〜1）
   min_rr_ratio:        number;  // 最小リスクリワード比
+  // Ph.8: 金融理論ベース10パラメーター（v216）
+  max_hold_minutes:        number;  // 最大保有時間（分）
+  cooldown_after_sl:       number;  // SL後クールダウン（分）
+  consecutive_loss_shrink: number;  // N連敗でロット50%縮小
+  daily_max_entries:       number;  // 1日最大エントリー回数
+  trailing_activation_atr: number;  // トレイリング開始（ATR倍）
+  trailing_distance_atr:   number;  // トレイリング追従幅（ATR倍）
+  tp1_ratio:               number;  // TP1分割決済比率
+  session_start_utc:       number;  // 取引開始時刻（UTC時）
+  session_end_utc:         number;  // 取引終了時刻（UTC時）
+  review_min_trades:       number;  // Param Review最低サンプル数
   review_trade_count: number;
   trades_since_review: number;
   param_version:      number;

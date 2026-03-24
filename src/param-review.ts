@@ -165,6 +165,18 @@ function buildReviewPrompt(
     `  entry_score_min: ${params.entry_score_min}（エントリー最低スコア）`,
     `  min_rr_ratio: ${params.min_rr_ratio}（最小RR比）`,
     ``,
+    `【現在パラメーター（ポジション管理 / セッション / レビュー設定）】`,
+    `  max_hold_minutes: ${params.max_hold_minutes}（最大保有時間、分）`,
+    `  cooldown_after_sl: ${params.cooldown_after_sl}（SL後クールダウン、分）`,
+    `  consecutive_loss_shrink: ${params.consecutive_loss_shrink}（N連敗でロット50%縮小）`,
+    `  daily_max_entries: ${params.daily_max_entries}（1日最大エントリー回数）`,
+    `  trailing_activation_atr: ${params.trailing_activation_atr}（トレイリング開始ATR倍）`,
+    `  trailing_distance_atr: ${params.trailing_distance_atr}（トレイリング追従ATR倍）`,
+    `  tp1_ratio: ${params.tp1_ratio}（TP1分割決済比率、0.3〜0.7）`,
+    `  session_start_utc: ${params.session_start_utc}（取引開始UTC時）`,
+    `  session_end_utc: ${params.session_end_utc}（取引終了UTC時）`,
+    `  review_min_trades: ${params.review_min_trades}（レビュー最低サンプル数）`,
+    ``,
     `【直近${stats.totalTrades}件の実績】`,
     `  勝率: ${(stats.winRate * 100).toFixed(1)}%`,
     `  実績RR（平均利益÷平均損失）: ${stats.actualRr.toFixed(2)}`,
@@ -203,9 +215,19 @@ function buildReviewPrompt(
     `  - w_rsi, w_er, w_mtf, w_sr, w_pa: 各0.0〜1.0の範囲`,
     `  - entry_score_min: 0.0〜1.0の範囲`,
     `  - min_rr_ratio: 1.0〜5.0の範囲`,
+    `  - max_hold_minutes: 30〜1440の範囲`,
+    `  - cooldown_after_sl: 0〜60の範囲`,
+    `  - consecutive_loss_shrink: 0〜10の範囲（0=無効）`,
+    `  - daily_max_entries: 1〜20の範囲`,
+    `  - trailing_activation_atr: 0.5〜5.0の範囲`,
+    `  - trailing_distance_atr: 0.3〜3.0の範囲`,
+    `  - tp1_ratio: 0.2〜0.8の範囲`,
+    `  - session_start_utc: 0〜23の範囲`,
+    `  - session_end_utc: 1〜24の範囲`,
+    `  - review_min_trades: 20〜200の範囲`,
     ``,
     `以下のJSONのみで回答してください（説明文不要）:`,
-    `{"pair":"${pair}","rsi_oversold":number,"rsi_overbought":number,"adx_min":number,"atr_tp_multiplier":number,"atr_sl_multiplier":number,"vix_tp_scale":number,"vix_sl_scale":number,"strategy_primary":"mean_reversion","min_signal_strength":number,"macro_sl_scale":number,"w_rsi":number,"w_er":number,"w_mtf":number,"w_sr":number,"w_pa":number,"entry_score_min":number,"min_rr_ratio":number,"reason":"調整理由200文字以内","expected_rr":number}`,
+    `{"pair":"${pair}","rsi_oversold":number,"rsi_overbought":number,"adx_min":number,"atr_tp_multiplier":number,"atr_sl_multiplier":number,"vix_tp_scale":number,"vix_sl_scale":number,"strategy_primary":"mean_reversion","min_signal_strength":number,"macro_sl_scale":number,"w_rsi":number,"w_er":number,"w_mtf":number,"w_sr":number,"w_pa":number,"entry_score_min":number,"min_rr_ratio":number,"max_hold_minutes":number,"cooldown_after_sl":number,"consecutive_loss_shrink":number,"daily_max_entries":number,"trailing_activation_atr":number,"trailing_distance_atr":number,"tp1_ratio":number,"session_start_utc":number,"session_end_utc":number,"review_min_trades":number,"reason":"調整理由200文字以内","expected_rr":number}`,
   ].join('\n');
 }
 
@@ -232,6 +254,17 @@ interface ReviewResult {
   w_pa:            number;
   entry_score_min: number;
   min_rr_ratio:    number;
+  // Ph.8: 金融理論ベース10パラメーター
+  max_hold_minutes:        number;
+  cooldown_after_sl:       number;
+  consecutive_loss_shrink: number;
+  daily_max_entries:       number;
+  trailing_activation_atr: number;
+  trailing_distance_atr:   number;
+  tp1_ratio:               number;
+  session_start_utc:       number;
+  session_end_utc:         number;
+  review_min_trades:       number;
   reason: string;
   expected_rr: number;
 }
@@ -275,6 +308,17 @@ function validateAndClamp(raw: ReviewResult, current: InstrumentParamsRow): Revi
     w_pa:            parseFloat(clamp(raw.w_pa    ?? current.w_pa,    0, 1).toFixed(2)),
     entry_score_min: parseFloat(clamp(raw.entry_score_min ?? current.entry_score_min, 0, 1).toFixed(2)),
     min_rr_ratio:    parseFloat(clamp(raw.min_rr_ratio    ?? current.min_rr_ratio,    1.0, 5.0).toFixed(2)),
+    // Ph.8: 金融理論ベース10パラメーター
+    max_hold_minutes:        clamp(raw.max_hold_minutes        ?? current.max_hold_minutes,        30, 1440),
+    cooldown_after_sl:       clamp(raw.cooldown_after_sl       ?? current.cooldown_after_sl,        0,   60),
+    consecutive_loss_shrink: clamp(raw.consecutive_loss_shrink ?? current.consecutive_loss_shrink,   0,   10),
+    daily_max_entries:       clamp(raw.daily_max_entries       ?? current.daily_max_entries,          1,   20),
+    trailing_activation_atr: parseFloat(clamp(raw.trailing_activation_atr ?? current.trailing_activation_atr, 0.5, 5.0).toFixed(2)),
+    trailing_distance_atr:   parseFloat(clamp(raw.trailing_distance_atr   ?? current.trailing_distance_atr,   0.3, 3.0).toFixed(2)),
+    tp1_ratio:               parseFloat(clamp(raw.tp1_ratio               ?? current.tp1_ratio,               0.2, 0.8).toFixed(2)),
+    session_start_utc:       clamp(raw.session_start_utc       ?? current.session_start_utc,         0,   23),
+    session_end_utc:         clamp(raw.session_end_utc         ?? current.session_end_utc,           1,   24),
+    review_min_trades:       clamp(raw.review_min_trades       ?? current.review_min_trades,         20, 200),
     reason:              (raw.reason ?? '').slice(0, 200),
     expected_rr:         raw.expected_rr ?? (finalTp / sl),
   };
@@ -368,9 +412,20 @@ async function applyReviewResult(
     w_pa:            current.w_pa,
     entry_score_min: current.entry_score_min,
     min_rr_ratio:    current.min_rr_ratio,
+    // Ph.8: 金融理論ベース10パラメーター
+    max_hold_minutes:        current.max_hold_minutes,
+    cooldown_after_sl:       current.cooldown_after_sl,
+    consecutive_loss_shrink: current.consecutive_loss_shrink,
+    daily_max_entries:       current.daily_max_entries,
+    trailing_activation_atr: current.trailing_activation_atr,
+    trailing_distance_atr:   current.trailing_distance_atr,
+    tp1_ratio:               current.tp1_ratio,
+    session_start_utc:       current.session_start_utc,
+    session_end_utc:         current.session_end_utc,
+    review_min_trades:       current.review_min_trades,
   });
 
-  // instrument_params 更新（拡張5カラム + Ph.7 スコアリング7カラムを含む）
+  // instrument_params 更新（拡張5カラム + Ph.7 スコアリング7カラム + Ph.8 10カラムを含む）
   await db
     .prepare(
       `UPDATE instrument_params
@@ -391,6 +446,16 @@ async function applyReviewResult(
            w_pa                  = ?,
            entry_score_min       = ?,
            min_rr_ratio          = ?,
+           max_hold_minutes      = ?,
+           cooldown_after_sl     = ?,
+           consecutive_loss_shrink = ?,
+           daily_max_entries     = ?,
+           trailing_activation_atr = ?,
+           trailing_distance_atr = ?,
+           tp1_ratio             = ?,
+           session_start_utc     = ?,
+           session_end_utc       = ?,
+           review_min_trades     = ?,
            trades_since_review   = 0,
            param_version         = param_version + 1,
            reviewed_by           = ?,
@@ -417,6 +482,16 @@ async function applyReviewResult(
       result.w_pa,
       result.entry_score_min,
       result.min_rr_ratio,
+      result.max_hold_minutes,
+      result.cooldown_after_sl,
+      result.consecutive_loss_shrink,
+      result.daily_max_entries,
+      result.trailing_activation_atr,
+      result.trailing_distance_atr,
+      result.tp1_ratio,
+      result.session_start_utc,
+      result.session_end_utc,
+      result.review_min_trades,
       reviewedBy,
       now,
       prevJson,
@@ -445,6 +520,17 @@ async function applyReviewResult(
     w_pa:            result.w_pa,
     entry_score_min: result.entry_score_min,
     min_rr_ratio:    result.min_rr_ratio,
+    // Ph.8: 金融理論ベース10パラメーター
+    max_hold_minutes:        result.max_hold_minutes,
+    cooldown_after_sl:       result.cooldown_after_sl,
+    consecutive_loss_shrink: result.consecutive_loss_shrink,
+    daily_max_entries:       result.daily_max_entries,
+    trailing_activation_atr: result.trailing_activation_atr,
+    trailing_distance_atr:   result.trailing_distance_atr,
+    tp1_ratio:               result.tp1_ratio,
+    session_start_utc:       result.session_start_utc,
+    session_end_utc:         result.session_end_utc,
+    review_min_trades:       result.review_min_trades,
   });
 
   // param_review_log に記録
@@ -555,6 +641,14 @@ export async function runParamReview(
         w_pa:                `${paramsRow.w_pa}→${validated.w_pa}`,
         entry_score_min:     `${paramsRow.entry_score_min}→${validated.entry_score_min}`,
         min_rr_ratio:        `${paramsRow.min_rr_ratio}→${validated.min_rr_ratio}`,
+        max_hold_minutes:    `${paramsRow.max_hold_minutes}→${validated.max_hold_minutes}`,
+        cooldown_after_sl:   `${paramsRow.cooldown_after_sl}→${validated.cooldown_after_sl}`,
+        consecutive_loss_shrink: `${paramsRow.consecutive_loss_shrink}→${validated.consecutive_loss_shrink}`,
+        daily_max_entries:   `${paramsRow.daily_max_entries}→${validated.daily_max_entries}`,
+        tp1_ratio:           `${paramsRow.tp1_ratio}→${validated.tp1_ratio}`,
+        session_start_utc:   `${paramsRow.session_start_utc}→${validated.session_start_utc}`,
+        session_end_utc:     `${paramsRow.session_end_utc}→${validated.session_end_utc}`,
+        review_min_trades:   `${paramsRow.review_min_trades}→${validated.review_min_trades}`,
       },
       reason: validated.reason,
     }));

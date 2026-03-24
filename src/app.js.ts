@@ -3418,6 +3418,46 @@ export const JS = `
                     '<div class="cell-label">シグナル強度</div>' +
                     '<div class="cell-value">' + fmt(p.min_signal_strength, 2) + '</div>' +
                   '</div>' +
+                  /* ── グループ5: ポジション管理（Ph.8） ── */
+                  '<div class="param-group-divider">ポジション管理</div>' +
+                  '<div class="param-grid-cell">' +
+                    '<div class="cell-label">最大保有</div>' +
+                    '<div class="cell-value">' + fmt(p.max_hold_minutes, 0) + '分</div>' +
+                  '</div>' +
+                  '<div class="param-grid-cell">' +
+                    '<div class="cell-label">SL後CD</div>' +
+                    '<div class="cell-value">' + fmt(p.cooldown_after_sl, 0) + '分</div>' +
+                  '</div>' +
+                  '<div class="param-grid-cell">' +
+                    '<div class="cell-label">連敗縮退</div>' +
+                    '<div class="cell-value">' + fmt(p.consecutive_loss_shrink, 0) + '連敗</div>' +
+                  '</div>' +
+                  '<div class="param-grid-cell">' +
+                    '<div class="cell-label">日次上限</div>' +
+                    '<div class="cell-value">' + fmt(p.daily_max_entries, 0) + '回</div>' +
+                  '</div>' +
+                  '<div class="param-grid-cell">' +
+                    '<div class="cell-label">Trail開始</div>' +
+                    '<div class="cell-value">' + fmt(p.trailing_activation_atr, 1) + '×ATR</div>' +
+                  '</div>' +
+                  '<div class="param-grid-cell">' +
+                    '<div class="cell-label">Trail幅</div>' +
+                    '<div class="cell-value">' + fmt(p.trailing_distance_atr, 1) + '×ATR</div>' +
+                  '</div>' +
+                  '<div class="param-grid-cell">' +
+                    '<div class="cell-label">TP1比率</div>' +
+                    '<div class="cell-value">' + fmt(p.tp1_ratio, 2) + '</div>' +
+                  '</div>' +
+                  /* ── グループ6: レビュー設定（Ph.8） ── */
+                  '<div class="param-group-divider">レビュー設定</div>' +
+                  '<div class="param-grid-cell">' +
+                    '<div class="cell-label">最低サンプル</div>' +
+                    '<div class="cell-value">' + fmt(p.review_min_trades, 0) + '件</div>' +
+                  '</div>' +
+                  '<div class="param-grid-cell">' +
+                    '<div class="cell-label">セッション</div>' +
+                    '<div class="cell-value" style="font-size:11px">' + fmt(p.session_start_utc, 0) + '〜' + fmt(p.session_end_utc, 0) + 'h UTC</div>' +
+                  '</div>' +
                 '</div>' +
                 '<div class="param-last-review">最終レビュー: ' + escHtml(lastAt) + '</div>' +
               '</div>' +

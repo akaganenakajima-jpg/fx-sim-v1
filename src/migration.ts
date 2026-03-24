@@ -194,6 +194,12 @@ const MIGRATIONS: Array<{ version: number; description: string; sql: string }> =
     description: '重みつきエントリースコアリング パラメーター追加（w_rsi/w_er/w_mtf/w_sr/w_pa/entry_score_min/min_rr_ratio）',
     sql: `CREATE TABLE IF NOT EXISTS _dummy_v215 (id INTEGER PRIMARY KEY)`,
   },
+  // Ph.8: 金融理論ベース10パラメーター追加
+  {
+    version: 216,
+    description: 'instrument_params に金融理論ベース10パラメーター追加（保有時間/クールダウン/連敗縮退/日次上限/トレイリングATR/TP1比率/セッション/レビュー最低N）',
+    sql: `CREATE TABLE IF NOT EXISTS _dummy_v216 (id INTEGER PRIMARY KEY)`,
+  },
 ];
 
 export async function runMigrations(db: D1Database): Promise<void> {
@@ -373,6 +379,29 @@ export async function runMigrations(db: D1Database): Promise<void> {
         'ALTER TABLE instrument_params ADD COLUMN w_pa REAL NOT NULL DEFAULT 0.10',
         'ALTER TABLE instrument_params ADD COLUMN entry_score_min REAL NOT NULL DEFAULT 0.30',
         'ALTER TABLE instrument_params ADD COLUMN min_rr_ratio REAL NOT NULL DEFAULT 1.5',
+      ]) {
+        try { await db.prepare(col).run(); } catch {}
+      }
+      await db.prepare(
+        'INSERT OR IGNORE INTO schema_version (version, description, applied_at) VALUES (?, ?, ?)'
+      ).bind(m.version, m.description, new Date().toISOString()).run();
+      console.log(`[migration] Applied v${m.version}: ${m.description}`);
+      continue;
+    }
+
+    // version 216: Ph.8 金融理論ベース10パラメーター追加
+    if (m.version === 216) {
+      for (const col of [
+        'ALTER TABLE instrument_params ADD COLUMN max_hold_minutes INTEGER NOT NULL DEFAULT 480',
+        'ALTER TABLE instrument_params ADD COLUMN cooldown_after_sl INTEGER NOT NULL DEFAULT 5',
+        'ALTER TABLE instrument_params ADD COLUMN consecutive_loss_shrink INTEGER NOT NULL DEFAULT 3',
+        'ALTER TABLE instrument_params ADD COLUMN daily_max_entries INTEGER NOT NULL DEFAULT 5',
+        'ALTER TABLE instrument_params ADD COLUMN trailing_activation_atr REAL NOT NULL DEFAULT 2.0',
+        'ALTER TABLE instrument_params ADD COLUMN trailing_distance_atr REAL NOT NULL DEFAULT 1.0',
+        'ALTER TABLE instrument_params ADD COLUMN tp1_ratio REAL NOT NULL DEFAULT 0.5',
+        'ALTER TABLE instrument_params ADD COLUMN session_start_utc INTEGER NOT NULL DEFAULT 0',
+        'ALTER TABLE instrument_params ADD COLUMN session_end_utc INTEGER NOT NULL DEFAULT 24',
+        'ALTER TABLE instrument_params ADD COLUMN review_min_trades INTEGER NOT NULL DEFAULT 50',
       ]) {
         try { await db.prepare(col).run(); } catch {}
       }

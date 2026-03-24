@@ -173,6 +173,47 @@ export async function runLogicDecisions(
       continue;
     }
 
+    // ── Ph.8: セッション制限 ──
+    const currentHour = now.getUTCHours();
+    if (params.session_start_utc !== 0 || params.session_end_utc !== 24) {
+      const inSession = params.session_start_utc < params.session_end_utc
+        ? (currentHour >= params.session_start_utc && currentHour < params.session_end_utc)
+        : (currentHour >= params.session_start_utc || currentHour < params.session_end_utc);
+      if (!inSession) {
+        summary.skipped++;
+        summary.signals.push({ pair, signal: 'SKIP', reason: `session外(${currentHour}h UTC)` });
+        continue;
+      }
+    }
+
+    // ── Ph.8: SL後クールダウン ──
+    if (params.cooldown_after_sl > 0) {
+      const lastSl = await db.prepare(
+        `SELECT closed_at FROM positions WHERE pair=? AND close_reason='SL' AND status='CLOSED' ORDER BY id DESC LIMIT 1`
+      ).bind(pair).first<{closed_at: string}>();
+      if (lastSl) {
+        const slTime = new Date(lastSl.closed_at).getTime();
+        const cooldownMs = params.cooldown_after_sl * 60 * 1000;
+        if (now.getTime() - slTime < cooldownMs) {
+          summary.skipped++;
+          summary.signals.push({ pair, signal: 'SKIP', reason: `SLクールダウン中(${params.cooldown_after_sl}分)` });
+          continue;
+        }
+      }
+    }
+
+    // ── Ph.8: 日次エントリー回数制限 ──
+    if (params.daily_max_entries > 0) {
+      const todayEntries = await db.prepare(
+        `SELECT COUNT(*) as cnt FROM positions WHERE pair=? AND entry_at > datetime('now','start of day')`
+      ).bind(pair).first<{cnt: number}>();
+      if (todayEntries && todayEntries.cnt >= params.daily_max_entries) {
+        summary.skipped++;
+        summary.signals.push({ pair, signal: 'SKIP', reason: `日次上限(${todayEntries.cnt}/${params.daily_max_entries})` });
+        continue;
+      }
+    }
+
     // 価格履歴不足チェック（RSI計算には period+1 件必要）
     const closes = historyMap.get(pair) ?? [];
     const minRequired = params.rsi_period + 1;
@@ -298,10 +339,22 @@ export async function runLogicDecisions(
       continue;
     }
 
-    // ロット倍率（DD段階 × ティア）
+    // ロット倍率（DD段階 × ティア × 連敗縮退）
     const ddLotMult  = ddResult.lotMultiplier;
     const tierMult   = instrument.tierLotMultiplier;
-    const requestedLot = 1 * ddLotMult * tierMult;
+
+    // ── Ph.8: 連敗ロット縮退 ──
+    let consecutiveLossMult = 1.0;
+    if (params.consecutive_loss_shrink > 0) {
+      const recentClosedRows = await db.prepare(
+        `SELECT pnl FROM positions WHERE pair=? AND status='CLOSED' ORDER BY id DESC LIMIT ?`
+      ).bind(pair, params.consecutive_loss_shrink).all<{pnl: number}>();
+      const recentClosed = recentClosedRows.results ?? [];
+      if (recentClosed.length >= params.consecutive_loss_shrink && recentClosed.every(r => r.pnl < 0)) {
+        consecutiveLossMult = 0.5;
+      }
+    }
+    const requestedLot = 1 * ddLotMult * tierMult * consecutiveLossMult;
 
     if (requestedLot <= 0) {
       summary.skipped++;
