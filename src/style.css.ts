@@ -33,7 +33,8 @@ body{background:var(--bg);color:var(--text);font-size:15px;line-height:1.47;
   transform:translateZ(0);-webkit-transform:translateZ(0);
 }
 /* ═══ v7: Sticky glass header ═══ */
-.sbar{display:flex;justify-content:space-between;align-items:center;padding:12px 16px 8px;min-height:44px;
+.sbar{display:flex;justify-content:space-between;align-items:center;
+  padding:calc(env(safe-area-inset-top,0px) + 12px) 16px 8px;min-height:44px;
   position:sticky;top:0;z-index:90;
   background:rgba(var(--glass-bg-rgb),var(--glass-opacity));
   backdrop-filter:blur(var(--glass-blur)) saturate(var(--glass-saturate));
@@ -619,10 +620,25 @@ body.drawer-open .tabs, body.sheet-open .tabs { transform: translateZ(0) transla
 
 /* ═══ PWA standalone mode ═══ */
 @media (display-mode: standalone) {
-  body { padding-top: env(safe-area-inset-top, 0px); }
-  .sbar { padding-top: calc(env(safe-area-inset-top, 0px) + 8px); }
-  html { overflow: hidden; height: 100%; }
-  body { overflow-y: auto; height: 100%; -webkit-overflow-scrolling: touch; }
+  /* ヘッダー: ノッチ/Dynamic Island の裏に隠れないよう追加パディング */
+  .sbar {
+    padding-top: calc(env(safe-area-inset-top, 0px) + 16px);
+    /* sticky top をノッチの下に配置 */
+    top: 0;
+  }
+  /* body はヘッダーのsafe-area分をpadding-topに持たない（sbarが担う） */
+  body { padding-top: 0; }
+  /* iOS standalone: overscroll-behavior で Safari の戻る/進むジェスチャーを抑制 */
+  html { overflow: hidden; height: 100dvh; overscroll-behavior: none; }
+  body { overflow-y: auto; height: 100dvh; -webkit-overflow-scrolling: touch; overscroll-behavior-y: contain; }
+  /* フローティングタブバー: standalone では少し上げる（ホームインジケーター分） */
+  .tabs {
+    bottom: calc(8px + env(safe-area-inset-bottom, 0px));
+  }
+  /* ボトムシートもsafe-area対応 */
+  .sheet { padding-bottom: calc(16px + env(safe-area-inset-bottom, 0px)); }
+  /* Pull-to-Refresh インジケーター: ノッチの下から表示 */
+  #pull-indicator { top: env(safe-area-inset-top, 0px); }
 }
 
 /* ═══ Pull-to-Refresh spinner ═══ */
