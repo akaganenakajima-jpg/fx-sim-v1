@@ -142,12 +142,19 @@ function buildReviewPrompt(
     `以下の実績データを分析し、RR2.0以上を達成するためのパラメーター調整をJSONで返してください。`,
     ``,
     `【対象銘柄】${pair}`,
-    `【現在パラメーター】`,
+    `【現在パラメーター（基本）】`,
     `  RSI売られすぎ閾値: ${params.rsi_oversold}（RSI<この値でBUYシグナル）`,
     `  RSI買われすぎ閾値: ${params.rsi_overbought}（RSI>この値でSELLシグナル）`,
     `  ADX最低値: ${params.adx_min}（ER閾値=${erThreshold}に相当）`,
     `  ATR TP倍率: ${params.atr_tp_multiplier} / SL倍率: ${params.atr_sl_multiplier}`,
     `  現在パラメーターRR: ${currentRr}`,
+    ``,
+    `【現在パラメーター（拡張: VIX/マクロ/戦略）】`,
+    `  vix_tp_scale: ${params.vix_tp_scale}（VIX>vix_max×0.7時のTP幅倍率、1.0=通常、<1.0=縮小）`,
+    `  vix_sl_scale: ${params.vix_sl_scale}（VIX>vix_max×0.7時のSL幅倍率）`,
+    `  strategy_primary: ${params.strategy_primary}（'mean_reversion'|'trend_follow'）`,
+    `  min_signal_strength: ${params.min_signal_strength}（エントリー最低シグナル強度0〜1、RSI偏差+ER平均）`,
+    `  macro_sl_scale: ${params.macro_sl_scale}（VIX>vix_max×0.5時のSL幅追加倍率）`,
     ``,
     `【直近${stats.totalTrades}件の実績】`,
     `  勝率: ${(stats.winRate * 100).toFixed(1)}%`,
@@ -162,6 +169,10 @@ function buildReviewPrompt(
     `  - 実績RR < 2.0 → TPを広げる（atr_tp_multiplier増加）またはSLを狭める（atr_sl_multiplier減少）`,
     `  - 勝率 < 35% → RSI閾値を厳格化（oversoldを下げる / overboughtを上げる）`,
     `  - 連敗多発 → ADX閾値を上げてトレンド弱い場面をフィルター`,
+    `  - VIX警戒時に損失多発 → vix_tp_scale/vix_sl_scaleを縮小（例: 0.8）`,
+    `  - マクロストレス時に大損失 → macro_sl_scaleを縮小（例: 0.85）でSLを狭める`,
+    `  - シグナル精度が低い → min_signal_strengthを引き上げる（例: 0.15〜0.25）`,
+    `  - trend_followに変えたい → strategy_primaryを'trend_follow'に変更`,
     ``,
     `【制約（必ず守ること）】`,
     `  - 各パラメーターの変更幅: 現在値の±20%以内`,
@@ -171,9 +182,14 @@ function buildReviewPrompt(
     `  - rsi_overbought: 55〜75の範囲`,
     `  - atr_tp_multiplier: 2.0〜6.0の範囲`,
     `  - atr_sl_multiplier: 0.8〜3.0の範囲`,
+    `  - vix_tp_scale: 0.5〜1.5の範囲`,
+    `  - vix_sl_scale: 0.5〜1.5の範囲`,
+    `  - macro_sl_scale: 0.5〜1.5の範囲`,
+    `  - min_signal_strength: 0.0〜0.5の範囲`,
+    `  - strategy_primary: 'mean_reversion' または 'trend_follow' のみ`,
     ``,
     `以下のJSONのみで回答してください（説明文不要）:`,
-    `{"pair":"${pair}","rsi_oversold":number,"rsi_overbought":number,"adx_min":number,"atr_tp_multiplier":number,"atr_sl_multiplier":number,"reason":"調整理由200文字以内","expected_rr":number}`,
+    `{"pair":"${pair}","rsi_oversold":number,"rsi_overbought":number,"adx_min":number,"atr_tp_multiplier":number,"atr_sl_multiplier":number,"vix_tp_scale":number,"vix_sl_scale":number,"strategy_primary":"mean_reversion","min_signal_strength":number,"macro_sl_scale":number,"reason":"調整理由200文字以内","expected_rr":number}`,
   ].join('\n');
 }
 
@@ -186,6 +202,12 @@ interface ReviewResult {
   adx_min: number;
   atr_tp_multiplier: number;
   atr_sl_multiplier: number;
+  // Ph.6: 拡張ロジックパラメーター
+  vix_tp_scale:        number;
+  vix_sl_scale:        number;
+  strategy_primary:    string;
+  min_signal_strength: number;
+  macro_sl_scale:      number;
   reason: string;
   expected_rr: number;
 }
@@ -202,15 +224,27 @@ function validateAndClamp(raw: ReviewResult, current: InstrumentParamsRow): Revi
   // RR不変条件: tp/sl >= 2.0
   const finalTp = tp / sl >= 2.0 ? tp : sl * 2.0;
 
+  // strategy_primary は許可値のみ受け付ける
+  const validStrategies = ['mean_reversion', 'trend_follow'];
+  const strategyPrimary = validStrategies.includes(raw.strategy_primary)
+    ? raw.strategy_primary
+    : current.strategy_primary;
+
   return {
     pair: current.pair,
-    rsi_oversold:      clamp(within20(raw.rsi_oversold,  current.rsi_oversold),  25, 45),
-    rsi_overbought:    clamp(within20(raw.rsi_overbought, current.rsi_overbought), 55, 75),
-    adx_min:           clamp(within20(raw.adx_min,        current.adx_min),        15, 35),
-    atr_tp_multiplier: parseFloat(finalTp.toFixed(2)),
-    atr_sl_multiplier: parseFloat(sl.toFixed(2)),
-    reason:            (raw.reason ?? '').slice(0, 200),
-    expected_rr:       raw.expected_rr ?? (finalTp / sl),
+    rsi_oversold:        clamp(within20(raw.rsi_oversold,  current.rsi_oversold),  25, 45),
+    rsi_overbought:      clamp(within20(raw.rsi_overbought, current.rsi_overbought), 55, 75),
+    adx_min:             clamp(within20(raw.adx_min,        current.adx_min),        15, 35),
+    atr_tp_multiplier:   parseFloat(finalTp.toFixed(2)),
+    atr_sl_multiplier:   parseFloat(sl.toFixed(2)),
+    // Ph.6: 拡張パラメーター（±20%クランプ + 絶対範囲クランプ）
+    vix_tp_scale:        parseFloat(clamp(within20(raw.vix_tp_scale   ?? current.vix_tp_scale,   current.vix_tp_scale),   0.5, 1.5).toFixed(2)),
+    vix_sl_scale:        parseFloat(clamp(within20(raw.vix_sl_scale   ?? current.vix_sl_scale,   current.vix_sl_scale),   0.5, 1.5).toFixed(2)),
+    strategy_primary:    strategyPrimary,
+    min_signal_strength: parseFloat(clamp(within20(raw.min_signal_strength ?? current.min_signal_strength, Math.max(0.01, current.min_signal_strength)), 0.0, 0.5).toFixed(3)),
+    macro_sl_scale:      parseFloat(clamp(within20(raw.macro_sl_scale ?? current.macro_sl_scale, current.macro_sl_scale), 0.5, 1.5).toFixed(2)),
+    reason:              (raw.reason ?? '').slice(0, 200),
+    expected_rr:         raw.expected_rr ?? (finalTp / sl),
   };
 }
 
@@ -283,28 +317,39 @@ async function applyReviewResult(
 ): Promise<void> {
   const now = new Date().toISOString();
   const prevJson = JSON.stringify({
-    rsi_oversold:      current.rsi_oversold,
-    rsi_overbought:    current.rsi_overbought,
-    adx_min:           current.adx_min,
-    atr_tp_multiplier: current.atr_tp_multiplier,
-    atr_sl_multiplier: current.atr_sl_multiplier,
+    rsi_oversold:        current.rsi_oversold,
+    rsi_overbought:      current.rsi_overbought,
+    adx_min:             current.adx_min,
+    atr_tp_multiplier:   current.atr_tp_multiplier,
+    atr_sl_multiplier:   current.atr_sl_multiplier,
+    // Ph.6: 拡張パラメーター
+    vix_tp_scale:        current.vix_tp_scale,
+    vix_sl_scale:        current.vix_sl_scale,
+    strategy_primary:    current.strategy_primary,
+    min_signal_strength: current.min_signal_strength,
+    macro_sl_scale:      current.macro_sl_scale,
   });
 
-  // instrument_params 更新
+  // instrument_params 更新（拡張5カラムを含む）
   await db
     .prepare(
       `UPDATE instrument_params
-       SET rsi_oversold      = ?,
-           rsi_overbought    = ?,
-           adx_min           = ?,
-           atr_tp_multiplier = ?,
-           atr_sl_multiplier = ?,
-           trades_since_review = 0,
-           param_version     = param_version + 1,
-           reviewed_by       = ?,
-           last_reviewed_at  = ?,
-           prev_params_json  = ?,
-           updated_at        = ?
+       SET rsi_oversold          = ?,
+           rsi_overbought        = ?,
+           adx_min               = ?,
+           atr_tp_multiplier     = ?,
+           atr_sl_multiplier     = ?,
+           vix_tp_scale          = ?,
+           vix_sl_scale          = ?,
+           strategy_primary      = ?,
+           min_signal_strength   = ?,
+           macro_sl_scale        = ?,
+           trades_since_review   = 0,
+           param_version         = param_version + 1,
+           reviewed_by           = ?,
+           last_reviewed_at      = ?,
+           prev_params_json      = ?,
+           updated_at            = ?
        WHERE pair = ?`
     )
     .bind(
@@ -313,6 +358,11 @@ async function applyReviewResult(
       result.adx_min,
       result.atr_tp_multiplier,
       result.atr_sl_multiplier,
+      result.vix_tp_scale,
+      result.vix_sl_scale,
+      result.strategy_primary,
+      result.min_signal_strength,
+      result.macro_sl_scale,
       reviewedBy,
       now,
       prevJson,
@@ -320,6 +370,20 @@ async function applyReviewResult(
       result.pair,
     )
     .run();
+
+  const newJson = JSON.stringify({
+    rsi_oversold:        result.rsi_oversold,
+    rsi_overbought:      result.rsi_overbought,
+    adx_min:             result.adx_min,
+    atr_tp_multiplier:   result.atr_tp_multiplier,
+    atr_sl_multiplier:   result.atr_sl_multiplier,
+    // Ph.6: 拡張パラメーター
+    vix_tp_scale:        result.vix_tp_scale,
+    vix_sl_scale:        result.vix_sl_scale,
+    strategy_primary:    result.strategy_primary,
+    min_signal_strength: result.min_signal_strength,
+    macro_sl_scale:      result.macro_sl_scale,
+  });
 
   // param_review_log に記録
   await db
@@ -334,13 +398,7 @@ async function applyReviewResult(
       result.pair,
       result.pair,
       prevJson,
-      JSON.stringify({
-        rsi_oversold:      result.rsi_oversold,
-        rsi_overbought:    result.rsi_overbought,
-        adx_min:           result.adx_min,
-        atr_tp_multiplier: result.atr_tp_multiplier,
-        atr_sl_multiplier: result.atr_sl_multiplier,
-      }),
+      newJson,
       result.reason,
       stats.totalTrades,
       stats.winRate,
@@ -418,11 +476,16 @@ export async function runParamReview(
       actualRr: stats.actualRr.toFixed(2),
       pf: stats.profitFactor.toFixed(2),
       changes: {
-        rsi_oversold:      `${paramsRow.rsi_oversold}→${validated.rsi_oversold}`,
-        rsi_overbought:    `${paramsRow.rsi_overbought}→${validated.rsi_overbought}`,
-        adx_min:           `${paramsRow.adx_min}→${validated.adx_min}`,
-        atr_tp_multiplier: `${paramsRow.atr_tp_multiplier}→${validated.atr_tp_multiplier}`,
-        atr_sl_multiplier: `${paramsRow.atr_sl_multiplier}→${validated.atr_sl_multiplier}`,
+        rsi_oversold:        `${paramsRow.rsi_oversold}→${validated.rsi_oversold}`,
+        rsi_overbought:      `${paramsRow.rsi_overbought}→${validated.rsi_overbought}`,
+        adx_min:             `${paramsRow.adx_min}→${validated.adx_min}`,
+        atr_tp_multiplier:   `${paramsRow.atr_tp_multiplier}→${validated.atr_tp_multiplier}`,
+        atr_sl_multiplier:   `${paramsRow.atr_sl_multiplier}→${validated.atr_sl_multiplier}`,
+        vix_tp_scale:        `${paramsRow.vix_tp_scale}→${validated.vix_tp_scale}`,
+        vix_sl_scale:        `${paramsRow.vix_sl_scale}→${validated.vix_sl_scale}`,
+        strategy_primary:    `${paramsRow.strategy_primary}→${validated.strategy_primary}`,
+        min_signal_strength: `${paramsRow.min_signal_strength}→${validated.min_signal_strength}`,
+        macro_sl_scale:      `${paramsRow.macro_sl_scale}→${validated.macro_sl_scale}`,
       },
       reason: validated.reason,
     }));

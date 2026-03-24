@@ -174,6 +174,20 @@ const MIGRATIONS: Array<{ version: number; description: string; sql: string }> =
     description: 'positions に trigger カラム追加（RATE/SCHED/NEWS トリガー識別）※v208の再適用対策',
     sql: 'ALTER TABLE positions ADD COLUMN trigger TEXT',
   },
+  // Ph.6: Path A廃止 + 拡張ロジックパラメーター
+  // v212 はリモートDBに既適用のためダミー（v212特殊ハンドラーもスキップされる）→ v214 で実施
+  {
+    version: 212,
+    description: 'instrument_params に拡張ロジックパラメーター5カラム追加（vix_tp/sl_scale, strategy_primary, min_signal_strength, macro_sl_scale）',
+    sql: `CREATE TABLE IF NOT EXISTS _dummy_v212 (id INTEGER PRIMARY KEY)`,
+  },
+  // v213 はリモートDB側で別途適用済み（news_temp_params + news_trigger_log）→ ここには定義不要
+  // v214: instrument_params に拡張ロジックパラメーター5カラム追加（v212衝突回避のため再設定）
+  {
+    version: 214,
+    description: 'instrument_params に拡張ロジックパラメーター5カラム追加（Ph.6 Path A廃止 v212衝突回避）',
+    sql: `CREATE TABLE IF NOT EXISTS _dummy_v214 (id INTEGER PRIMARY KEY)`,
+  },
 ];
 
 export async function runMigrations(db: D1Database): Promise<void> {
@@ -306,6 +320,33 @@ export async function runMigrations(db: D1Database): Promise<void> {
         'ALTER TABLE positions ADD COLUMN partial_closed_lot REAL DEFAULT 0',
         'ALTER TABLE positions ADD COLUMN original_lot REAL',
         'ALTER TABLE positions ADD COLUMN tp1_hit INTEGER DEFAULT 0',
+      ]) {
+        try { await db.prepare(col).run(); } catch {}
+      }
+      await db.prepare(
+        'INSERT OR IGNORE INTO schema_version (version, description, applied_at) VALUES (?, ?, ?)'
+      ).bind(m.version, m.description, new Date().toISOString()).run();
+      console.log(`[migration] Applied v${m.version}: ${m.description}`);
+      continue;
+    }
+
+    // version 212: ダミー（v212はリモートDBに既適用済みのためスキップされるはず）
+    if (m.version === 212) {
+      await db.prepare(
+        'INSERT OR IGNORE INTO schema_version (version, description, applied_at) VALUES (?, ?, ?)'
+      ).bind(m.version, m.description, new Date().toISOString()).run();
+      console.log(`[migration] Applied v${m.version}: ${m.description} (dummy)`);
+      continue;
+    }
+
+    // version 214: instrument_params に拡張ロジックパラメーター5カラム追加（v212衝突回避）
+    if (m.version === 214) {
+      for (const col of [
+        'ALTER TABLE instrument_params ADD COLUMN vix_tp_scale REAL NOT NULL DEFAULT 1.0',
+        'ALTER TABLE instrument_params ADD COLUMN vix_sl_scale REAL NOT NULL DEFAULT 1.0',
+        "ALTER TABLE instrument_params ADD COLUMN strategy_primary TEXT NOT NULL DEFAULT 'mean_reversion'",
+        'ALTER TABLE instrument_params ADD COLUMN min_signal_strength REAL NOT NULL DEFAULT 0.0',
+        'ALTER TABLE instrument_params ADD COLUMN macro_sl_scale REAL NOT NULL DEFAULT 1.0',
       ]) {
         try { await db.prepare(col).run(); } catch {}
       }
