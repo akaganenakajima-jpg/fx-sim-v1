@@ -34,14 +34,10 @@ body{background:var(--bg);color:var(--text);font-size:15px;line-height:1.47;
 }
 /* ═══ v7: Sticky glass header ═══ */
 .sbar{display:flex;justify-content:space-between;align-items:center;
-  padding:calc(env(safe-area-inset-top,0px) + 12px) 16px 8px;min-height:44px;
+  padding:calc(env(safe-area-inset-top,0px) + 8px) 16px 6px;
   position:sticky;top:0;z-index:90;
-  background:rgba(var(--glass-bg-rgb),var(--glass-opacity));
-  backdrop-filter:blur(var(--glass-blur)) saturate(var(--glass-saturate));
-  -webkit-backdrop-filter:blur(var(--glass-blur)) saturate(var(--glass-saturate));
-  box-shadow:inset 0 0 8px 0 rgba(var(--glass-shadow-rgb),0.2),0 0 10px 0 rgba(var(--glass-shadow-rgb),0.82);
-  border-bottom:0.5px solid rgba(var(--glass-border-rgb),0.8);
-  transform:translateZ(0);-webkit-transform:translateZ(0);
+  background:rgba(0,0,0,0.6);
+  backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);
 }
 .sbar-left{display:flex;align-items:center;gap:8px}
 .dot{width:8px;height:8px;border-radius:50%;box-shadow:0 0 6px currentColor}
@@ -620,11 +616,8 @@ body.drawer-open .tabs, body.sheet-open .tabs { transform: translateZ(0) transla
 
 /* ═══ PWA standalone mode ═══ */
 @media (display-mode: standalone) {
-  /* ヘッダー: ノッチ/Dynamic Island の裏に隠れないよう追加パディング */
   .sbar {
-    padding-top: calc(env(safe-area-inset-top, 0px) + 16px);
-    /* sticky top をノッチの下に配置 */
-    top: 0;
+    padding-top: calc(env(safe-area-inset-top, 0px) + 4px);
   }
   /* body はヘッダーのsafe-area分をpadding-topに持たない（sbarが担う） */
   body { padding-top: 0; }
