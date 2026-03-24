@@ -3,13 +3,11 @@
 // fetch:     GET / → ダッシュボード、GET /api/status → JSON、GET /style.css・/app.js → 静的ファイル
 
 import { getUSDJPY } from './rate';
-import { fetchNews, filterAndTranslateWithHaiku, getNewsForPair, saveRawNews, purgeOldNewsRaw, type SourceFetchStat, type NewsApiKeys } from './news';
+import { fetchNews, filterAndTranslateWithHaiku, saveRawNews, purgeOldNewsRaw, type SourceFetchStat, type NewsApiKeys } from './news';
 import { getMarketIndicators } from './indicators';
-import { getDecisionWithHedge, fetchOgDescription, newsStage1WithHedge, newsStage2, RateLimitError, type NewsAnalysisItem, type NewsStage1Result } from './gemini';
+import { fetchOgDescription, newsStage1WithHedge, newsStage2, RateLimitError, type NewsAnalysisItem, type NewsStage1Result } from './gemini';
 import { checkAndCloseAllPositions, openPosition } from './position';
-import { shouldCallGemini } from './filter';
 import {
-  insertDecision,
   insertSystemLog,
   getCacheValue,
   setCacheValue,
@@ -20,28 +18,17 @@ import { getDashboardHtml } from './dashboard';
 import { getApiStatus, getApiParams } from './api';
 import { CSS } from './style.css';
 import { JS } from './app.js';
-import { INSTRUMENTS, type InstrumentConfig } from './instruments';
-import { getBroker, withFallback, type BrokerEnv } from './broker';
-import { checkRisk, type RiskEnv } from './risk-guard';
+import { INSTRUMENTS } from './instruments';
+import { type BrokerEnv } from './broker';
 import { checkTpSlSanity } from './sanity';
-import {
-  getDrawdownLevel, updateHWM, getCurrentBalance,
-  applyDrawdownControl, checkCorrelationGuard,
-  evaluateRecovery,
-} from './risk-manager';
 import { runMigrations } from './migration';
 import { sendNotification, getWebhookUrl, buildDailySummaryMessage } from './notify';
-import { sampleBeta } from './thompson';
-import { kalmanFilter, type KalmanState } from './kalman';
 // テスタ施策 Phase 2-7
-import { getTechnicalIndicators, updateAllCandles } from './candles';
-import { determineRegime, formatRegimeForPrompt, getRegimeProhibitions } from './regime';
-import { getCurrentSession, getSessionLotMultiplier, getSessionInstrumentMultiplier, isNakaneWindow } from './session';
+import { updateAllCandles } from './candles';
 import { fetchEconomicCalendar, getUpcomingHighImpactEvents } from './calendar';
 import { generateWeeklyReview, generateMonthlyReview } from './trade-journal';
 // detectBreakout は candle データがキャッシュに保存されるPhase 7以降で統合予定
 // import { detectBreakout } from './breakout';
-import { isValidStrategy } from './strategy-tag';
 import { getWeekendStatus, lockProfitsForWeekend, forceCloseAllForWeekend } from './weekend';
 import { runLogicDecisions } from './logic-trading';
 import { runParamReview } from './param-review';
@@ -76,8 +63,6 @@ interface Env {
   RISK_MAX_MONTHLY_LOSS?: string;
   // テスタ施策12: 経済指標カレンダー
   FINNHUB_API_KEY?: string;
-  // Path A/B 並列化フラグ（'true' で有効、未設定 or それ以外で直列）
-  PARALLEL_PATH_AB?: string;
   // JSON API ニュースソース
   POLYGON_API_KEY?: string;
   MARKETAUX_API_KEY?: string;
@@ -90,7 +75,6 @@ interface Env {
 const keyCooldowns = new Map<string, number>();  // apiKey → cooldownUntil timestamp
 const keyUsageCount = new Map<string, number>(); // apiKey → 使用回数（均等分散用）
 
-let _keyIndex = 0;
 function getApiKey(env: Env): string {
   const keys = [env.GEMINI_API_KEY, env.GEMINI_API_KEY_2, env.GEMINI_API_KEY_3, env.GEMINI_API_KEY_4, env.GEMINI_API_KEY_5].filter(Boolean) as string[];
   const now = Date.now();
@@ -120,13 +104,6 @@ function markKeyCooldown(apiKey: string, retryAfterSec: number): void {
   console.log(`[fx-sim] Key cooldown: ${apiKey.slice(0, 8)}... until ${new Date(cooldownUntil).toISOString()} (${retryAfterSec}s)`);
 }
 
-/** クールダウン中でないキーの数 */
-function availableKeyCount(env: Env): number {
-  const keys = [env.GEMINI_API_KEY, env.GEMINI_API_KEY_2, env.GEMINI_API_KEY_3, env.GEMINI_API_KEY_4, env.GEMINI_API_KEY_5].filter(Boolean) as string[];
-  const now = Date.now();
-  return keys.filter(k => (keyCooldowns.get(k) ?? 0) <= now).length;
-}
-
 // ── サーキットブレーカー（3段階: CLOSED → OPEN → HALF_OPEN）──
 // 連続失敗時にAI呼び出しを一時停止し、無意味なリトライによる障害悪化を防止
 interface CircuitBreakerState {
@@ -143,21 +120,6 @@ const circuitBreaker: CircuitBreakerState = {
 
 const CB_FAIL_THRESHOLD = 3;        // 連続3回失敗で OPEN
 const CB_OPEN_DURATION_MS = 60_000; // OPEN → 1分後に HALF_OPEN
-
-/** AI呼び出し可能かチェック */
-function cbCanRequest(): boolean {
-  const now = Date.now();
-  if (circuitBreaker.state === 'CLOSED') return true;
-  if (circuitBreaker.state === 'OPEN') {
-    if (now >= circuitBreaker.openUntil) {
-      circuitBreaker.state = 'HALF_OPEN';
-      console.log('[fx-sim] Circuit breaker: OPEN → HALF_OPEN（試行再開）');
-      return true;
-    }
-    return false;
-  }
-  return false; // HALF_OPEN: 既に1回試行許可済み
-}
 
 /** AI呼び出し成功時 → CLOSED にリセット */
 function cbRecordSuccess(): void {
@@ -372,33 +334,7 @@ async function fetchMarketData(env: Env, now: Date): Promise<MarketData | null> 
   return { news, newsFetchStats, activeNewsSources, indicators, prices };
 }
 
-interface AIDecisionSummary {
-  geminiOk: number;
-  gptOk: number;
-  claudeOk: number;
-  fail: number;
-}
-
-interface AIRunContext {
-  indicators: Awaited<ReturnType<typeof getMarketIndicators>>;
-  news: MarketData['news'];
-  newsSummary: string | null;
-  activeNewsSources: string;
-  brokerEnv: BrokerEnv;
-  now: Date;
-  prices: Map<string, number | null>;
-  prevElapsed: number;
-  /** Path B が処理した銘柄（Path A/C でスキップする） */
-  excludedPairs?: Set<string>;
-  /** テスタ施策12: 経済イベントガード */
-  economicEventGuard?: { highImpactNearby: boolean; mediumImpactNearby: boolean };
-  /** 週末ウィンドダウン状態 */
-  weekendStatus: import('./weekend').WeekendStatus;
-  /** 市場クローズ中だが暗号資産のみ取引許可モード */
-  cryptoOnlyMode: boolean;
-}
-
-// ── v2: 3Path並列 型定義 ──
+// ── v2: Path B 型定義 ──
 
 interface SharedNewsStore {
   items: MarketData['news'];
@@ -421,564 +357,6 @@ interface PathBResult {
   decisions: PathDecision[];  // BUY/SELLのみ
   reversals: string[];        // REVERSE対象のpair一覧
   newsAnalysis: NewsAnalysisItem[];
-}
-
-async function runAIDecisions(
-  env: Env,
-  context: AIRunContext,
-  cronStart: number,
-): Promise<AIDecisionSummary> {
-  const {
-    indicators, news, newsSummary, activeNewsSources,
-    brokerEnv, now, prices, prevElapsed, excludedPairs, economicEventGuard, weekendStatus, cryptoOnlyMode,
-  } = context;
-
-  // 暗号資産のみモード: BTC/ETH/SOL以外はスキップ
-  const CRYPTO_PAIRS = new Set(['BTC/USD', 'ETH/USD', 'SOL/USD']);
-
-  // 429クールダウン: キー別管理 + サーキットブレーカーで制御
-  const availKeys = availableKeyCount(env);
-  const isInCooldown = availKeys === 0 || !cbCanRequest();
-  if (availKeys === 0) console.log(`[fx-sim] All Gemini keys in cooldown (${keyCooldowns.size} keys blocked)`);
-  if (!cbCanRequest()) console.log(`[fx-sim] Circuit breaker ${circuitBreaker.state}: AI呼び出し停止中`);
-
-  // 動的上限: 前回実行時間に応じて調整
-  const baseLimit = prevElapsed > 30000 ? 3 : prevElapsed > 15000 ? 5 : 8;
-  const MAX_GEMINI_PER_RUN = isInCooldown ? 0 : baseLimit;
-  // 並列数: 前回実行時間から安全な並列数を計算
-  const parallelLimit = prevElapsed > 30000 ? 2 : prevElapsed > 15000 ? 3 : 4;
-
-  // 4a. 全銘柄のレート変化・フィルタ結果を事前収集
-  const candidateList: Array<{
-    instrument: InstrumentConfig;
-    currentRate: number;
-    prevRate: number;
-    filterResult: { shouldCall: boolean; reason: string };
-    volatilityScore: number;
-    sessionBonus: number;
-    totalScore: number;
-  }> = [];
-
-  // 市場時間帯マッピング（JST）
-  const jstH = (now.getUTCHours() + 9) % 24;
-  const isTokyoSession = jstH >= 8 && jstH < 15;
-  const isLondonSession = jstH >= 16 || jstH < 1;
-  const isNYSession = jstH >= 22 || jstH < 7;
-
-  const SESSION_MAP: Record<string, string[]> = {
-    tokyo:  ['USD/JPY', 'Nikkei225', 'AUD/USD', 'HK33'],
-    london: ['EUR/USD', 'GBP/USD', 'DAX', 'Gold', 'Silver', 'Copper', 'UK100'],
-    ny:     ['S&P500', 'NASDAQ', 'US10Y', 'CrudeOil', 'NatGas', 'BTC/USD', 'ETH/USD', 'SOL/USD'],
-  };
-
-  // トンプソン・サンプリングスコアを一括取得（N+1クエリを回避）
-  const thompsonRows = await env.DB
-    .prepare('SELECT pair, thompson_alpha, thompson_beta FROM instrument_scores')
-    .all<{ pair: string; thompson_alpha: number; thompson_beta: number }>();
-  const thompsonMap = new Map(
-    (thompsonRows.results ?? []).map(r => [r.pair, sampleBeta(r.thompson_alpha ?? 1, r.thompson_beta ?? 1)])
-  );
-
-  // 全銘柄のprevRate・lastCallTimeを一括取得（D1クエリ削減）
-  const cacheKeys = INSTRUMENTS.flatMap(i => [`prev_rate_${i.pair}`, `last_ai_call_${i.pair}`]);
-  const cacheRows = await env.DB
-    .prepare(`SELECT key, value FROM market_cache WHERE key IN (${cacheKeys.map(() => '?').join(',')})`)
-    .bind(...cacheKeys)
-    .all<{ key: string; value: string }>();
-  const cacheMap = new Map<string, string>();
-  for (const row of (cacheRows.results ?? [])) cacheMap.set(row.key, row.value);
-
-  // prevRate一括更新用
-  const rateUpdates: Array<{ key: string; value: string }> = [];
-
-  for (const instrument of INSTRUMENTS) {
-    // 暗号資産のみモード（週末市場クローズ中）: クリプト以外はスキップ
-    if (cryptoOnlyMode && !CRYPTO_PAIRS.has(instrument.pair)) continue;
-
-    const currentRate = prices.get(instrument.pair);
-    if (currentRate == null) {
-      console.warn(`[fx-sim] ${instrument.pair}: price unavailable (no cache)`);
-      continue;
-    }
-
-    const cacheKey = `prev_rate_${instrument.pair}`;
-    const prevRateRaw = cacheMap.get(cacheKey) ?? null;
-    const prevRate = prevRateRaw ? parseFloat(prevRateRaw) : currentRate;
-    rateUpdates.push({ key: cacheKey, value: String(currentRate) });
-
-    const lastCallKey = `last_ai_call_${instrument.pair}`;
-    const lastCallTime = cacheMap.get(lastCallKey) ?? null;
-
-    // Path B が処理した銘柄はスキップ
-    if (excludedPairs?.has(instrument.pair)) continue;
-
-    const thompsonScore = thompsonMap.get(instrument.pair);
-    const filterResult = shouldCallGemini({
-      currentRate, prevRate,
-      rateChangeTh: instrument.rateChangeTh,
-      now, lastCallTime,
-      thompsonScore,
-    });
-
-    const changePct = prevRate !== 0 ? Math.abs(currentRate - prevRate) / prevRate : 0;
-    const volatilityScore = changePct / (instrument.rateChangeTh / (prevRate || 1));
-
-    let sessionBonus = 0;
-    if (isTokyoSession && SESSION_MAP.tokyo.includes(instrument.pair)) sessionBonus = 0.5;
-    if (isLondonSession && SESSION_MAP.london.includes(instrument.pair)) sessionBonus = 0.5;
-    if (isNYSession && SESSION_MAP.ny.includes(instrument.pair)) sessionBonus = 0.5;
-
-    candidateList.push({
-      instrument, currentRate, prevRate, filterResult,
-      volatilityScore, sessionBonus,
-      totalScore: volatilityScore + sessionBonus + (thompsonScore ?? 0.5),
-    });
-  }
-
-  // prevRate一括更新（バッチ）
-  if (rateUpdates.length > 0) {
-    const stmt = env.DB.prepare(
-      `INSERT INTO market_cache (key, value, updated_at) VALUES (?, ?, ?)
-       ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`
-    );
-    await env.DB.batch(rateUpdates.map(u => stmt.bind(u.key, u.value, now.toISOString())));
-  }
-
-  // 4b. フィルタ通過銘柄をスコア降順でソート
-  const passed = candidateList.filter(c => c.filterResult.shouldCall);
-  const skipped = candidateList.filter(c => !c.filterResult.shouldCall);
-  passed.sort((a, b) => b.totalScore - a.totalScore);
-
-  // スキップ銘柄 + 上限超過分をバッチINSERT（D1クエリ削減）
-  const holdBatch = [
-    ...skipped.map(c => ({ pair: c.instrument.pair, rate: c.currentRate, reasoning: `スキップ: ${c.filterResult.reason}` })),
-    ...passed.slice(MAX_GEMINI_PER_RUN).map(c => ({ pair: c.instrument.pair, rate: c.currentRate, reasoning: `低優先度(スコア${c.totalScore.toFixed(1)}): 次のcronで判定予定` })),
-  ];
-  if (holdBatch.length > 0) {
-    const stmt = env.DB.prepare(
-      `INSERT INTO decisions (pair, rate, decision, tp_rate, sl_rate, reasoning, news_summary, reddit_signal, vix, us10y, nikkei, sp500, created_at)
-       VALUES (?, ?, 'HOLD', NULL, NULL, ?, NULL, NULL, ?, ?, ?, ?, ?)`
-    );
-    await env.DB.batch(holdBatch.map(h =>
-      stmt.bind(h.pair, h.rate, h.reasoning, indicators.vix, indicators.us10y, indicators.nikkei, indicators.sp500, now.toISOString())
-    ));
-  }
-
-  if (passed.length > 0) {
-    console.log(`[fx-sim] フィルタ通過 ${passed.length}件 (上限${MAX_GEMINI_PER_RUN}) → ${passed.slice(0, MAX_GEMINI_PER_RUN).map(c => `${c.instrument.pair}(${c.totalScore.toFixed(1)})`).join(', ')}`);
-  }
-
-  let geminiOkCount = 0, gptOkCount = 0, claudeOkCount = 0, aiFailCount = 0;
-
-  // 4c-pre. AIループ用データを一括取得（銘柄ごとの直列クエリ → 3回のバッチクエリに削減）
-  const aiCandidates = passed.slice(0, MAX_GEMINI_PER_RUN);
-  const allOpenRaw = await env.DB
-    .prepare(`SELECT pair, direction FROM positions WHERE status = 'OPEN'`)
-    .all<{ pair: string; direction: string }>();
-  const allPositionDirections = (allOpenRaw.results ?? []).map(p => `${p.pair}:${p.direction}`);
-  const openPositionSet = new Set((allOpenRaw.results ?? []).map(p => p.pair));
-
-  // 候補銘柄の過去履歴を一括取得（N+1 → 1クエリ）
-  const candidatePairs = aiCandidates.map(c => c.instrument.pair);
-  const recentTradesMap = new Map<string, Array<{ pair: string; direction: string; pnl: number; close_reason: string }>>();
-  if (candidatePairs.length > 0) {
-    const placeholders = candidatePairs.map(() => '?').join(',');
-    const allRecentRaw = await env.DB
-      .prepare(`SELECT pair, direction, pnl, close_reason FROM positions WHERE pair IN (${placeholders}) AND status = 'CLOSED' ORDER BY closed_at DESC`)
-      .bind(...candidatePairs)
-      .all<{ pair: string; direction: string; pnl: number; close_reason: string }>();
-    for (const row of allRecentRaw.results ?? []) {
-      const arr = recentTradesMap.get(row.pair) ?? [];
-      if (arr.length < 5) arr.push(row);
-      recentTradesMap.set(row.pair, arr);
-    }
-  }
-
-  // 銘柄別RR実績を一括取得（RRボーナス判定用）
-  const pairAvgRrMap = new Map<string, number>();
-  if (candidatePairs.length > 0) {
-    const placeholders = candidatePairs.map(() => '?').join(',');
-    const rrRaw = await env.DB
-      .prepare(`SELECT pair, avg_rr FROM instrument_scores WHERE pair IN (${placeholders})`)
-      .bind(...candidatePairs)
-      .all<{ pair: string; avg_rr: number }>();
-    for (const row of rrRaw.results ?? []) {
-      pairAvgRrMap.set(row.pair, row.avg_rr);
-    }
-  }
-
-  // スパークラインデータも一括取得
-  const sparkMap = new Map<string, number[]>();
-  if (candidatePairs.length > 0) {
-    const placeholders = candidatePairs.map(() => '?').join(',');
-    const allSparkRaw = await env.DB
-      .prepare(`SELECT pair, rate FROM decisions WHERE pair IN (${placeholders}) ORDER BY id DESC`)
-      .bind(...candidatePairs)
-      .all<{ pair: string; rate: number }>();
-    const countMap = new Map<string, number>();
-    for (const row of allSparkRaw.results ?? []) {
-      const cnt = countMap.get(row.pair) ?? 0;
-      if (cnt < 20) {
-        const arr = sparkMap.get(row.pair) ?? [];
-        arr.push(row.rate);
-        sparkMap.set(row.pair, arr);
-        countMap.set(row.pair, cnt + 1);
-      }
-    }
-    for (const [pair, rates] of sparkMap) {
-      sparkMap.set(pair, rates.reverse());
-    }
-  }
-
-  // カルマンフィルタで各銘柄のレジームを計算（スパークラインデータを利用）
-  const regimeMap = new Map<string, KalmanState['regime']>();
-  for (const [pair, rates] of sparkMap) {
-    if (rates.length >= 5) {
-      const state = kalmanFilter(rates);
-      regimeMap.set(pair, state.regime);
-    }
-  }
-
-  // 4c. スコア上位からAI判定（並列バッチ処理: 最大parallelLimit件同時実行）
-  type AIResult = { provider: 'gemini' | 'gpt' | 'claude' | 'fail'; pair: string };
-
-  const batches: typeof aiCandidates[] = [];
-  for (let i = 0; i < aiCandidates.length; i += parallelLimit) {
-    batches.push(aiCandidates.slice(i, i + parallelLimit));
-  }
-
-  // W005拡張: PATH_A 全体OPEN上限（PATH_Bと統一）
-  let pathANewEntries = 0;
-  const PATH_A_OPEN_LIMIT = 10;
-
-  for (const batch of batches) {
-    if (Date.now() - cronStart > 50_000) {
-      console.warn(`[fx-sim] Cron budget exhausted (${Date.now() - cronStart}ms), skipping remaining batches`);
-      break;
-    }
-
-    const batchResults: AIResult[] = [];
-
-    await Promise.allSettled(
-      batch.map(async (candidate): Promise<AIResult> => {
-        const { instrument, currentRate } = candidate;
-
-        const hasOpenPosition = openPositionSet.has(instrument.pair);
-        const recentTrades = recentTradesMap.get(instrument.pair) ?? [];
-        const sparkRates = sparkMap.get(instrument.pair) ?? [];
-
-        // テスタ施策: テクニカル環境認識 + セッション制御
-        let technicalText: string | undefined;
-        let regimeProhibitions: string | undefined;
-        let regimeName: string | undefined = regimeMap.get(instrument.pair);
-        if (instrument.oandaSymbol && env.OANDA_API_TOKEN && env.OANDA_ACCOUNT_ID) {
-          try {
-            const tech = await getTechnicalIndicators(
-              env.DB, env.OANDA_API_TOKEN, env.OANDA_ACCOUNT_ID,
-              env.OANDA_LIVE === 'true', instrument.oandaSymbol);
-            const regimeResult = determineRegime(tech.h1);
-            regimeName = regimeResult.regime;
-            technicalText = formatRegimeForPrompt(regimeResult, tech.h1);
-            regimeProhibitions = getRegimeProhibitions(regimeResult.regime);
-          } catch { /* テクニカル取得失敗は無視 */ }
-        }
-
-        let geminiResult;
-        try {
-          const hedgeResult = await getDecisionWithHedge({
-            instrument,
-            rate: currentRate,
-            indicators,
-            news: getNewsForPair(news, instrument.pair),
-            hasOpenPosition,
-            recentTrades,
-            allPositionDirections,
-            sparkRates,
-            regime: regimeName,
-            technicalText,
-            regimeProhibitions,
-            pairAvgRr: pairAvgRrMap.get(instrument.pair),
-            geminiApiKey: getApiKey(env),
-            openaiApiKey: env.OPENAI_API_KEY,
-            openaiApiKey2: env.OPENAI_API_KEY_2,
-            anthropicApiKey: env.ANTHROPIC_API_KEY,
-            keyIndex: _keyIndex,
-            db: env.DB,
-          });
-          geminiResult = hedgeResult.decision;
-          if (hedgeResult.provider !== 'gemini') {
-            await insertSystemLog(env.DB, 'INFO', hedgeResult.provider.toUpperCase(), `${hedgeResult.provider}ヘッジ成功 (${instrument.pair}) → ${geminiResult.decision}`);
-          }
-
-          // ── IPA品質修正: サニティチェックを insertDecision 前に実行し補正値をDBに保存 ──
-          // BUY/SELL の TP/SL を事前にサニティ補正する（異常値がDBに記録されることを防止）
-          const triggerPrefix = candidate.filterResult.reason.startsWith('レート変化') ? '[RATE] ' : '[CRON] ';
-          let finalTp = geminiResult.tp_rate;
-          let finalSl = geminiResult.sl_rate;
-          let sanityValid = true;
-          let rrLotMultiplier = 1.0;
-          if ((geminiResult.decision === 'BUY' || geminiResult.decision === 'SELL') &&
-              finalTp != null && finalSl != null) {
-            const preSanity = checkTpSlSanity({
-              direction: geminiResult.decision,
-              rate: currentRate,
-              tp: finalTp,
-              sl: finalSl,
-              instrument,
-            });
-            if (!preSanity.valid) {
-              sanityValid = false;
-              finalTp = null;
-              finalSl = null;
-              console.warn(`[fx-sim] Sanity pre-check rejected: ${instrument.pair} ${preSanity.reason}`);
-              await insertSystemLog(env.DB, 'WARN', 'SANITY',
-                `TP/SL異常値拒否: ${instrument.pair} ${geminiResult.decision}`,
-                preSanity.reason ?? undefined);
-            } else {
-              // 補正値があれば適用（差分値・比率値・ミラーを自動修正）
-              if (preSanity.correctedTp != null) finalTp = preSanity.correctedTp;
-              if (preSanity.correctedSl != null) finalSl = preSanity.correctedSl;
-              // テスタ施策3: RR REDUCED → ロット50%削減フラグ
-              if (preSanity.rrCategory === 'REDUCED') {
-                rrLotMultiplier = 0.5;
-                console.log(`[fx-sim] RR REDUCED (${preSanity.rrRatio?.toFixed(2)}): ${instrument.pair} lot×0.5`);
-              }
-            }
-          }
-
-          // 補正済み TP/SL で decisions テーブルに記録（生の異常値は保存しない）
-          // テスタ施策7: strategy/confidenceをバリデーション付きで記録
-          const validStrategy = geminiResult.strategy && isValidStrategy(geminiResult.strategy)
-            ? geminiResult.strategy : null;
-          const validConfidence = typeof geminiResult.confidence === 'number'
-            ? Math.max(0, Math.min(100, geminiResult.confidence)) : null;
-
-          await insertDecision(env.DB, {
-            pair: instrument.pair,
-            rate: currentRate,
-            decision: geminiResult.decision,
-            tp_rate: finalTp,
-            sl_rate: finalSl,
-            reasoning: triggerPrefix + geminiResult.reasoning,
-            news_summary: newsSummary || null,
-            reddit_signal: null,
-            vix: indicators.vix,
-            us10y: indicators.us10y,
-            nikkei: indicators.nikkei,
-            sp500: indicators.sp500,
-            created_at: now.toISOString(),
-            news_sources: activeNewsSources || null,
-            strategy: validStrategy,
-            confidence: validConfidence,
-          });
-
-          await setCacheValue(env.DB, `last_ai_call_${instrument.pair}`, now.toISOString());
-
-          if (
-            (geminiResult.decision === 'BUY' || geminiResult.decision === 'SELL') &&
-            !hasOpenPosition
-          ) {
-            if (!sanityValid) {
-              // サニティ拒否済み — ポジションは開かない（ログは上で出力済み）
-            } else {
-              const broker = getBroker(instrument, brokerEnv);
-              const isLive = broker.name === 'oanda';
-              let source: 'paper' | 'oanda' = 'paper';
-              let oandaTradeId: string | null = null;
-
-              // テスタ施策11: セッション制御
-              const currentSession = getCurrentSession(now);
-              const sessionMult = getSessionLotMultiplier(currentSession);
-              const matrixMult = getSessionInstrumentMultiplier(currentSession, instrument.pair);
-              if (sessionMult === 0 || matrixMult === 0) {
-                console.log(`[fx-sim] Session blocked: ${instrument.pair} session=${currentSession}`);
-              }
-
-              // テスタ施策18: 確信度ベースロット
-              let confidenceMult = 1.0;
-              if (validConfidence != null) {
-                if (validConfidence >= 80) confidenceMult = 1.5;
-                else if (validConfidence >= 60) confidenceMult = 1.0;
-                else if (validConfidence >= 40) confidenceMult = 0.5;
-                else { confidenceMult = 0; } // <40 → HOLD強制
-              }
-
-              // テスタ施策19: 仲値バイアス
-              if (isNakaneWindow(now) && instrument.pair === 'USD/JPY' &&
-                  geminiResult.decision === 'BUY' && validConfidence != null) {
-                confidenceMult = Math.min(confidenceMult * 1.1, 1.5);
-              }
-
-              // テスタ施策12: S級イベント接近→強制HOLD / A級→ロット50%
-              let calendarMult = 1.0;
-              if (economicEventGuard?.highImpactNearby) calendarMult = 0;
-              else if (economicEventGuard?.mediumImpactNearby) calendarMult = 0.5;
-
-              // 暗号資産は週末でもentryLotMultiplier制限を免除
-              const isCrypto = CRYPTO_PAIRS.has(instrument.pair);
-              const effectiveWeekendMult = isCrypto ? 1.0 : weekendStatus.entryLotMultiplier;
-
-              if (sessionMult === 0 || matrixMult === 0 || confidenceMult === 0 || calendarMult === 0 || effectiveWeekendMult === 0) {
-                // セッション禁止 or 確信度不足 or S級イベント接近 or 週末新規禁止（暗号資産除く） → ポジション開かない
-              } else {
-              // テスタ施策2: HWMドローダウン制御
-              const ddResult = await getDrawdownLevel(env.DB);
-              const balance = await getCurrentBalance(env.DB);
-              await updateHWM(env.DB, balance);
-              // SPRT回復判定（DD>=5%時に自動実行）
-              if (ddResult.level !== 'NORMAL') {
-                const sprtResult = await evaluateRecovery(env.DB);
-                if (sprtResult !== 'CONTINUE') {
-                  await insertSystemLog(env.DB, 'INFO', 'RISK',
-                    `SPRT ${sprtResult}: DD ${ddResult.level} (${ddResult.ddPct.toFixed(1)}%)`,
-                    `lotMult=${ddResult.lotMultiplier}`);
-                }
-              }
-
-              await applyDrawdownControl(env.DB, ddResult);
-
-              if (ddResult.level === 'STOP') {
-                // 完全停止（>=15%）のみブロック
-                console.warn(`[fx-sim] DD ${ddResult.level}: ${instrument.pair} blocked (DD ${ddResult.ddPct.toFixed(1)}%)`);
-                await insertSystemLog(env.DB, 'WARN', 'RISK',
-                  `DD制御: ${instrument.pair} ${ddResult.level}`,
-                  `DD=${ddResult.ddPct.toFixed(1)}% HWM=${ddResult.hwm} Balance=${ddResult.balance}`);
-              } else {
-                // テスタ施策4: 相関リスクガード
-                const corrGuard = await checkCorrelationGuard(
-                  env.DB, instrument.pair, geminiResult.decision as 'BUY' | 'SELL', INSTRUMENTS);
-                if (!corrGuard.allowed) {
-                  console.warn(`[fx-sim] ${corrGuard.reason}`);
-                  await insertSystemLog(env.DB, 'WARN', 'RISK',
-                    `相関ガード: ${instrument.pair}`, corrGuard.reason);
-                } else if (isLive) {
-                  // 全施策のロット倍率を統合
-                  const ddLotMult = ddResult.lotMultiplier;
-                  const tierMult = instrument.tierLotMultiplier;
-                  const weekendMult = effectiveWeekendMult;
-                  const requestedLot = 1 * rrLotMultiplier * ddLotMult * sessionMult * matrixMult * confidenceMult * calendarMult * tierMult * weekendMult;
-
-                  const riskResult = await checkRisk({
-                    db: env.DB,
-                    env: env as RiskEnv,
-                    pair: instrument.pair,
-                    currentRate,
-                    prevRate: candidate.prevRate,
-                    requestedLot,
-                  });
-
-                  if (!riskResult.allowed) {
-                    console.warn(`[fx-sim] RiskGuard blocked: ${instrument.pair} → ${riskResult.reason}`);
-                    await insertSystemLog(env.DB, 'WARN', 'RISK',
-                      `実弾ブロック: ${instrument.pair} ${geminiResult.decision}`,
-                      riskResult.reason);
-                  } else {
-                    const brokerResult = await withFallback(broker, () => broker.openPosition({
-                      pair: instrument.pair,
-                      oandaSymbol: instrument.oandaSymbol,
-                      direction: geminiResult!.decision as 'BUY' | 'SELL',
-                      entryRate: currentRate,
-                      tpRate: finalTp,
-                      slRate: finalSl,
-                      lot: riskResult.adjustedLot ?? requestedLot,
-                    }), env.DB, `open ${instrument.pair} ${geminiResult.decision}`);
-
-                    if (brokerResult.success && !brokerResult.error?.startsWith('Fallback')) {
-                      source = 'oanda';
-                      oandaTradeId = brokerResult.oandaTradeId ?? null;
-                      console.log(`[fx-sim] 🔴 LIVE: ${instrument.pair} ${geminiResult.decision} tradeId=${oandaTradeId}`);
-                    }
-                  }
-                }
-              }
-
-              // W005拡張: PATH_A 全体OPEN上限ハードブロック
-              if (openPositionSet.size + pathANewEntries >= PATH_A_OPEN_LIMIT) {
-                await insertSystemLog(env.DB, 'WARN', 'PATH_A',
-                  `PATH_A OPEN上限ブロック: ${instrument.pair}`,
-                  `OPEN=${openPositionSet.size + pathANewEntries}/${PATH_A_OPEN_LIMIT}`);
-              } else {
-                await openPosition(
-                  env.DB,
-                  instrument.pair,
-                  geminiResult.decision,
-                  currentRate,
-                  finalTp,
-                  finalSl,
-                  source,
-                  oandaTradeId,
-                  getWebhookUrl(env),
-                  {
-                    strategy: validStrategy, regime: regimeName, session: currentSession,
-                    confidence: validConfidence, pnlMultiplier: instrument.pnlMultiplier,
-                    trigger: triggerPrefix.includes('RATE') ? 'RATE' : 'SCHED',
-                  },
-                );
-                await insertSystemLog(
-                  env.DB, 'INFO', 'POSITION',
-                  `ポジション開設: ${instrument.pair} ${geminiResult.decision} @ ${currentRate} [${source}]`,
-                  JSON.stringify({ tp: finalTp, sl: finalSl, source, oandaTradeId, reasoning: geminiResult.reasoning?.slice(0, 100) })
-                );
-                pathANewEntries++; // W005拡張: 成功したらカウント増加
-              } // end PATH_A OPEN limit
-            } // end session/confidence gate
-            }
-          } else if (geminiResult.decision !== 'HOLD') {
-            await insertSystemLog(env.DB, 'INFO', 'GEMINI', `${instrument.pair} ${geminiResult.decision} シグナル（既存ポジあり）`);
-          }
-
-          console.log(
-            `[fx-sim] ✅ ${instrument.pair} ${geminiResult.decision} @ ${currentRate}` +
-              ` TP=${geminiResult.tp_rate ?? '-'} SL=${geminiResult.sl_rate ?? '-'}` +
-              ` | ${geminiResult.reasoning}`
-          );
-
-          cbRecordSuccess(); // サーキットブレーカー: 成功記録
-          return { provider: hedgeResult.provider as 'gemini' | 'gpt' | 'claude', pair: instrument.pair };
-        } catch (e) {
-          // 429キー別クールダウン + サーキットブレーカー
-          if (e instanceof RateLimitError) {
-            markKeyCooldown(e.apiKey, e.retryAfterSec);
-            await insertSystemLog(env.DB, 'WARN', 'RATE_LIMIT',
-              `429 キークールダウン: ${e.apiKey.slice(0, 8)}... (${e.retryAfterSec}s)`,
-              `pair=${instrument.pair}, available=${availableKeyCount(env)}`);
-          }
-          cbRecordFailure(); // サーキットブレーカー: 失敗記録
-          const errMsg = String(e);
-          console.warn(`[fx-sim] All AI failed (${instrument.pair}): ${errMsg.split('\n')[0].slice(0, 120)}`);
-          await insertSystemLog(env.DB, 'ERROR', 'AI', `全プロバイダー失敗 (${instrument.pair})`, errMsg.split('\n')[0].slice(0, 200));
-          await insertDecision(env.DB, {
-            pair: instrument.pair,
-            rate: currentRate,
-            decision: 'HOLD',
-            tp_rate: null,
-            sl_rate: null,
-            reasoning: `AI判定失敗: ${errMsg.split('\n')[0].slice(0, 80)}`,
-            news_summary: null,
-            reddit_signal: null,
-            vix: indicators.vix,
-            us10y: indicators.us10y,
-            nikkei: indicators.nikkei,
-            sp500: indicators.sp500,
-            created_at: now.toISOString(),
-            news_sources: activeNewsSources || null,
-          });
-          return { provider: 'fail', pair: instrument.pair };
-        }
-      })
-    ).then(results => {
-      for (const r of results) {
-        if (r.status === 'fulfilled') batchResults.push(r.value);
-      }
-    });
-
-    geminiOkCount += batchResults.filter(r => r.provider === 'gemini').length;
-    gptOkCount    += batchResults.filter(r => r.provider === 'gpt').length;
-    claudeOkCount += batchResults.filter(r => r.provider === 'claude').length;
-    aiFailCount   += batchResults.filter(r => r.provider === 'fail').length;
-  }
-
-  return { geminiOk: geminiOkCount, gptOk: gptOkCount, claudeOk: claudeOkCount, fail: aiFailCount };
 }
 
 // ── Path B: ニュースドリブン 2段階AI判定 ──
@@ -1386,10 +764,7 @@ async function run(env: Env): Promise<void> {
       await insertSystemLog(env.DB, 'INFO', 'PATH_B', 'PATH_B強制発火（緊急ニューストリガー）', '');
     }
 
-    // ── Path A/B 並列化フラグ ──
-    // PARALLEL_PATH_AB='true' → B1完了後にB2残処理とPath Aを並列実行
-    // 未設定 or 'false' → 従来の直列フロー（安全側フォールバック）
-    const parallelMode = env.PARALLEL_PATH_AB === 'true';
+    // Path B はニュースハッシュ変化かつ最小間隔OKの場合のみ実行
     const shouldRunPathB = sharedNewsStore.hasChanged && pathBIntervalOk;
 
     if (sharedNewsStore.hasChanged && !pathBIntervalOk) {
@@ -1518,146 +893,48 @@ async function run(env: Env): Promise<void> {
       return handledPairs;
     };
 
-    // ── Path A 実行ヘルパー ──
-    const prevElapsedRaw = await getCacheValue(env.DB, 'prev_cron_elapsed');
-    const prevElapsed = prevElapsedRaw ? parseInt(prevElapsedRaw) : 0;
-
-    const runPathAWithExclusion = async (excludedPairs: Set<string>) => {
-      return runAIDecisions(env, {
-        indicators, news, newsSummary, activeNewsSources,
-        brokerEnv, now, prices, prevElapsed,
-        excludedPairs,
-        economicEventGuard,
-        weekendStatus,
-        cryptoOnlyMode,
-      }, cronStart);
-    };
-
-    let aiSummary: AIDecisionSummary;
+    // ── Path B（ニュースドリブン AI）のみ実行 ─────────────────────────────
+    // Path A（AI常時監視）は Ph.6 にて廃止。ロジック判断はRunLogicDecisionsで実施済み。
     let newsMs: number;
-    let aiLoopMs: number;
 
-    if (parallelMode && shouldRunPathB) {
-      // ════════════════════════════════════════════════════
-      // 並列モード: B1完了後に B2残処理 と Path A を同時実行
-      // IPA根拠: ファストトラッキング（pm.md）+ デッドロック4条件不成立（fe.md）
-      // ════════════════════════════════════════════════════
-      console.log('[fx-sim] 🔀 並列モード: Path A/B を同時実行');
-
+    if (shouldRunPathB) {
+      // ═══════════════════════════════════════════════════════════════
+      // Path B: ニュースハッシュ変化時のみ実行（緊急/トレンドニュース専用AI）
+      // ═══════════════════════════════════════════════════════════════
       try {
-        // Step 1: B1 を先行実行して affected_pairs を特定
         pathBResult = await runPathB(env, sharedNewsStore, indicators, openPairsForPathB, getApiKey(env), {
           openaiApiKey: env.OPENAI_API_KEY,
           anthropicApiKey: env.ANTHROPIC_API_KEY,
         });
         await setCacheValue(env.DB, 'last_path_b_at', String(Date.now()));
-
-        // B1/B2 で確定した affected_pairs（Path B が所有する銘柄集合）
-        const pathBAffectedPairs = new Set([
-          ...pathBResult.decisions.map(d => d.pair),
-          ...pathBResult.reversals,
-        ]);
-
-        console.log(`[fx-sim] 🔀 Path B: ${pathBResult.decisions.length}件シグナル, ${pathBResult.reversals.length}件REVERSE → affected: [${[...pathBAffectedPairs].join(',')}]`);
-
-        // Step 2: Path B 後処理 と Path A を Promise.allSettled で並列実行
-        // 銘柄集合が排他的 → 競合なし（デッドロック4条件の「循環待ち」不成立）
-        const t3 = Date.now();
-        const [pathBPostResult, pathAResult] = await Promise.allSettled([
-          applyPathBResults(pathBResult),
-          runPathAWithExclusion(pathBAffectedPairs),
-        ]);
-
-        aiSummary = pathAResult.status === 'fulfilled'
-          ? pathAResult.value
-          : { geminiOk: 0, gptOk: 0, claudeOk: 0, fail: 0 };
-        if (pathAResult.status === 'rejected') {
-          console.warn(`[fx-sim] 🔀 Path A failed in parallel: ${String(pathAResult.reason).slice(0, 80)}`);
-        }
-        if (pathBPostResult.status === 'rejected') {
-          console.warn(`[fx-sim] 🔀 Path B post-processing failed: ${String(pathBPostResult.reason).slice(0, 80)}`);
-        }
-
-        aiLoopMs = Date.now() - t3;
-        newsMs = Date.now() - t2;
-
+        console.log(`[fx-sim] Path B: ${pathBResult.decisions.length}件シグナル, ${pathBResult.reversals.length}件REVERSE`);
       } catch (e) {
-        // B1 自体が失敗 → Path A を通常実行（フォールバック）
         if (e instanceof RateLimitError) {
           markKeyCooldown(e.apiKey, e.retryAfterSec);
         }
         cbRecordFailure();
-        console.warn(`[fx-sim] 🔀 Path B failed, falling back to serial Path A: ${String(e).split('\n')[0].slice(0, 80)}`);
-        await insertSystemLog(env.DB, 'WARN', 'PATH_B', 'Path B実行失敗（並列モード）', String(e).split('\n')[0].slice(0, 120));
-
-        newsMs = Date.now() - t2;
-        const t3 = Date.now();
-        aiSummary = await runPathAWithExclusion(new Set());
-        aiLoopMs = Date.now() - t3;
+        console.warn(`[fx-sim] Path B failed: ${String(e).split('\n')[0].slice(0, 80)}`);
+        await insertSystemLog(env.DB, 'WARN', 'PATH_B', 'Path B実行失敗', String(e).split('\n')[0].slice(0, 120));
       }
-
-      await insertSystemLog(env.DB, 'INFO', 'FLOW', 'PATH_B完了', JSON.stringify({
-        ms: newsMs, hasChanged: true, signals: pathBResult.decisions.length,
-        reversals: pathBResult.reversals.length, parallel: true,
-      }));
-
-    } else {
-      // ════════════════════════════════════════════════════
-      // 直列モード（従来フロー）: Path B → Path A 順次実行
-      // PARALLEL_PATH_AB 未設定 or ニュース変化なし時はこちら
-      // ════════════════════════════════════════════════════
-
-      if (shouldRunPathB) {
-        try {
-          pathBResult = await runPathB(env, sharedNewsStore, indicators, openPairsForPathB, getApiKey(env), {
-            openaiApiKey: env.OPENAI_API_KEY,
-            anthropicApiKey: env.ANTHROPIC_API_KEY,
-          });
-          await setCacheValue(env.DB, 'last_path_b_at', String(Date.now()));
-          console.log(`[fx-sim] Path B: ${pathBResult.decisions.length}件シグナル, ${pathBResult.reversals.length}件REVERSE`);
-        } catch (e) {
-          if (e instanceof RateLimitError) {
-            markKeyCooldown(e.apiKey, e.retryAfterSec);
-          }
-          cbRecordFailure();
-          console.warn(`[fx-sim] Path B failed: ${String(e).split('\n')[0].slice(0, 80)}`);
-          await insertSystemLog(env.DB, 'WARN', 'PATH_B', 'Path B実行失敗', String(e).split('\n')[0].slice(0, 120));
-        }
-      }
-
-      await insertSystemLog(env.DB, 'INFO', 'FLOW', 'PATH_B完了', JSON.stringify({
-        ms: Date.now() - t2, hasChanged: sharedNewsStore.hasChanged,
-        signals: pathBResult.decisions.length, reversals: pathBResult.reversals.length,
-      }));
-
-      // Path B 後処理
-      const pathBHandledPairs = await applyPathBResults(pathBResult);
-
-      newsMs = Date.now() - t2;
-
-      // Path A 実行
-      const t3 = Date.now();
-      aiSummary = await runPathAWithExclusion(pathBHandledPairs);
-      aiLoopMs = Date.now() - t3;
     }
 
-    await insertSystemLog(env.DB, 'INFO', 'FLOW', 'PATH_A完了', JSON.stringify({
-      ms: aiLoopMs,
-      gemini: aiSummary.geminiOk,
-      gpt: aiSummary.gptOk,
-      claude: aiSummary.claudeOk,
-      fail: aiSummary.fail,
-      parallel: parallelMode && shouldRunPathB,
+    await insertSystemLog(env.DB, 'INFO', 'FLOW', 'PATH_B完了', JSON.stringify({
+      ms: Date.now() - t2, hasChanged: sharedNewsStore.hasChanged,
+      signals: pathBResult.decisions.length, reversals: pathBResult.reversals.length,
     }));
+
+    // Path B 後処理（ポジション開設・decisions記録）
+    await applyPathBResults(pathBResult);
+
+    newsMs = Date.now() - t2;
+
     const totalMs = Date.now() - cronStart;
-    const timings = { fetchMs, tpSlMs, newsMs, aiLoopMs, totalMs };
+    const timings = { fetchMs, tpSlMs, newsMs, aiLoopMs: 0, totalMs };
     await setCacheValue(env.DB, 'cron_phase_timings', JSON.stringify(timings));
-    console.log(`[fx-sim] timings: fetch=${fetchMs}ms tpsl=${tpSlMs}ms news=${newsMs}ms ai=${aiLoopMs}ms total=${totalMs}ms${parallelMode ? ' [PARALLEL]' : ''}`);
+    console.log(`[fx-sim] timings: fetch=${fetchMs}ms tpsl=${tpSlMs}ms news=${newsMs}ms total=${totalMs}ms`);
 
     const elapsed = totalMs;
-    await setCacheValue(env.DB, 'prev_cron_elapsed', String(elapsed));
-    const aiTotal = aiSummary.geminiOk + aiSummary.gptOk + aiSummary.claudeOk + aiSummary.fail;
-    console.log(`[fx-sim] cron done in ${elapsed}ms` + (aiTotal > 0 ? ` | AI: Gemini=${aiSummary.geminiOk} GPT=${aiSummary.gptOk} Claude=${aiSummary.claudeOk} Fail=${aiSummary.fail}` : ''));
+    console.log(`[fx-sim] cron done in ${elapsed}ms`);
     // 実行時間が30秒超はWARN
     if (elapsed > 30000) {
       await insertSystemLog(env.DB, 'WARN', 'CRON', `実行時間超過: ${elapsed}ms`);

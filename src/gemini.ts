@@ -2,7 +2,7 @@
 
 import type { MarketIndicators } from './indicators';
 import type { NewsItem } from './news';
-import type { InstrumentConfig } from './instruments';
+// import type { InstrumentConfig } from './instruments'; // Path A廃止で不使用
 import { insertTokenUsage } from './db';
 
 // ── 429 Rate Limit エラー（キー別クールダウン用）──
@@ -34,7 +34,8 @@ const GEMINI_ENDPOINT =
 
 const AI_TIMEOUT_MS = 12_000; // AI API呼び出し12秒タイムアウト
 // const NEWS_ANALYSIS_TIMEOUT_MS = 12_000; // DEPRECATED_v2: analyzeNews系で使用していたが削除
-const HEDGE_DELAY_MS = 4_000; // ヘッジリクエスト: Gemini開始後4秒でGPTも並行開始
+/* --- DELETED Path A helpers (HEDGE_DELAY_MS / buildSystemInstruction / buildUserMessage)
+   これらは getDecision/getDecisionWithHedge 専用。Ph.6 Path A廃止で不使用。 */
 
 function fetchWithTimeout(url: string, init: RequestInit, timeoutMs = AI_TIMEOUT_MS): Promise<Response> {
   const controller = new AbortController();
@@ -42,111 +43,9 @@ function fetchWithTimeout(url: string, init: RequestInit, timeoutMs = AI_TIMEOUT
   return fetch(url, { ...init, signal: controller.signal }).finally(() => clearTimeout(timeout));
 }
 
-function buildSystemInstruction(instrument: InstrumentConfig): string {
-  return (
-    `あなたはトレーダーのAIアシスタントです。` +
-    `以下のデータを分析し ${instrument.pair} の売買判断を JSON で返してください。` +
-    `既にオープンポジションがある場合は原則 HOLD を返すこと。` +
-    `TP/SL は${instrument.tpSlHint}の範囲で設定すること。` +
-    `【絶対価格必須】tp_rate・sl_rate は現在レートに近い絶対価格で返すこと。差分・Pips・パーセント・オフセットで返すのは厳禁。` +
-    `【TP/SL方向の絶対ルール（違反するとシステムが自動拒否）】` +
-    `BUY の場合: tp_rate > 現在レート かつ sl_rate < 現在レート（価格上昇で利確、下落で損切り）。` +
-    `SELL の場合: tp_rate < 現在レート かつ sl_rate > 現在レート（価格下落で利確、上昇で損切り）。` +
-    `例: 現在レート=159.00でBUYなら tp_rate=160.50(上), sl_rate=158.00(下)。現在レート=159.00でSELLなら tp_rate=157.50(下), sl_rate=160.50(上)。` +
-    `【重要・SL距離の絶対下限】SL距離は最低 ${instrument.tpSlMin} 以上を確保すること（これ未満はシステムが自動拒否する）。推奨SL距離: ${instrument.tpSlMin} の1.5〜2.5倍。リスクリワード比（TP距離÷SL距離）は必ず1.5以上にすること。ATR以下のSLは通常のノイズで損切りされるため禁止。確信度が低い場合はHOLDを返すこと。` +
-    `\n【手法分類】"strategy"フィールドで判断手法を分類せよ: trend_follow(トレンド順張り), mean_reversion(逆張り), breakout(ブレイクアウト), news_driven(ニュース起因), range_trade(レンジ売買)` +
-    `\n【確信度】"confidence"フィールドで確信度を0-100で示せ。40未満ならHOLDを推奨。` +
-    `\n必ず以下のフォーマットのみで返答してください:\n` +
-    `{"decision":"BUY"|"SELL"|"HOLD","tp_rate":number|null,"sl_rate":number|null,"reasoning":"日本語100文字以内","strategy":"trend_follow"|"mean_reversion"|"breakout"|"news_driven"|"range_trade","confidence":0-100}`
-  );
-}
+// buildSystemInstruction: Path A廃止で削除（getDecision専用だったため）
 
-function buildUserMessage(params: {
-  instrument: InstrumentConfig;
-  rate: number;
-  indicators: MarketIndicators;
-  news: NewsItem[];
-  hasOpenPosition: boolean;
-  recentTrades?: Array<{ pair: string; direction: string; pnl: number; close_reason: string }>;
-  allPositionDirections?: string[];
-  sparkRates?: number[];
-  regime?: string;
-  technicalText?: string; // テスタ施策6: テクニカル環境認識テキスト
-  regimeProhibitions?: string; // テスタ施策20: レジーム別禁止行動
-  pairAvgRr?: number; // 銘柄別RR実績（>2.0でTPボーナス）
-}): string {
-  const { instrument, rate, indicators, news, hasOpenPosition, recentTrades, allPositionDirections, sparkRates, regime, pairAvgRr } = params;
-
-  const newsText = news
-    .map((n, i) => `  ${i + 1}. ${n.title_ja || n.title}`)
-    .join('\n');
-
-  // VIX連動TP/SL幅: VIX高→幅広、VIX低→幅狭
-  const vix = indicators.vix ?? 20;
-  const vixMultiplier = vix > 30 ? 1.5 : vix > 25 ? 1.2 : vix > 20 ? 1.0 : 0.8;
-  const tpSlNote = `TP/SLは${instrument.tpSlHint}を基準に、現在VIX=${vix.toFixed(1)}のため幅を${vixMultiplier}倍に調整すること。リスクリワード比（TP距離÷SL距離）は必ず1.5以上を確保すること。\n⚠️ SL距離の最低ライン: ${instrument.tpSlMin}（これ未満はシステムが自動拒否します）\n推奨SL距離: ${instrument.tpSlMin}の1.5〜2.5倍`;
-
-  return [
-    `取引対象: ${instrument.pair}`,
-    `現在値: ${rate.toFixed(instrument.pair === 'USD/JPY' || instrument.pair === 'EUR/USD' ? 3 : 2)}`,
-    ``,
-    `【市場コンテキスト】`,
-    `市場レジーム: ${regime ?? '不明'} (trending=トレンド, ranging=レンジ, volatile=高ボラ)`,
-    `米10年債利回り: ${indicators.us10y != null ? indicators.us10y.toFixed(2) + '%' : 'N/A'}`,
-    `VIX: ${indicators.vix != null ? indicators.vix.toFixed(2) : 'N/A'}`,
-    `日経平均: ${indicators.nikkei != null ? indicators.nikkei.toFixed(0) : 'N/A'}`,
-    `S&P500: ${indicators.sp500 != null ? indicators.sp500.toFixed(0) : 'N/A'}`,
-    ...(indicators.fearGreed != null ? [`暗号資産Fear&Greed指数: ${indicators.fearGreed} (${indicators.fearGreedLabel ?? ''}) ※0=極度の恐怖〜100=極度の強欲`] : []),
-    ...(indicators.cftcJpyNetLong != null ? [`CFTC円先物大口投機筋ポジション: ${indicators.cftcJpyNetLong > 0 ? '+' : ''}${indicators.cftcJpyNetLong.toLocaleString()}枚 (正=円買い超/USD/JPY下落圧力, 負=円売り超/USD/JPY上昇圧力)`] : []),
-    `直近ニュース（箇条書き5件）:`,
-    newsText || '  (取得なし)',
-    `オープンポジション: ${hasOpenPosition ? 'あり（原則HOLDを返すこと）' : 'なし'}`,
-    ...(params.technicalText ? [``, params.technicalText] : []),
-    ...(params.regimeProhibitions ? [params.regimeProhibitions] : []),
-    ``,
-    `【TP/SL設定指示】`,
-    tpSlNote,
-    ...(pairAvgRr != null && pairAvgRr > 2.0 ? [
-      ``,
-      `【🎁 RR優良ボーナス】この銘柄の直近実績RR=${pairAvgRr.toFixed(2)}（>2.0の優良水準）。` +
-      `TPをやや広め（通常の1.2〜1.5倍）に設定し、確信度が高ければ積極的にエントリーすること。`,
-    ] : []),
-    ...(recentTrades && recentTrades.length > 0 ? [
-      ``,
-      `【直近の取引結果（この銘柄）】`,
-      ...recentTrades.slice(0, 5).map(t =>
-        `  ${t.direction} → ${t.close_reason} PnL=${t.pnl >= 0 ? '+' : ''}${t.pnl.toFixed(0)}円`
-      ),
-      `上記パターンを参考に、同じ失敗を繰り返さないこと。`,
-    ] : []),
-    ...(allPositionDirections && allPositionDirections.length > 0 ? [
-      ``,
-      `【現在の全ポジション方向】`,
-      `  ${allPositionDirections.join(', ')}`,
-      allPositionDirections.filter(d => d.includes('SELL')).length >= 5
-        ? '⚠️ 全ポジションがSELLに偏っています。BUYも検討すること。'
-        : allPositionDirections.filter(d => d.includes('BUY')).length >= 5
-        ? '⚠️ 全ポジションがBUYに偏っています。SELLも検討すること。'
-        : '',
-    ] : []),
-    ...(sparkRates && sparkRates.length >= 5 ? [
-      ``,
-      `【トレンド分析】`,
-      (() => {
-        const mid = sparkRates;
-        const short = mid.slice(-5);
-        const midFirst = mid[0]; const midLast = mid[mid.length - 1];
-        const shortFirst = short[0]; const shortLast = short[short.length - 1];
-        const midTrend = midLast > midFirst ? '上昇' : midLast < midFirst ? '下落' : '横ばい';
-        const shortTrend = shortLast > shortFirst ? '上昇' : shortLast < shortFirst ? '下落' : '横ばい';
-        const midPct = ((midLast - midFirst) / midFirst * 100).toFixed(2);
-        const shortPct = ((shortLast - shortFirst) / shortFirst * 100).toFixed(2);
-        return `中期トレンド（${mid.length}件）: ${midTrend}（${midPct}%）\n短期トレンド（${short.length}件）: ${shortTrend}（${shortPct}%）`;
-      })(),
-      `中期と短期のトレンドが一致している場合はその方向に、乖離している場合は反転リスクを考慮すること。`,
-    ] : []),
-  ].join('\n');
-}
+// buildUserMessage: Path A廃止で削除（getDecision専用だったため）
 
 interface GeminiResponse {
   candidates: Array<{
@@ -160,6 +59,10 @@ interface GeminiResponse {
 }
 
 
+// getDecision / getDecisionGPT / getDecisionClaude / getDecisionWithHedge は
+// Ph.6 Path A廃止に伴い削除。ニュース理解専用の newsStage1WithHedge / newsStage2 を使用。
+
+/* --- DELETED Path A functions ---
 export async function getDecision(params: {
   instrument: InstrumentConfig;
   rate: number;
@@ -420,6 +323,7 @@ export async function getDecisionWithHedge(params: {
   // 最初に成功した方を採用（エラーは無視してもう一方を待つ）
   return Promise.any([geminiPromise, hedgePromise]);
 }
+--- END DELETED Path A functions --- */
 
 // ── ニュース分析型定義（v2: Path B用に拡張）──
 

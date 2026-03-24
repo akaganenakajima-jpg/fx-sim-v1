@@ -194,17 +194,76 @@ export async function runLogicDecisions(
       continue;
     }
 
-    // BUY/SELL シグナル → サニティチェック
+    // ── Ph.6 拡張パラメーター適用 ── ─────────────────────────────────────
+
+    // 1. min_signal_strength フィルタ（RSI偏差 + ER の複合強度チェック）
+    if (techSignal.rsi != null && techSignal.er != null && params.min_signal_strength > 0) {
+      const rsiDev = techSignal.signal === 'BUY'
+        ? Math.max(0, (params.rsi_oversold - techSignal.rsi) / Math.max(1, params.rsi_oversold))
+        : Math.max(0, (techSignal.rsi - params.rsi_overbought) / Math.max(1, 100 - params.rsi_overbought));
+      const signalStrength = Math.min(1, (rsiDev + techSignal.er) / 2);
+      if (signalStrength < params.min_signal_strength) {
+        summary.skipped++;
+        summary.signals.push({ pair, signal: 'SKIP',
+          reason: `signal_str=${signalStrength.toFixed(2)}<${params.min_signal_strength}(min)` });
+        continue;
+      }
+    }
+
+    // 2. strategy_primary フィルタ（trend_follow はER閾値を25%強化）
+    if (params.strategy_primary === 'trend_follow' && techSignal.er != null) {
+      const strictErThreshold = (params.adx_min / 60) * 1.25;
+      if (techSignal.er < strictErThreshold) {
+        summary.skipped++;
+        summary.signals.push({ pair, signal: 'SKIP',
+          reason: `trend_follow: ER=${techSignal.er.toFixed(3)}<${strictErThreshold.toFixed(3)}` });
+        continue;
+      }
+    }
+
+    // BUY/SELL シグナル → TP/SL null チェック
     if (techSignal.tp_rate == null || techSignal.sl_rate == null) {
       summary.skipped++;
       continue;
     }
 
+    // 3. VIX/マクロスケール適用（calcTechnicalSignal の base TP/SL を上書き）
+    let scaledTp = techSignal.tp_rate;
+    let scaledSl = techSignal.sl_rate;
+
+    const atrVal = techSignal.atr ?? 0;
+    if (atrVal > 0) {
+      const vixAboveAlert = vix != null && vix > params.vix_max * 0.7;
+      const macroBearish  = vix != null && vix > params.vix_max * 0.5
+                            && params.macro_sl_scale !== 1.0;
+
+      if (vixAboveAlert || macroBearish) {
+        const tpMult = params.atr_tp_multiplier * (vixAboveAlert ? params.vix_tp_scale : 1.0);
+        const slMult = params.atr_sl_multiplier
+          * (vixAboveAlert ? params.vix_sl_scale  : 1.0)
+          * (macroBearish  ? params.macro_sl_scale : 1.0);
+        const scaleReason = [
+          vixAboveAlert ? `VIX警戒(×${params.vix_tp_scale.toFixed(2)})` : '',
+          macroBearish  ? `マクロ(SL×${params.macro_sl_scale.toFixed(2)})` : '',
+        ].filter(Boolean).join(' ');
+
+        if (techSignal.signal === 'BUY') {
+          scaledTp = parseFloat((currentRate + atrVal * tpMult).toFixed(5));
+          scaledSl = parseFloat((currentRate - atrVal * slMult).toFixed(5));
+        } else {
+          scaledTp = parseFloat((currentRate - atrVal * tpMult).toFixed(5));
+          scaledSl = parseFloat((currentRate + atrVal * slMult).toFixed(5));
+        }
+        summary.signals.find(s => s.pair === pair && s.signal !== 'SKIP')
+          && (summary.signals[summary.signals.length - 1].reason += ` [${scaleReason}]`);
+      }
+    }
+
     const sanity = checkTpSlSanity({
       direction: techSignal.signal,
       rate: currentRate,
-      tp: techSignal.tp_rate,
-      sl: techSignal.sl_rate,
+      tp: scaledTp,
+      sl: scaledSl,
       instrument,
     });
 

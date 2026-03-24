@@ -47,12 +47,10 @@ const SKIP_SCHEDULES: SkipSchedule[] = [
   { hour: 18, min: 0, duration: 240 },
 ];
 
-// 定期強制呼び出し間隔（分）
-// この間隔以上 AI を呼んでいなければ、フィルタを無視して強制呼び出し
-const FORCE_CALL_INTERVAL_MIN = 30;
-
+// isSkipSchedule: shouldCallGemini 廃止後もスケジュール定義だけ保持
+// （news-trigger 側でスキップ判定に流用予定）
 /** now (UTC) がスキップ時間帯に該当するか */
-function isSkipSchedule(now: Date): { skip: boolean; matchedRule?: string } {
+export function isSkipSchedule(now: Date): { skip: boolean; matchedRule?: string } {
   const utcWeekday = now.getUTCDay(); // 0=Sun, 5=Fri
   const utcDate = now.getUTCDate();
   const utcMonth = now.getUTCMonth() + 1; // 1-12
@@ -81,60 +79,5 @@ function isSkipSchedule(now: Date): { skip: boolean; matchedRule?: string } {
   return { skip: false };
 }
 
-/**
- * Gemini を呼ぶべきか判定（Path A / Path C 専用）
- * ニュース・Redditシグナルは Path B が担当するため含まない
- * 以下の条件で true を返す:
- *   1. スキップ時間帯でない かつ
- *   2. レート変化が閾値以上（Path A） OR 前回呼び出しから30分以上経過（Path C）
- */
-export function shouldCallGemini(params: {
-  currentRate: number;
-  prevRate: number;
-  rateChangeTh: number;
-  now: Date;
-  lastCallTime?: string | null;
-  thompsonScore?: number;   // トンプソン・サンプリングスコア（0〜1）
-}): FilterResult {
-  const { currentRate, prevRate, rateChangeTh, now, lastCallTime, thompsonScore } = params;
-
-  // トンプソンスコアが低い銘柄は低優先度として HOLD
-  if (thompsonScore !== undefined && thompsonScore < 0.3) {
-    return { shouldCall: false, reason: `Thompson低優先度(${thompsonScore.toFixed(2)})` };
-  }
-
-  // 1. スキップ時間帯チェック
-  const { skip, matchedRule } = isSkipSchedule(now);
-  if (skip) {
-    return {
-      shouldCall: false,
-      reason: `重要指標スキップ時間帯 (${matchedRule})`,
-    };
-  }
-
-  // 2. 変化トリガーチェック
-  const rateChange = Math.abs(currentRate - prevRate);
-  if (rateChange >= rateChangeTh) {
-    return {
-      shouldCall: true,
-      reason: `レート変化 ${rateChange.toFixed(3)}`,
-    };
-  }
-
-  // 3. 定期強制呼び出し（Path C）: 前回から30分以上経過していたら強制
-  if (lastCallTime) {
-    const lastCall = new Date(lastCallTime);
-    const elapsed = (now.getTime() - lastCall.getTime()) / 60_000;
-    if (elapsed >= FORCE_CALL_INTERVAL_MIN) {
-      return {
-        shouldCall: true,
-        reason: `定期強制 (${Math.floor(elapsed)}分経過)`,
-      };
-    }
-  }
-
-  return {
-    shouldCall: false,
-    reason: `変化なし (変化=${rateChange.toFixed(3)})`,
-  };
-}
+// shouldCallGemini は Ph.6 Path A廃止に伴い削除。
+// 経済指標スキップスケジュール（isSkipSchedule）は news-trigger 側で参照予定。

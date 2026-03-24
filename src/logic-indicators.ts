@@ -36,6 +36,12 @@ export interface InstrumentParamsRow {
   vix_max: number;
   require_trend_align: number;
   regime_allow: string;
+  // Ph.6: 拡張ロジックパラメーター（Path A廃止に伴い、AIが管理するメタパラメーター）
+  vix_tp_scale:         number;  // VIX > vix_max×0.7 時のTP幅倍率（1.0=通常, 0.7=縮小）
+  vix_sl_scale:         number;  // VIX > vix_max×0.7 時のSL幅倍率
+  strategy_primary:     string;  // 優先戦略: 'mean_reversion' | 'trend_follow'
+  min_signal_strength:  number;  // エントリー最低シグナル強度（RSI偏差+ER、0〜1）
+  macro_sl_scale:       number;  // VIX > vix_max×0.5 時のSL幅追加倍率（マクロ警戒）
 }
 
 // ─── RSI計算 ─────────────────────────────────────────────────────────────────
