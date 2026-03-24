@@ -177,6 +177,15 @@ function buildReviewPrompt(
     `  session_end_utc: ${params.session_end_utc}（取引終了UTC時）`,
     `  review_min_trades: ${params.review_min_trades}（レビュー最低サンプル数）`,
     ``,
+    `【現在パラメーター（エントリー精度 / 環境検出）】`,
+    `  bb_period: ${params.bb_period}（ボリンジャーバンド期間）`,
+    `  bb_squeeze_threshold: ${params.bb_squeeze_threshold}（スクイーズ判定閾値）`,
+    `  w_bb: ${params.w_bb}（BBスコアリング重み）`,
+    `  w_div: ${params.w_div}（ダイバージェンススコアリング重み）`,
+    `  divergence_lookback: ${params.divergence_lookback}（ダイバージェンス比較期間）`,
+    `  min_confirm_signals: ${params.min_confirm_signals}（最低確認シグナル数）`,
+    `  er_upper_limit: ${params.er_upper_limit}（mean_reversion時のER上限）`,
+    ``,
     `【直近${stats.totalTrades}件の実績】`,
     `  勝率: ${(stats.winRate * 100).toFixed(1)}%`,
     `  実績RR（平均利益÷平均損失）: ${stats.actualRr.toFixed(2)}`,
@@ -225,9 +234,16 @@ function buildReviewPrompt(
     `  - session_start_utc: 0〜23の範囲`,
     `  - session_end_utc: 1〜24の範囲`,
     `  - review_min_trades: 20〜200の範囲`,
+    `  - bb_period: 10〜50の範囲`,
+    `  - bb_squeeze_threshold: 0.1〜0.8の範囲`,
+    `  - w_bb: 0.0〜1.0の範囲`,
+    `  - w_div: 0.0〜1.0の範囲`,
+    `  - divergence_lookback: 5〜30の範囲`,
+    `  - min_confirm_signals: 0〜5の範囲`,
+    `  - er_upper_limit: 0.5〜1.0の範囲`,
     ``,
     `以下のJSONのみで回答してください（説明文不要）:`,
-    `{"pair":"${pair}","rsi_oversold":number,"rsi_overbought":number,"adx_min":number,"atr_tp_multiplier":number,"atr_sl_multiplier":number,"vix_tp_scale":number,"vix_sl_scale":number,"strategy_primary":"mean_reversion","min_signal_strength":number,"macro_sl_scale":number,"w_rsi":number,"w_er":number,"w_mtf":number,"w_sr":number,"w_pa":number,"entry_score_min":number,"min_rr_ratio":number,"max_hold_minutes":number,"cooldown_after_sl":number,"consecutive_loss_shrink":number,"daily_max_entries":number,"trailing_activation_atr":number,"trailing_distance_atr":number,"tp1_ratio":number,"session_start_utc":number,"session_end_utc":number,"review_min_trades":number,"reason":"調整理由200文字以内","expected_rr":number}`,
+    `{"pair":"${pair}","rsi_oversold":number,"rsi_overbought":number,"adx_min":number,"atr_tp_multiplier":number,"atr_sl_multiplier":number,"vix_tp_scale":number,"vix_sl_scale":number,"strategy_primary":"mean_reversion","min_signal_strength":number,"macro_sl_scale":number,"w_rsi":number,"w_er":number,"w_mtf":number,"w_sr":number,"w_pa":number,"w_bb":number,"w_div":number,"entry_score_min":number,"min_rr_ratio":number,"max_hold_minutes":number,"cooldown_after_sl":number,"consecutive_loss_shrink":number,"daily_max_entries":number,"trailing_activation_atr":number,"trailing_distance_atr":number,"tp1_ratio":number,"session_start_utc":number,"session_end_utc":number,"review_min_trades":number,"bb_period":number,"bb_squeeze_threshold":number,"divergence_lookback":number,"min_confirm_signals":number,"er_upper_limit":number,"reason":"調整理由200文字以内","expected_rr":number}`,
   ].join('\n');
 }
 
@@ -265,6 +281,14 @@ interface ReviewResult {
   session_start_utc:       number;
   session_end_utc:         number;
   review_min_trades:       number;
+  // Ph.9: エントリー精度パラメーター
+  bb_period:              number;
+  bb_squeeze_threshold:   number;
+  w_bb:                   number;
+  w_div:                  number;
+  divergence_lookback:    number;
+  min_confirm_signals:    number;
+  er_upper_limit:         number;
   reason: string;
   expected_rr: number;
 }
@@ -319,6 +343,14 @@ function validateAndClamp(raw: ReviewResult, current: InstrumentParamsRow): Revi
     session_start_utc:       clamp(raw.session_start_utc       ?? current.session_start_utc,         0,   23),
     session_end_utc:         clamp(raw.session_end_utc         ?? current.session_end_utc,           1,   24),
     review_min_trades:       clamp(raw.review_min_trades       ?? current.review_min_trades,         20, 200),
+    // Ph.9: エントリー精度パラメーター
+    bb_period:              clamp(raw.bb_period              ?? current.bb_period,              10,   50),
+    bb_squeeze_threshold:   parseFloat(clamp(raw.bb_squeeze_threshold ?? current.bb_squeeze_threshold, 0.1, 0.8).toFixed(2)),
+    w_bb:                   parseFloat(clamp(raw.w_bb                ?? current.w_bb,                  0,   1).toFixed(2)),
+    w_div:                  parseFloat(clamp(raw.w_div               ?? current.w_div,                 0,   1).toFixed(2)),
+    divergence_lookback:    clamp(raw.divergence_lookback    ?? current.divergence_lookback,     5,   30),
+    min_confirm_signals:    clamp(raw.min_confirm_signals    ?? current.min_confirm_signals,     0,    5),
+    er_upper_limit:         parseFloat(clamp(raw.er_upper_limit      ?? current.er_upper_limit,        0.5, 1.0).toFixed(2)),
     reason:              (raw.reason ?? '').slice(0, 200),
     expected_rr:         raw.expected_rr ?? (finalTp / sl),
   };
@@ -423,9 +455,17 @@ async function applyReviewResult(
     session_start_utc:       current.session_start_utc,
     session_end_utc:         current.session_end_utc,
     review_min_trades:       current.review_min_trades,
+    // Ph.9: エントリー精度パラメーター
+    bb_period:              current.bb_period,
+    bb_squeeze_threshold:   current.bb_squeeze_threshold,
+    w_bb:                   current.w_bb,
+    w_div:                  current.w_div,
+    divergence_lookback:    current.divergence_lookback,
+    min_confirm_signals:    current.min_confirm_signals,
+    er_upper_limit:         current.er_upper_limit,
   });
 
-  // instrument_params 更新（拡張5カラム + Ph.7 スコアリング7カラム + Ph.8 10カラムを含む）
+  // instrument_params 更新（拡張5カラム + Ph.7 スコアリング7カラム + Ph.8 10カラム + Ph.9 7カラムを含む）
   await db
     .prepare(
       `UPDATE instrument_params
@@ -456,6 +496,13 @@ async function applyReviewResult(
            session_start_utc     = ?,
            session_end_utc       = ?,
            review_min_trades     = ?,
+           bb_period             = ?,
+           bb_squeeze_threshold  = ?,
+           w_bb                  = ?,
+           w_div                 = ?,
+           divergence_lookback   = ?,
+           min_confirm_signals   = ?,
+           er_upper_limit        = ?,
            trades_since_review   = 0,
            param_version         = param_version + 1,
            reviewed_by           = ?,
@@ -492,6 +539,13 @@ async function applyReviewResult(
       result.session_start_utc,
       result.session_end_utc,
       result.review_min_trades,
+      result.bb_period,
+      result.bb_squeeze_threshold,
+      result.w_bb,
+      result.w_div,
+      result.divergence_lookback,
+      result.min_confirm_signals,
+      result.er_upper_limit,
       reviewedBy,
       now,
       prevJson,
@@ -531,6 +585,14 @@ async function applyReviewResult(
     session_start_utc:       result.session_start_utc,
     session_end_utc:         result.session_end_utc,
     review_min_trades:       result.review_min_trades,
+    // Ph.9: エントリー精度パラメーター
+    bb_period:              result.bb_period,
+    bb_squeeze_threshold:   result.bb_squeeze_threshold,
+    w_bb:                   result.w_bb,
+    w_div:                  result.w_div,
+    divergence_lookback:    result.divergence_lookback,
+    min_confirm_signals:    result.min_confirm_signals,
+    er_upper_limit:         result.er_upper_limit,
   });
 
   // param_review_log に記録
@@ -649,6 +711,13 @@ export async function runParamReview(
         session_start_utc:   `${paramsRow.session_start_utc}→${validated.session_start_utc}`,
         session_end_utc:     `${paramsRow.session_end_utc}→${validated.session_end_utc}`,
         review_min_trades:   `${paramsRow.review_min_trades}→${validated.review_min_trades}`,
+        bb_period:           `${paramsRow.bb_period}→${validated.bb_period}`,
+        bb_squeeze_threshold:`${paramsRow.bb_squeeze_threshold}→${validated.bb_squeeze_threshold}`,
+        w_bb:                `${paramsRow.w_bb}→${validated.w_bb}`,
+        w_div:               `${paramsRow.w_div}→${validated.w_div}`,
+        divergence_lookback: `${paramsRow.divergence_lookback}→${validated.divergence_lookback}`,
+        min_confirm_signals: `${paramsRow.min_confirm_signals}→${validated.min_confirm_signals}`,
+        er_upper_limit:      `${paramsRow.er_upper_limit}→${validated.er_upper_limit}`,
       },
       reason: validated.reason,
     }));

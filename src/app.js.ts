@@ -3401,6 +3401,14 @@ export const JS = `
                     '<div class="cell-value">' + fmt(p.w_pa, 2) + '</div>' +
                   '</div>' +
                   '<div class="param-grid-cell">' +
+                    '<div class="cell-label">w(BB)</div>' +
+                    '<div class="cell-value">' + fmt(p.w_bb, 2) + '</div>' +
+                  '</div>' +
+                  '<div class="param-grid-cell">' +
+                    '<div class="cell-label">w(DIV)</div>' +
+                    '<div class="cell-value">' + fmt(p.w_div, 2) + '</div>' +
+                  '</div>' +
+                  '<div class="param-grid-cell">' +
                     '<div class="cell-label">最低スコア</div>' +
                     '<div class="cell-value">' + fmt(p.entry_score_min, 2) + '</div>' +
                   '</div>' +
@@ -3418,7 +3426,29 @@ export const JS = `
                     '<div class="cell-label">シグナル強度</div>' +
                     '<div class="cell-value">' + fmt(p.min_signal_strength, 2) + '</div>' +
                   '</div>' +
-                  /* ── グループ5: ポジション管理（Ph.8） ── */
+                  /* ── グループ5: 環境検出（Ph.9） ── */
+                  '<div class="param-group-divider">環境検出</div>' +
+                  '<div class="param-grid-cell">' +
+                    '<div class="cell-label">BB期間</div>' +
+                    '<div class="cell-value">' + fmt(p.bb_period, 0) + '</div>' +
+                  '</div>' +
+                  '<div class="param-grid-cell">' +
+                    '<div class="cell-label">BBスクイーズ</div>' +
+                    '<div class="cell-value">' + fmt(p.bb_squeeze_threshold, 2) + '</div>' +
+                  '</div>' +
+                  '<div class="param-grid-cell">' +
+                    '<div class="cell-label">DIV参照</div>' +
+                    '<div class="cell-value">' + fmt(p.divergence_lookback, 0) + '</div>' +
+                  '</div>' +
+                  '<div class="param-grid-cell">' +
+                    '<div class="cell-label">最低根拠数</div>' +
+                    '<div class="cell-value">' + fmt(p.min_confirm_signals, 0) + '</div>' +
+                  '</div>' +
+                  '<div class="param-grid-cell">' +
+                    '<div class="cell-label">ER上限(逆張り)</div>' +
+                    '<div class="cell-value">' + fmt(p.er_upper_limit, 2) + '</div>' +
+                  '</div>' +
+                  /* ── グループ6: ポジション管理（Ph.8） ── */
                   '<div class="param-group-divider">ポジション管理</div>' +
                   '<div class="param-grid-cell">' +
                     '<div class="cell-label">最大保有</div>' +

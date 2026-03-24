@@ -948,6 +948,14 @@ export interface InstrumentParamRow {
   session_start_utc:       number;  // 取引開始時刻（UTC時）
   session_end_utc:         number;  // 取引終了時刻（UTC時）
   review_min_trades:       number;  // Param Review最低サンプル数
+  // Ph.9: エントリー精度パラメーター（v217）
+  bb_period:              number;  // ボリンジャーバンド期間
+  bb_squeeze_threshold:   number;  // スクイーズ判定閾値
+  w_bb:                   number;  // BBスコアリング重み
+  w_div:                  number;  // ダイバージェンススコアリング重み
+  divergence_lookback:    number;  // ダイバージェンス比較期間
+  min_confirm_signals:    number;  // 最低確認シグナル数
+  er_upper_limit:         number;  // mean_reversion時のER上限
   review_trade_count: number;
   trades_since_review: number;
   param_version:      number;

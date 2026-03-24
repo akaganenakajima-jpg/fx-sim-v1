@@ -235,6 +235,16 @@ export async function runLogicDecisions(
       continue;
     }
 
+    // ── Ph.9 ER上限チェック（mean_reversion時の強トレンド逆張り禁止）──
+    if (params.strategy_primary === 'mean_reversion' && techSignal.er != null && params.er_upper_limit > 0) {
+      if (techSignal.er > params.er_upper_limit) {
+        summary.skipped++;
+        summary.signals.push({ pair, signal: 'SKIP',
+          reason: `ER=${techSignal.er.toFixed(3)}>${params.er_upper_limit}(mean_rev上限)` });
+        continue;
+      }
+    }
+
     // ── Ph.7 重みつきエントリースコアリング ──────────────────────────
 
     // スコアが計算されている場合のみチェック
@@ -257,6 +267,26 @@ export async function runLogicDecisions(
         summary.skipped++;
         summary.signals.push({ pair, signal: 'SKIP',
           reason: `signal_str=${signalStrength.toFixed(2)}<${params.min_signal_strength}(min)` });
+        continue;
+      }
+    }
+
+    // ── Ph.9 エントリー根拠の多様性チェック ──────────────────────────
+    if (techSignal.scores && params.min_confirm_signals > 0) {
+      const significantSignals = [
+        techSignal.scores.rsi > 0.1 ? 1 : 0,
+        techSignal.scores.er > 0.1 ? 1 : 0,
+        techSignal.scores.mtf > 0.1 ? 1 : 0,
+        techSignal.scores.sr > 0.1 ? 1 : 0,
+        techSignal.scores.pa > 0.1 ? 1 : 0,
+        techSignal.scores.bb > 0.1 ? 1 : 0,
+        techSignal.scores.div > 0.1 ? 1 : 0,
+      ].reduce((a, b) => a + b, 0);
+
+      if (significantSignals < params.min_confirm_signals) {
+        summary.skipped++;
+        summary.signals.push({ pair, signal: 'SKIP',
+          reason: `confirm=${significantSignals}<${params.min_confirm_signals}(根拠不足)` });
         continue;
       }
     }

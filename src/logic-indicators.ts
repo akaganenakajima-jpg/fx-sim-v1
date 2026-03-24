@@ -28,6 +28,8 @@ export interface TechnicalSignal {
     mtf: number;
     sr: number;
     pa: number;
+    bb: number;    // Ph.9: BBスクイーズ/拡大スコア
+    div: number;   // Ph.9: RSIダイバージェンススコア
     total: number;
     breakdown: string;  // 人間可読なスコア内訳
   };
@@ -71,6 +73,14 @@ export interface InstrumentParamsRow {
   session_start_utc:       number;  // 取引開始時刻（UTC時）
   session_end_utc:         number;  // 取引終了時刻（UTC時）
   review_min_trades:       number;  // Param Review最低サンプル数
+  // Ph.9: エントリー精度パラメーター
+  bb_period:              number;  // ボリンジャーバンド期間
+  bb_squeeze_threshold:   number;  // スクイーズ判定閾値（バンド幅/平均バンド幅 < この値）
+  w_bb:                   number;  // BBスクイーズ/拡大スコアリング重み
+  w_div:                  number;  // RSIダイバージェンススコアリング重み
+  divergence_lookback:    number;  // ダイバージェンス比較期間
+  min_confirm_signals:    number;  // 最低N個のスコア要因が閾値超必要
+  er_upper_limit:         number;  // mean_reversion時のER上限
 }
 
 // ─── RSI計算 ─────────────────────────────────────────────────────────────────
@@ -144,6 +154,54 @@ export function calcER(closes: number[], period: number): number | null {
 
   if (totalMove === 0) return 0;
   return netMove / totalMove;
+}
+
+// ─── BB幅計算（ボリンジャーバンド正規化バンド幅）────────────────────────────
+// 直近period本の標準偏差から正規化バンド幅（%BBW）を算出し、
+// 過去区間の平均バンド幅と比較してスクイーズ/拡大を判定するための材料を返す
+
+export function calcBBWidth(closes: number[], period: number): { width: number; avgWidth: number } | null {
+  if (closes.length < period * 2) return null;
+
+  // 直近periodの標準偏差 → バンド幅
+  const recent = closes.slice(-period);
+  const mean = recent.reduce((a, b) => a + b, 0) / period;
+  const variance = recent.reduce((a, c) => a + (c - mean) ** 2, 0) / period;
+  const std = Math.sqrt(variance);
+  const width = mean > 0 ? (2 * std) / mean : 0; // 正規化バンド幅（%BBW）
+
+  // 過去の平均バンド幅（比較用）
+  const halfLen = Math.floor(closes.length / 2);
+  const older = closes.slice(halfLen - period, halfLen);
+  if (older.length < period) return { width, avgWidth: width };
+  const olderMean = older.reduce((a, b) => a + b, 0) / period;
+  const olderVariance = older.reduce((a, c) => a + (c - olderMean) ** 2, 0) / period;
+  const olderStd = Math.sqrt(olderVariance);
+  const avgWidth = olderMean > 0 ? (2 * olderStd) / olderMean : width;
+
+  return { width, avgWidth: avgWidth || width };
+}
+
+// ─── RSIダイバージェンス検出（2点近似）────────────────────────────────────
+// 高コストなRSIローリング計算を回避し、現在のRSI vs lookback本前のRSIを比較
+// ブルダイバージェンス: 価格↓ & RSI↑（BUY方向に有利）
+// ベアダイバージェンス: 価格↑ & RSI↓（SELL方向に有利）
+
+export function detectDivergence2Point(
+  closes: number[],
+  rsiNow: number,
+  rsiPast: number,
+  direction: 'BUY' | 'SELL',
+  lookback: number,
+): boolean {
+  if (closes.length <= lookback) return false;
+  const priceNow = closes[closes.length - 1];
+  const pricePast = closes[closes.length - 1 - lookback] ?? closes[0];
+  if (direction === 'BUY') {
+    return priceNow < pricePast && rsiNow > rsiPast; // 価格↓ RSI↑
+  } else {
+    return priceNow > pricePast && rsiNow < rsiPast; // 価格↑ RSI↓
+  }
 }
 
 // ─── レジーム判定 ────────────────────────────────────────────────────────────
@@ -252,17 +310,39 @@ export function calcTechnicalSignal(
           : (last3[2] < last3[1] && last3[1] > last3[0]) ? 1.0 : 0.0)
       : 0.5;
 
+    // 6. BBスクイーズスコア（0〜1）
+    const bbData = calcBBWidth(closes, params.bb_period);
+    let bbScore = 0.5;
+    if (bbData) {
+      const ratio = bbData.avgWidth > 0 ? bbData.width / bbData.avgWidth : 1;
+      if (params.strategy_primary === 'mean_reversion') {
+        bbScore = Math.max(0, Math.min(1, 1 - ratio));
+      } else {
+        bbScore = Math.max(0, Math.min(1, ratio));
+      }
+    }
+
+    // 7. ダイバージェンススコア（0 or 1）
+    const rsiPastVal = closes.length > params.divergence_lookback
+      ? calcRSI(closes.slice(0, -params.divergence_lookback), rsi_period)
+      : null;
+    const divScore = (rsi !== null && rsiPastVal !== null)
+      ? (detectDivergence2Point(closes, rsi, rsiPastVal, direction, params.divergence_lookback) ? 1.0 : 0.0)
+      : 0;
+
     // 重みつき総合スコア
     const total =
       params.w_rsi * rsiScore +
       params.w_er  * erScore +
       params.w_mtf * mtfScore +
       params.w_sr  * Math.max(0, Math.min(1, srScore)) +
-      params.w_pa  * paScore;
+      params.w_pa  * paScore +
+      params.w_bb  * bbScore +
+      params.w_div * divScore;
 
-    const breakdown = `rsi=${rsiScore.toFixed(2)}*${params.w_rsi} er=${erScore.toFixed(2)}*${params.w_er} mtf=${mtfScore.toFixed(1)}*${params.w_mtf} sr=${Math.max(0, Math.min(1, srScore)).toFixed(2)}*${params.w_sr} pa=${paScore.toFixed(1)}*${params.w_pa}`;
+    const breakdown = `rsi=${rsiScore.toFixed(2)}*${params.w_rsi} er=${erScore.toFixed(2)}*${params.w_er} mtf=${mtfScore.toFixed(1)}*${params.w_mtf} sr=${Math.max(0, Math.min(1, srScore)).toFixed(2)}*${params.w_sr} pa=${paScore.toFixed(1)}*${params.w_pa} bb=${bbScore.toFixed(2)}*${params.w_bb} div=${divScore.toFixed(0)}*${params.w_div}`;
 
-    return { rsi: rsiScore, er: erScore, mtf: mtfScore, sr: Math.max(0, Math.min(1, srScore)), pa: paScore, total, breakdown };
+    return { rsi: rsiScore, er: erScore, mtf: mtfScore, sr: Math.max(0, Math.min(1, srScore)), pa: paScore, bb: bbScore, div: divScore, total, breakdown };
   };
 
   // BUYシグナル: RSI が oversold 以下（売られすぎ）
