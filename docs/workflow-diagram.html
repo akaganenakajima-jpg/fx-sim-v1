@@ -462,7 +462,7 @@
 
 <div class="header">
   <h1>fx-sim ドキュメント <span style="font-size:15px;font-weight:400;-webkit-text-fill-color:#6b7280;margin-left:6px">v3 — ロジック主体アーキテクチャ</span></h1>
-  <p class="subtitle">Ph.1〜2 データ収集・AI判定 + Ph.3 ロジックエントリー + Ph.4 AIパラメーターレビュー + Ph.5 ニューストリガー</p>
+  <p class="subtitle">Ph.1〜2 データ収集・TP/SL・Logic エントリー + Ph.4 AIパラメーターレビュー + Ph.5 ニューストリガー + <b style="color:#fb923c">Ph.6 Path A 廃止</b></p>
 
   <div class="tab-nav">
     <button class="tab-btn active" onclick="switchTab('flow')">システムフロー</button>
@@ -478,7 +478,7 @@
 
   <div class="section-header">
     <div class="section-header-line"></div>
-    <span class="section-header-text">Phase 0〜2 — データ収集 → AI 判定</span>
+    <span class="section-header-text">Phase 0〜2 — データ収集 → TP/SL → Logic エントリー</span>
     <div class="section-header-line"></div>
   </div>
 
@@ -506,13 +506,13 @@
     <div class="lane-label">
       <span class="lane-phase">Phase 1</span>
       <span class="lane-icon">🔎</span>
-      <span class="lane-name">フィルター<br>&amp; 優先度</span>
+      <span class="lane-name">TP/SL<br>&amp; フィルター</span>
     </div>
     <div class="lane-body">
-      <p class="lane-desc">TP/SL チェック後、AI 呼出要否を判定。レート変化率・新ニュース・Reddit キーワード・時間帯で絞り込み。銘柄をボラティリティ + セッションスコアで優先順位付け。</p>
+      <p class="lane-desc">全 OPEN ポジションの TP/SL 到達チェック + トレイリングストップ。重要指標発表時間帯のスキップ判定。銘柄をボラティリティ + セッションスコアで優先順位付け。</p>
       <div class="lane-pills">
         <span class="pill pill-yellow">TP/SL 自動決済チェック</span>
-        <span class="pill pill-yellow">レート変化 ±0.05円 フィルタ</span>
+        <span class="pill pill-yellow">トレイリングストップ</span>
         <span class="pill pill-orange">重要指標スキップ（CPI・雇用統計）</span>
         <span class="pill pill-purple">銘柄優先度スコア算出</span>
       </div>
@@ -521,19 +521,20 @@
 
   <div class="flow-connector">↓</div>
 
-  <div class="swimlane lane-ai">
+  <div class="swimlane lane-logic">
     <div class="lane-label">
       <span class="lane-phase">Phase 2</span>
-      <span class="lane-icon">🤖</span>
-      <span class="lane-name">AI 判定<br>(Path A)</span>
+      <span class="lane-icon">⚙️</span>
+      <span class="lane-name">Logic<br>エントリー</span>
     </div>
     <div class="lane-body">
-      <p class="lane-desc">上位 N 銘柄を Gemini に送り BUY/SELL/HOLD を取得。429 時は GPT-4.1-mini → Claude Sonnet にフォールバック。全判定を decisions に記録。</p>
+      <p class="lane-desc">RSI + ER + ATR テクニカル指標で自律判定（<b style="color:#fb923c">AI 不使用</b>）。VIX/マクロ条件分岐で TP/SL 幅を動的調整。signal_strength フィルタで低品質シグナルを除去。全判定を decisions に記録。</p>
       <div class="lane-pills">
-        <span class="pill pill-orange">Gemini 3.1 Pro Preview（優先）</span>
-        <span class="pill pill-blue">GPT-4.1-mini フォールバック</span>
-        <span class="pill pill-purple">Claude Sonnet フォールバック</span>
-        <span class="pill pill-green">5 キーローテーション</span>
+        <span class="pill pill-cyan">RSI × ER × ATR テクニカル判定</span>
+        <span class="pill pill-orange">vix_tp/sl_scale 動的調整</span>
+        <span class="pill pill-yellow">signal_strength フィルタ</span>
+        <span class="pill pill-purple">strategy_primary 戦略分岐</span>
+        <span class="pill" style="background:rgba(251,146,60,0.15);color:#fb923c;border:1px dashed rgba(251,146,60,0.5)">Ph.6 Path A 廃止</span>
       </div>
     </div>
   </div>
@@ -562,26 +563,8 @@
 
   <div class="section-header">
     <div class="section-header-line"></div>
-    <span class="section-header-text">Ph.3〜5 — ロジック主体アーキテクチャ（新規追加）</span>
-    <span class="ph-badge">NEW</span>
+    <span class="section-header-text">Ph.4〜6 — AI パラメーター最適化 &amp; ニューストリガー</span>
     <div class="section-header-line"></div>
-  </div>
-
-  <div class="swimlane lane-logic">
-    <div class="lane-label">
-      <span class="lane-phase">Phase 2.7</span>
-      <span class="lane-icon">⚙️</span>
-      <span class="lane-name">ロジック<br>エントリー</span>
-    </div>
-    <div class="lane-body">
-      <p class="lane-desc">RSI × ADX × ATR の組み合わせで独立したエントリーシグナルを生成。AI 判定と並行して実行し、合致時にポジションを開設。銘柄ごとのパラメーターは <code style="color:#22d3ee;font-size:11px">instrument_params</code> で管理。</p>
-      <div class="lane-pills">
-        <span class="pill pill-cyan">RSI 過売買判定</span>
-        <span class="pill pill-cyan">ADX トレンド強度フィルタ</span>
-        <span class="pill pill-cyan">ATR 動的 TP/SL 計算</span>
-        <span class="pill pill-new">Ph.3 NEW</span>
-      </div>
-    </div>
   </div>
 
   <div class="flow-connector">↓</div>
