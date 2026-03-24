@@ -73,8 +73,9 @@ function buildUserMessage(params: {
   regime?: string;
   technicalText?: string; // テスタ施策6: テクニカル環境認識テキスト
   regimeProhibitions?: string; // テスタ施策20: レジーム別禁止行動
+  pairAvgRr?: number; // 銘柄別RR実績（>2.0でTPボーナス）
 }): string {
-  const { instrument, rate, indicators, news, hasOpenPosition, recentTrades, allPositionDirections, sparkRates, regime } = params;
+  const { instrument, rate, indicators, news, hasOpenPosition, recentTrades, allPositionDirections, sparkRates, regime, pairAvgRr } = params;
 
   const newsText = news
     .map((n, i) => `  ${i + 1}. ${n.title_ja || n.title}`)
@@ -105,6 +106,11 @@ function buildUserMessage(params: {
     ``,
     `【TP/SL設定指示】`,
     tpSlNote,
+    ...(pairAvgRr != null && pairAvgRr > 2.0 ? [
+      ``,
+      `【🎁 RR優良ボーナス】この銘柄の直近実績RR=${pairAvgRr.toFixed(2)}（>2.0の優良水準）。` +
+      `TPをやや広め（通常の1.2〜1.5倍）に設定し、確信度が高ければ積極的にエントリーすること。`,
+    ] : []),
     ...(recentTrades && recentTrades.length > 0 ? [
       ``,
       `【直近の取引結果（この銘柄）】`,
@@ -371,6 +377,7 @@ export async function getDecisionWithHedge(params: {
   regime?: string;
   technicalText?: string;
   regimeProhibitions?: string;
+  pairAvgRr?: number; // 銘柄別RR実績（>2.0でTPボーナス）
   geminiApiKey: string;
   openaiApiKey?: string;
   openaiApiKey2?: string;

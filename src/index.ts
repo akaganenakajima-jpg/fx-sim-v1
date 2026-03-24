@@ -580,6 +580,19 @@ async function runAIDecisions(
     }
   }
 
+  // 銘柄別RR実績を一括取得（RRボーナス判定用）
+  const pairAvgRrMap = new Map<string, number>();
+  if (candidatePairs.length > 0) {
+    const placeholders = candidatePairs.map(() => '?').join(',');
+    const rrRaw = await env.DB
+      .prepare(`SELECT pair, avg_rr FROM instrument_scores WHERE pair IN (${placeholders})`)
+      .bind(...candidatePairs)
+      .all<{ pair: string; avg_rr: number }>();
+    for (const row of rrRaw.results ?? []) {
+      pairAvgRrMap.set(row.pair, row.avg_rr);
+    }
+  }
+
   // スパークラインデータも一括取得
   const sparkMap = new Map<string, number[]>();
   if (candidatePairs.length > 0) {
@@ -670,6 +683,7 @@ async function runAIDecisions(
             regime: regimeName,
             technicalText,
             regimeProhibitions,
+            pairAvgRr: pairAvgRrMap.get(instrument.pair),
             geminiApiKey: getApiKey(env),
             openaiApiKey: env.OPENAI_API_KEY,
             openaiApiKey2: env.OPENAI_API_KEY_2,
