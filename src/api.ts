@@ -149,6 +149,24 @@ export interface StatusResponse {
   todayDecisionCount: number;
   todayBuyCount: number;
   todaySellCount: number;
+  /** Ph.6: 因果サマリー — ナラティブ+キードライバー+ヒートマップ */
+  causalSummary: {
+    narrative: string;
+    drivers: {
+      profitTop: { pair: string; pnl: number; reason: string } | null;
+      lossTop: { pair: string; pnl: number; reason: string } | null;
+      factors: Array<{
+        type: 'vix' | 'macro' | 'param_review' | 'news' | 'trailing' | 'delisted';
+        label: string;
+        severity: 'high' | 'medium' | 'low';
+      }>;
+    };
+    heatmap: Array<{
+      pair: string;
+      pnlToday: number;
+      factors: Record<string, number>;
+    }>;
+  } | null;
   /** テスタ施策21: 戦略マップデータ */
   strategyMap: {
     strategyStats: Array<{
@@ -512,8 +530,174 @@ export async function getApiStatus(db: D1Database, tradingEnv?: { TRADING_ENABLE
     todayDecisionCount: todayDecisionCountRow?.total ?? 0,
     todayBuyCount:      todayDecisionCountRow?.buyCount ?? 0,
     todaySellCount:     todayDecisionCountRow?.sellCount ?? 0,
+    causalSummary: await buildCausalSummary(db),
     strategyMap: await getStrategyMapData(db),
   };
+}
+
+// ─── Ph.6: 因果サマリー構築 ────────────────────────
+type CausalSummary = NonNullable<StatusResponse['causalSummary']>;
+
+async function buildCausalSummary(db: D1Database): Promise<CausalSummary | null> {
+  try {
+    // 1. 当日の確定ポジション
+    const closedToday = await db.prepare(
+      `SELECT pair, pnl, close_reason FROM positions
+       WHERE status='CLOSED' AND closed_at > datetime('now', 'start of day')
+       ORDER BY pnl DESC`
+    ).all<{ pair: string; pnl: number; close_reason: string | null }>();
+    const closedRows = closedToday.results ?? [];
+
+    // 2. 最新VIX（decisionsテーブルの最新行から取得）
+    const latestIndicators = await db.prepare(
+      `SELECT vix, nikkei, sp500 FROM decisions ORDER BY id DESC LIMIT 1`
+    ).first<{ vix: number | null; nikkei: number | null; sp500: number | null }>();
+
+    // 3. 直近のニューストリガー
+    let newsTriggers: Array<{ trigger_type: string; news_title: string; news_score: number; created_at: string }> = [];
+    try {
+      const ntRaw = await db.prepare(
+        `SELECT trigger_type, news_title, news_score, created_at FROM news_trigger_log
+         WHERE created_at > datetime('now', '-12 hours')
+         ORDER BY created_at DESC LIMIT 5`
+      ).all<{ trigger_type: string; news_title: string; news_score: number; created_at: string }>();
+      newsTriggers = ntRaw.results ?? [];
+    } catch { /* テーブル未存在 */ }
+
+    // 4. 直近のParam Review
+    let paramReviews: Array<{ pair: string; old_params: string; new_params: string; reason: string; created_at: string }> = [];
+    try {
+      const prRaw = await db.prepare(
+        `SELECT pair, old_params, new_params, reason, created_at FROM param_review_log
+         WHERE created_at > datetime('now', '-12 hours')
+         ORDER BY created_at DESC LIMIT 3`
+      ).all<{ pair: string; old_params: string; new_params: string; reason: string; created_at: string }>();
+      paramReviews = prRaw.results ?? [];
+    } catch { /* テーブル未存在 */ }
+
+    // --- profitTop / lossTop ---
+    const profitTop = closedRows.length > 0 && closedRows[0].pnl > 0
+      ? { pair: closedRows[0].pair, pnl: closedRows[0].pnl, reason: closedRows[0].close_reason ?? 'MANUAL' }
+      : null;
+    const lossTop = closedRows.length > 0 && closedRows[closedRows.length - 1].pnl < 0
+      ? { pair: closedRows[closedRows.length - 1].pair, pnl: closedRows[closedRows.length - 1].pnl, reason: closedRows[closedRows.length - 1].close_reason ?? 'MANUAL' }
+      : null;
+
+    // --- factors ---
+    const factors: CausalSummary['drivers']['factors'] = [];
+    const vix = latestIndicators?.vix ?? null;
+
+    if (vix != null && vix > 25) {
+      factors.push({ type: 'vix', label: `VIX=${vix.toFixed(0)}で高水準`, severity: vix > 35 ? 'high' : 'medium' });
+    }
+
+    // マクロ下落検出（簡易: sp500/nikkei が直近 decisions で下落傾向）
+    // ここではVIX以外のマクロを簡易判定
+    if (latestIndicators?.sp500 != null && latestIndicators?.nikkei != null) {
+      // sp500/nikkeiの値自体からは変化率が取れないため、VIX > 20 かつ存在する場合のみマクロ警告
+      if (vix != null && vix > 20 && vix <= 25) {
+        factors.push({ type: 'macro', label: '市場やや不安定', severity: 'low' });
+      }
+    }
+
+    if (paramReviews.length > 0) {
+      factors.push({
+        type: 'param_review',
+        label: `パラメータレビュー${paramReviews.length}件(${paramReviews.map(r => r.pair).join(',')})`,
+        severity: paramReviews.length >= 3 ? 'high' : 'medium',
+      });
+    }
+
+    const emergencyNews = newsTriggers.filter(n => n.trigger_type === 'EMERGENCY');
+    const trendNews = newsTriggers.filter(n => n.trigger_type === 'TREND_INFLUENCE');
+    if (emergencyNews.length > 0) {
+      factors.push({ type: 'news', label: `緊急ニュース${emergencyNews.length}件`, severity: 'high' });
+    } else if (trendNews.length > 0) {
+      factors.push({ type: 'news', label: `トレンドニュース${trendNews.length}件`, severity: 'medium' });
+    }
+
+    // --- narrative ---
+    const narrative = buildNarrative(profitTop, lossTop, vix, paramReviews);
+
+    // --- heatmap ---
+    const pairMap = new Map<string, { pnl: number; paramChanged: boolean; newsImpact: number }>();
+    for (const row of closedRows) {
+      const entry = pairMap.get(row.pair) ?? { pnl: 0, paramChanged: false, newsImpact: 0 };
+      entry.pnl += row.pnl;
+      pairMap.set(row.pair, entry);
+    }
+    // param_review の銘柄にフラグ
+    for (const pr of paramReviews) {
+      const entry = pairMap.get(pr.pair);
+      if (entry) entry.paramChanged = true;
+    }
+    // ニュースの影響度を銘柄に紐付け（affected_pairs が null の場合はスキップ）
+    // news_trigger_log.news_score を最大スコアとして使用
+    for (const nt of newsTriggers) {
+      const maxScore = nt.news_score ?? 0;
+      // 全銘柄に均等適用（affected_pairsはINSERT時にNULLの場合もある）
+      for (const [, entry] of pairMap) {
+        entry.newsImpact = Math.max(entry.newsImpact, maxScore);
+      }
+    }
+
+    const vixEffect = vix != null ? Math.min(1, Math.max(0, (vix - 15) / 25)) : 0;
+
+    const heatmap: CausalSummary['heatmap'] = [];
+    for (const [pair, data] of pairMap) {
+      heatmap.push({
+        pair,
+        pnlToday: Math.round(data.pnl * 100) / 100,
+        factors: {
+          pnl_closed: Math.round(data.pnl * 100) / 100,
+          vix_effect: Math.round(vixEffect * 100) / 100,
+          param_changed: data.paramChanged ? 1 : 0,
+          news_impact: Math.min(100, Math.round(data.newsImpact)),
+        },
+      });
+    }
+
+    return {
+      narrative,
+      drivers: { profitTop, lossTop, factors },
+      heatmap,
+    };
+  } catch {
+    return null;
+  }
+}
+
+function buildNarrative(
+  profitTop: { pair: string; pnl: number; reason: string } | null,
+  lossTop: { pair: string; pnl: number; reason: string } | null,
+  vix: number | null,
+  paramReviews: Array<{ pair: string }>,
+): string {
+  const parts: string[] = [];
+
+  if (profitTop && profitTop.pnl > 0) {
+    parts.push(`${profitTop.pair}が+${Math.round(profitTop.pnl)}円(${profitTop.reason})`);
+  }
+
+  if (lossTop && lossTop.pnl < 0 && (!profitTop || lossTop.pair !== profitTop.pair)) {
+    parts.push(`${lossTop.pair}が${Math.round(lossTop.pnl)}円`);
+  }
+
+  if (vix != null && vix > 25) {
+    parts.push(`VIX=${vix.toFixed(0)}で警戒中`);
+  }
+
+  if (paramReviews.length > 0) {
+    parts.push(`PR${paramReviews.length}件実行`);
+  }
+
+  if (parts.length === 0) {
+    return '本日はまだ取引がありません。';
+  }
+
+  let result = parts.join('。');
+  if (result.length > 100) result = result.substring(0, 97) + '...';
+  return result;
 }
 
 async function getStrategyMapData(db: D1Database): Promise<StatusResponse['strategyMap']> {
