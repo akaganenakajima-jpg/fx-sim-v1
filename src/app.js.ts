@@ -1282,41 +1282,6 @@ export const JS = `
       '</div>';
   }
 
-  // ── AI期待銘柄ランキング（階層ベイズ勝率 TOP3） ──
-  function renderAiRanking(data) {
-    var section = el('ai-ranking-section');
-    var listEl  = el('ai-ranking-list');
-    if (!section || !listEl) return;
-    var rates = (data.statistics && data.statistics.hierarchicalWinRates) || [];
-    // n >= 3 のみ対象、bayesRate 降順
-    var ranked = rates
-      .filter(function(r) { return r.n >= 3; })
-      .sort(function(a, b) { return b.bayesRate - a.bayesRate; })
-      .slice(0, 3);
-    if (ranked.length === 0) { section.style.display = 'none'; return; }
-
-    var medals = [
-      '<span class="ai-ranking-medal ai-ranking-medal--1">1</span>',
-      '<span class="ai-ranking-medal ai-ranking-medal--2">2</span>',
-      '<span class="ai-ranking-medal ai-ranking-medal--3">3</span>'
-    ];
-    var html = ranked.map(function(r, i) {
-      var pct = (r.bayesRate * 100).toFixed(1);
-      var barW = Math.round(r.bayesRate * 100);
-      var inst = INSTRUMENTS.find(function(x) { return x.pair === r.pair; });
-      var label = inst ? inst.label : r.pair;
-      return '<div class="ai-ranking-row">' +
-        medals[i] +
-        '<span class="ai-ranking-name">' + escHtml(label) + '</span>' +
-        '<div class="ai-ranking-bar"><div class="ai-ranking-bar-fill" style="width:' + barW + '%"></div></div>' +
-        '<span class="ai-ranking-pct">' + pct + '%</span>' +
-      '</div>';
-    }).join('');
-
-    listEl.innerHTML = html;
-    section.style.display = '';
-  }
-
   // ── 統計的有意性プログレスバー（ヒーロー内） ──
   function renderPowerProgress(data) {
     var wrap   = el('power-progress-wrap');
@@ -2206,50 +2171,10 @@ export const JS = `
     // ウォッチリスト
     renderWatchlist(data);
 
-    // AI最新判断（ポートフォリオタブ）— 直近BUY/SELLを表示
-    var ld = data.latestDecision;
-    var recentAction = (data.recentDecisions || []).length > 0 ? data.recentDecisions[0] : null;
-
-    // ポートフォリオタブ: 直近アクション（リッチカード）
-    if (recentAction) {
-      var bc = recentAction.decision === 'BUY' ? 'badge-buy' : 'badge-sell';
-      var b1 = el('ai-badge');
-      if (b1) { b1.textContent = recentAction.decision; b1.className = 'badge ' + bc + ' ai-badge'; }
-      var pairEl = el('ai-pair');
-      if (pairEl) pairEl.textContent = recentAction.pair;
-      var rateEl = el('ai-rate');
-      if (rateEl) rateEl.textContent = '@ ' + fmt(recentAction.rate, recentAction.rate < 10 ? 4 : recentAction.rate < 1000 ? 2 : 0);
-      var r1 = el('ai-reasoning');
-      if (r1) r1.textContent = recentAction.reasoning || '';
-      var t1 = el('ai-time');
-      if (t1) t1.textContent = fmtTime(recentAction.created_at);
-    }
-    // 稼働状況ライン
-    var statusEl = el('ai-status');
-    if (statusEl && data.systemStatus) {
-      var runs = data.systemStatus.totalRuns || 0;
-      // 連勝/連敗ストリーク計算（Variable Reward）
-      var recentC = (data.recentCloses || []).slice();
-      var streak = 0;
-      var streakType = '';
-      for (var si = 0; si < recentC.length; si++) {
-        var isWin = (recentC[si].pnl || 0) > 0;
-        if (si === 0) { streakType = isWin ? 'win' : 'lose'; streak = 1; }
-        else if ((isWin && streakType === 'win') || (!isWin && streakType === 'lose')) { streak++; }
-        else { break; }
-      }
-      var streakText = '';
-      if (streak >= 2 && streakType === 'win') streakText = ' · ' + streak + '連勝中';
-      else if (streak >= 3 && streakType === 'lose') streakText = ' · ' + streak + '連敗中';
-      statusEl.textContent = runs.toLocaleString('ja-JP') + '回監視中 · 次のシグナル待ち' + streakText;
-    }
-
-
     renderAiTab(data);
 
-    // 市場状態バー・AI ランキング・プログレスバー（資産タブ）
+    // 市場状態バー・プログレスバー（資産タブ）
     renderMarketStateBar(data);
-    renderAiRanking(data);
     renderPowerProgress(data);
 
     // 統計タブ
@@ -2802,14 +2727,6 @@ export const JS = `
       .catch(function() {
         el('last-updated').textContent = '更新失敗';
       });
-  }
-
-  // ── AI判断理由の展開トグル ──
-  var aiReasoning = el('ai-reasoning');
-  if (aiReasoning) {
-    aiReasoning.addEventListener('click', function() {
-      aiReasoning.classList.toggle('expanded');
-    });
   }
 
   // ── イベントリスナー ──
