@@ -14,6 +14,7 @@ export function getDashboardHtml(): string {
   <link rel="stylesheet" href="/style.css?v=13">
 </head>
 <body>
+  <div id="alert-banner-container" class="alert-banner-container"></div>
   <div id="app">
 
     <!-- PC: 左サイドバー -->
@@ -157,6 +158,17 @@ export function getDashboardHtml(): string {
           </div>
           <div class="power-progress-sub" id="power-progress-sub"></div>
         </div>
+      </section>
+
+      <!-- 因果サマリー -->
+      <section id="causal-summary" class="causal-summary" style="display:none">
+        <div id="causal-narrative" class="causal-narrative"></div>
+        <div class="causal-drivers">
+          <div id="causal-profit-top" class="driver-card driver-profit"></div>
+          <div id="causal-loss-top" class="driver-card driver-loss"></div>
+        </div>
+        <div id="causal-factors" class="causal-factors"></div>
+        <div id="causal-heatmap" class="causal-heatmap"></div>
       </section>
 
       <!-- 市場状態サマリーバー -->

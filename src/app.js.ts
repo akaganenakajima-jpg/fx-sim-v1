@@ -2075,6 +2075,9 @@ export const JS = `
     var prev = lastData;
     lastData = data;
 
+    // 警報バナー（最優先で描画）
+    renderAlertBanner(data);
+
     // ヘッダー: トレーディングモードバッジ
     var modeBadgeEl = document.getElementById('mode-badge');
     if (modeBadgeEl) {
@@ -2113,6 +2116,9 @@ export const JS = `
 
     // TP/SLバナー検出
     detectAndShowBanner(data);
+
+    // 因果サマリー描画
+    renderCausalSummary(data);
 
     // Hero: 資産残高（元手 + 累計PnL）
     var perf = data.performance;
@@ -2832,6 +2838,118 @@ export const JS = `
         var loading = el('params-loading');
         if (loading) loading.textContent = 'データ取得失敗';
       });
+  }
+
+  // ─── 因果サマリー描画（Task 3-B） ──────────────────────────────────────────
+
+  function renderCausalSummary(data) {
+    var section = document.getElementById('causal-summary');
+    if (!section) return;
+    var cs = data.causalSummary;
+    if (!cs) { section.style.display = 'none'; return; }
+    section.style.display = '';
+
+    // ナラティブ
+    var narEl = document.getElementById('causal-narrative');
+    if (narEl) narEl.textContent = cs.narrative || '';
+
+    // キードライバー — profitTop
+    var profitEl = document.getElementById('causal-profit-top');
+    if (profitEl) {
+      if (cs.drivers && cs.drivers.profitTop) {
+        var p = cs.drivers.profitTop;
+        profitEl.innerHTML = '<div class="driver-label">\\u5229\\u76CATop</div>' +
+          '<div class="driver-pair">' + p.pair + '</div>' +
+          '<div class="driver-pnl positive">+' + Math.round(p.pnl) + '\\u5186</div>' +
+          '<div class="driver-reason">' + (p.reason || '') + '</div>';
+        profitEl.style.display = '';
+      } else {
+        profitEl.style.display = 'none';
+      }
+    }
+
+    // キードライバー — lossTop
+    var lossEl = document.getElementById('causal-loss-top');
+    if (lossEl) {
+      if (cs.drivers && cs.drivers.lossTop) {
+        var l = cs.drivers.lossTop;
+        lossEl.innerHTML = '<div class="driver-label">\\u640D\\u5931Top</div>' +
+          '<div class="driver-pair">' + l.pair + '</div>' +
+          '<div class="driver-pnl negative">' + Math.round(l.pnl) + '\\u5186</div>' +
+          '<div class="driver-reason">' + (l.reason || '') + '</div>';
+        lossEl.style.display = '';
+      } else {
+        lossEl.style.display = 'none';
+      }
+    }
+
+    // 要因バッジ (factors)
+    var factorsEl = document.getElementById('causal-factors');
+    if (factorsEl && cs.drivers && cs.drivers.factors) {
+      factorsEl.innerHTML = cs.drivers.factors.map(function(f) {
+        var cls = f.severity === 'high' ? 'factor-high' : f.severity === 'medium' ? 'factor-medium' : 'factor-low';
+        return '<span class="factor-badge ' + cls + '">' + f.label + '</span>';
+      }).join('');
+    }
+  }
+
+  // ─── 警報バナー描画（Task 4-B） ──────────────────────────────────────────
+
+  function renderAlertBanner(data) {
+    var container = document.getElementById('alert-banner-container');
+    if (!container) return;
+    var alerts = [];
+
+    // DD 警告（赤）
+    if (data.riskStatus && data.riskStatus.killSwitchActive) {
+      alerts.push({ cls: 'red', text: '\\u26A0\\uFE0F DD STOP \\u2014 \\u65E5\\u6B21\\u640D\\u5931\\u4E0A\\u9650\\u8D85\\u904E\\u3002\\u65B0\\u898F\\u30A8\\u30F3\\u30C8\\u30EA\\u30FC\\u505C\\u6B62\\u4E2D' });
+    }
+    // DD 注意（オレンジ）
+    else if (data.riskStatus && data.riskStatus.maxDailyLoss > 0 &&
+             data.riskStatus.todayLoss / data.riskStatus.maxDailyLoss > 0.8) {
+      var pct = Math.round(data.riskStatus.todayLoss / data.riskStatus.maxDailyLoss * 100);
+      alerts.push({ cls: 'orange', text: '\\u26A1 DD\\u6CE8\\u610F \\u2014 \\u65E5\\u6B21\\u640D\\u5931\\u304C\\u4E0A\\u9650\\u306E' + pct + '%\\u306B\\u5230\\u9054' });
+    }
+
+    // 緊急ニュース（赤）
+    if (data.newsAnalysis) {
+      var now = Date.now();
+      var tenMin = 10 * 60 * 1000;
+      data.newsAnalysis.forEach(function(n) {
+        if (n.attention && n.analyzed_at) {
+          var diff = now - new Date(n.analyzed_at).getTime();
+          if (diff < tenMin) {
+            alerts.push({ cls: 'red', text: '\\uD83D\\uDD34 \\u7DCA\\u6025\\u30CB\\u30E5\\u30FC\\u30B9: ' + (n.title_ja || n.title || '\\u901F\\u5831') });
+          }
+        }
+      });
+    }
+
+    // システムエラー（オレンジ）
+    if (data.systemLogs) {
+      var recentErrors = data.systemLogs.slice(0, 5).filter(function(l) { return l.level === 'ERROR'; });
+      if (recentErrors.length > 0) {
+        alerts.push({ cls: 'orange', text: '\\uD83D\\uDD27 \\u30B7\\u30B9\\u30C6\\u30E0\\u30A8\\u30E9\\u30FC\\u691C\\u51FA: ' + recentErrors[0].message });
+      }
+    }
+
+    // 孤立ポジション（黄）
+    if (data.causalSummary && data.causalSummary.drivers && data.causalSummary.drivers.factors) {
+      var delisted = data.causalSummary.drivers.factors.filter(function(f) { return f.type === 'delisted'; });
+      if (delisted.length > 0) {
+        alerts.push({ cls: 'yellow', text: '\\u26A0 \\u5B64\\u7ACB\\u30DD\\u30B8\\u30B7\\u30E7\\u30F3: ' + delisted[0].label });
+      }
+    }
+
+    // 表示
+    if (alerts.length === 0) {
+      container.style.display = 'none';
+      return;
+    }
+    container.style.display = '';
+    container.innerHTML = alerts.map(function(a) {
+      return '<div class="alert-banner alert-' + a.cls + '">' + a.text + '</div>';
+    }).join('');
   }
 
   // ─── 緊急ニュースバナー（4-B） ─────────────────────────────────────────────
