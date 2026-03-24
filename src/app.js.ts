@@ -1881,6 +1881,45 @@ export const JS = `
         '</div>';
     }
 
+    // ── 5.5. 銘柄別 RR / Kelly テーブル ──
+    var rrKellyHtml = '';
+    if (scores.length > 0) {
+      var rrRows = scores
+        .filter(function(s) { return s.total_trades >= 1; })
+        .map(function(s) {
+          var rr = s.avg_rr;
+          var wr = s.win_rate;
+          var kelly = rr > 0 ? wr - (1 - wr) / rr : -9.99;
+          return { pair: s.pair, n: s.total_trades, wr: wr, rr: rr, kelly: kelly };
+        })
+        .sort(function(a, b) { return b.kelly - a.kelly; });
+
+      rrKellyHtml = secHeader('📐', 'var(--teal, #30b0c7)', '銘柄別 RR / Kelly') +
+        '<table style="display:table;width:100%;border-collapse:collapse;font-size:12px">' +
+        '<thead><tr style="color:var(--label-secondary);font-size:11px">' +
+        '<th style="text-align:left;padding:4px 6px;font-weight:500">銘柄</th>' +
+        '<th style="text-align:right;padding:4px 6px;font-weight:500">件数</th>' +
+        '<th style="text-align:right;padding:4px 6px;font-weight:500">勝率</th>' +
+        '<th style="text-align:right;padding:4px 6px;font-weight:500">RR</th>' +
+        '<th style="text-align:right;padding:4px 6px;font-weight:500">Kelly</th>' +
+        '</tr></thead><tbody>' +
+        rrRows.map(function(r) {
+          var instrR = INSTRUMENTS.filter(function(i) { return i.pair === r.pair; })[0];
+          var label = instrR ? instrR.label : r.pair;
+          var kellyColor = r.kelly >= 0.1 ? 'var(--green)' : r.kelly >= 0 ? 'var(--orange, #ff9500)' : 'var(--red)';
+          var kellyText = r.kelly <= -9 ? '—' : (r.kelly >= 0 ? '+' : '') + (r.kelly * 100).toFixed(1) + '%';
+          var rrColor = r.rr >= 1.5 ? 'var(--green)' : r.rr >= 1.0 ? 'var(--label)' : 'var(--red)';
+          return '<tr style="border-bottom:1px solid var(--separator)">' +
+            '<td style="padding:6px;font-weight:500">' + escHtml(label) + '</td>' +
+            '<td style="text-align:right;padding:6px;color:var(--label-secondary)">' + r.n + '</td>' +
+            '<td style="text-align:right;padding:6px">' + (r.wr * 100).toFixed(0) + '%</td>' +
+            '<td style="text-align:right;padding:6px;color:' + rrColor + '">' + r.rr.toFixed(2) + '</td>' +
+            '<td style="text-align:right;padding:6px;font-weight:600;color:' + kellyColor + '">' + kellyText + '</td>' +
+            '</tr>';
+        }).join('') +
+        '</tbody></table>';
+    }
+
     // ── 6. 取引履歴（Progressive Disclosure: 初期5件 + もっと見る） ──
     var HIST_INITIAL = 5;
     var closes = (data.recentCloses || []).slice();
@@ -1918,7 +1957,7 @@ export const JS = `
     }, 0);
 
     // レイアウト順序: 統計データ → 銘柄別 → スコア → 履歴
-    container.innerHTML = advStatsHtml + pairHtml + scoresHtml + histHtml +
+    container.innerHTML = advStatsHtml + pairHtml + scoresHtml + rrKellyHtml + histHtml +
       (totalTrades === 0
         ? '<div class="secondary-text" style="padding:8px 0 4px;text-align:center;font-size:13px">まだ決済された取引はありません<br>Cronが蓄積されると成績が表示されます</div>'
         : '');
