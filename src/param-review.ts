@@ -219,7 +219,7 @@ function validateAndClamp(raw: ReviewResult, current: InstrumentParamsRow): Revi
 async function callGeminiForReview(
   prompt: string,
   apiKey: string,
-): Promise<ReviewResult | null> {
+): Promise<{ result: ReviewResult | null; errorCode?: number }> {
   const ENDPOINT = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-3.1-pro-preview:generateContent';
   try {
     const res = await fetch(`${ENDPOINT}?key=${apiKey}`, {
@@ -231,9 +231,40 @@ async function callGeminiForReview(
       }),
       signal: AbortSignal.timeout(15000),
     });
-    if (!res.ok) return null;
+    if (!res.ok) return { result: null, errorCode: res.status };
     const data = await res.json() as { candidates?: Array<{ content: { parts: Array<{ text: string }> } }> };
     const text = data.candidates?.[0]?.content?.parts?.[0]?.text;
+    if (!text) return { result: null };
+    return { result: JSON.parse(text) as ReviewResult };
+  } catch {
+    return { result: null };
+  }
+}
+
+// ─── GPT-4.1-mini フォールバック ──────────────────────────────────────────
+
+async function callGptForReview(
+  prompt: string,
+  apiKey: string,
+): Promise<ReviewResult | null> {
+  try {
+    const res = await fetch('https://api.openai.com/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${apiKey}`,
+      },
+      body: JSON.stringify({
+        model: 'gpt-4.1-mini',
+        messages: [{ role: 'user', content: prompt }],
+        response_format: { type: 'json_object' },
+        temperature: 0.2,
+      }),
+      signal: AbortSignal.timeout(20000),
+    });
+    if (!res.ok) return null;
+    const data = await res.json() as { choices?: Array<{ message: { content: string } }> };
+    const text = data.choices?.[0]?.message?.content;
     if (!text) return null;
     return JSON.parse(text) as ReviewResult;
   } catch {
@@ -326,6 +357,7 @@ async function applyReviewResult(
 export async function runParamReview(
   db: D1Database,
   geminiApiKey: string,
+  openaiApiKey?: string,
 ): Promise<{ reviewed: boolean; pair?: string; summary?: string }> {
   // レビューが必要な銘柄を1件取得（cron 1回に1銘柄ずつ処理）
   const candidate = await findPairNeedingReview(db);
@@ -344,13 +376,29 @@ export async function runParamReview(
   const stats = await calcTradeStats(db, pair);
   if (stats.totalTrades < 10) return { reviewed: false };
 
-  // AIレビュープロンプト生成・呼び出し
+  // AIレビュープロンプト生成・呼び出し（Gemini → GPT フォールバック）
   const prompt = buildReviewPrompt(pair, paramsRow, stats);
-  const rawResult = await callGeminiForReview(prompt, geminiApiKey);
+  const geminiResponse = await callGeminiForReview(prompt, geminiApiKey);
+
+  let rawResult: ReviewResult | null = geminiResponse.result;
+  let reviewedBy = REVIEW_PROMPT_VERSION;
 
   if (!rawResult) {
     await insertSystemLog(db, 'WARN', 'PARAM_REVIEW',
-      `AIレビュー呼び出し失敗: ${pair}`, 'GeminiAPI応答なし');
+      `Geminiレビュー失敗: ${pair}`,
+      `errorCode=${geminiResponse.errorCode ?? 'timeout/parse'} → GPTフォールバック試行`);
+
+    if (openaiApiKey) {
+      rawResult = await callGptForReview(prompt, openaiApiKey);
+      if (rawResult) {
+        reviewedBy = `${REVIEW_PROMPT_VERSION}_GPT`;
+      }
+    }
+  }
+
+  if (!rawResult) {
+    await insertSystemLog(db, 'WARN', 'PARAM_REVIEW',
+      `AIレビュー全失敗: ${pair}`, 'Gemini/GPT両方応答なし');
     return { reviewed: false };
   }
 
@@ -358,7 +406,7 @@ export async function runParamReview(
   const validated = validateAndClamp(rawResult, paramsRow);
 
   // DB更新
-  await applyReviewResult(db, validated, paramsRow, stats, REVIEW_PROMPT_VERSION);
+  await applyReviewResult(db, validated, paramsRow, stats, reviewedBy);
 
   const summary = `RR ${(paramsRow.atr_tp_multiplier / paramsRow.atr_sl_multiplier).toFixed(2)}→${(validated.atr_tp_multiplier / validated.atr_sl_multiplier).toFixed(2)} | ${validated.reason.slice(0, 80)}`;
 

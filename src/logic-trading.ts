@@ -17,6 +17,7 @@ import { insertDecision, insertSystemLog } from './db';
 import { INSTRUMENTS } from './instruments';
 import type { MarketIndicators } from './indicators';
 import { getBroker, type BrokerEnv } from './broker';
+import { getActiveTempParams } from './news-trigger';
 
 export interface LogicDecisionSummary {
   entered: number;
@@ -132,8 +133,22 @@ export async function runLogicDecisions(
 
   for (const instrument of INSTRUMENTS) {
     const { pair } = instrument;
-    const params = paramsMap.get(pair);
-    if (!params) continue;
+    const baseParams = paramsMap.get(pair);
+    if (!baseParams) continue;
+
+    // 臨時パラメーターを取得してマージ（NULLの項目は通常値を維持）
+    const tempParams = await getActiveTempParams(db, pair, now);
+    const params: InstrumentParamsRow = tempParams
+      ? {
+          ...baseParams,
+          ...(tempParams.rsi_oversold      != null && { rsi_oversold:      tempParams.rsi_oversold }),
+          ...(tempParams.rsi_overbought     != null && { rsi_overbought:    tempParams.rsi_overbought }),
+          ...(tempParams.adx_min            != null && { adx_min:           tempParams.adx_min }),
+          ...(tempParams.atr_tp_multiplier  != null && { atr_tp_multiplier: tempParams.atr_tp_multiplier }),
+          ...(tempParams.atr_sl_multiplier  != null && { atr_sl_multiplier: tempParams.atr_sl_multiplier }),
+          ...(tempParams.vix_max            != null && { vix_max:           tempParams.vix_max }),
+        }
+      : baseParams;
 
     const currentRate = prices.get(pair);
     if (currentRate == null) continue;
@@ -167,9 +182,12 @@ export async function runLogicDecisions(
       continue;
     }
 
-    // テクニカルシグナル計算
+    // テクニカルシグナル計算（臨時パラメーターが適用中なら reason に付記）
     const techSignal = calcTechnicalSignal(pair, closes, currentRate, params, vix ?? null);
-    summary.signals.push({ pair, signal: techSignal.signal, reason: techSignal.reason });
+    const signalReason = tempParams
+      ? `[TEMP:${tempParams.expires_at.slice(11, 16)}まで] ${techSignal.reason}`
+      : techSignal.reason;
+    summary.signals.push({ pair, signal: techSignal.signal, reason: signalReason });
 
     if (techSignal.signal === 'NEUTRAL') {
       summary.skipped++;

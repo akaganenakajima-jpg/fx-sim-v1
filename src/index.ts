@@ -45,6 +45,7 @@ import { isValidStrategy } from './strategy-tag';
 import { getWeekendStatus, lockProfitsForWeekend, forceCloseAllForWeekend } from './weekend';
 import { runLogicDecisions } from './logic-trading';
 import { runParamReview } from './param-review';
+import { runNewsTrigger, consumeEmergencyForceFlag } from './news-trigger';
 
 interface Env {
   DB: D1Database;
@@ -1320,6 +1321,16 @@ async function run(env: Env): Promise<void> {
       }
     }
 
+    // 2.8 Ph.5: ニューストリガー（緊急→PATH_B強制 / トレンド→臨時パラメーター）
+    try {
+      const triggerResult = await runNewsTrigger(env.DB, env.OPENAI_API_KEY);
+      if (triggerResult.triggerType !== 'NONE') {
+        console.log(`[fx-sim] NEWS_TRIGGER: ${triggerResult.triggerType} title=${triggerResult.newsTitle?.slice(0, 50)}`);
+      }
+    } catch (e) {
+      console.warn(`[fx-sim] runNewsTrigger error: ${String(e).slice(0, 80)}`);
+    }
+
     // 3. 共有ニュースストア構築 + Path B 実行（計測開始）
     const t2 = Date.now();
     const prevNewsHashRaw = await getCacheValue(env.DB, PREV_NEWS_HASH_KEY);
@@ -1353,10 +1364,16 @@ async function run(env: Env): Promise<void> {
     let pathBResult: PathBResult = { decisions: [], reversals: [], newsAnalysis: [] };
 
     // Path B 最小間隔チェック（5分）— 需要削減で429を構造的に防止
+    // 緊急ニューストリガーがあれば間隔を無視して強制発火
     const PATH_B_MIN_INTERVAL_MS = 5 * 60 * 1000;
     const lastPathBRaw = await getCacheValue(env.DB, 'last_path_b_at');
     const lastPathBAt = lastPathBRaw ? parseInt(lastPathBRaw) : 0;
-    const pathBIntervalOk = (Date.now() - lastPathBAt) >= PATH_B_MIN_INTERVAL_MS;
+    const emergencyForce = await consumeEmergencyForceFlag(env.DB);
+    const pathBIntervalOk = emergencyForce || (Date.now() - lastPathBAt) >= PATH_B_MIN_INTERVAL_MS;
+
+    if (emergencyForce) {
+      await insertSystemLog(env.DB, 'INFO', 'PATH_B', 'PATH_B強制発火（緊急ニューストリガー）', '');
+    }
 
     // ── Path A/B 並列化フラグ ──
     // PARALLEL_PATH_AB='true' → B1完了後にB2残処理とPath Aを並列実行
@@ -1635,18 +1652,15 @@ async function run(env: Env): Promise<void> {
       await insertSystemLog(env.DB, 'WARN', 'CRON', `実行時間超過: ${elapsed}ms`);
     }
 
-    // Ph.4: パラメーターレビュー（非同期・メインループをブロックしない）
-    // PATH_A完了後に1銘柄だけチェック。タイムアウト超過しても安全（ctx不使用）
-    void (async () => {
-      try {
-        const reviewResult = await runParamReview(env.DB, getApiKey(env));
-        if (reviewResult.reviewed) {
-          console.log(`[fx-sim] PARAM_REVIEW: ${reviewResult.pair} updated — ${reviewResult.summary}`);
-        }
-      } catch (e) {
-        console.warn(`[fx-sim] runParamReview error: ${String(e).slice(0, 100)}`);
+    // Ph.4: パラメーターレビュー（PATH_A完了後・1銘柄のみ）
+    try {
+      const reviewResult = await runParamReview(env.DB, getApiKey(env), env.OPENAI_API_KEY);
+      if (reviewResult.reviewed) {
+        console.log(`[fx-sim] PARAM_REVIEW: ${reviewResult.pair} updated — ${reviewResult.summary}`);
       }
-    })();
+    } catch (e) {
+      console.warn(`[fx-sim] runParamReview error: ${String(e).slice(0, 100)}`);
+    }
 
     // 日次処理（JST 0:00 = UTC 15:00 に実行）
     const jstHour = (now.getUTCHours() + 9) % 24;
