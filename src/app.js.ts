@@ -703,15 +703,44 @@ export const JS = `
 
     // 未分析
     var unanalyzed = el('news-feed-unanalyzed');
+    var unHeader = el('news-unanalyzed-header');
     if (unanalyzed) {
       var analyzedTitles = {};
       analysis.forEach(function(a) { if (a.title) analyzedTitles[a.title] = true; });
       var unItems = latest.filter(function(n) { return !analyzedTitles[n.title]; });
-      unanalyzed.innerHTML = unItems.length > 0
-        ? unItems.slice(0, 10).map(function(n) {
-            return '<div style="padding:8px 0;border-bottom:1px solid var(--separator);font-size:13px">' + escHtml(n.title_ja || n.title) + '</div>';
-          }).join('')
-        : '<div style="padding:16px;font-size:12px;color:var(--tertiary)">なし</div>';
+      if (unHeader) unHeader.textContent = '未分析ニュース · ' + unItems.length + '件';
+      if (unItems.length > 0) {
+        var shown = unItems.slice(0, 5);
+        var rest = unItems.length - shown.length;
+        unanalyzed.innerHTML = shown.map(function(n) {
+          return '<div style="padding:12px 0;border-bottom:1px solid rgba(255,255,255,0.04);font-size:13px">' +
+            '<span style="color:var(--tertiary);font-size:11px;margin-right:8px">' + fmtTimeAgo(n.pubDate || '') + '</span>' +
+            escHtml(n.title_ja || n.title) + '</div>';
+        }).join('') +
+        (rest > 0 ? '<div style="padding:12px 0;font-size:12px;color:var(--tertiary);text-align:center">他' + rest + '件...</div>' : '');
+      } else {
+        unanalyzed.innerHTML = '<div style="padding:16px;font-size:12px;color:var(--tertiary)">なし</div>';
+      }
+    }
+
+    // ソース別統計
+    var sourcesEl = el('news-sources');
+    if (sourcesEl) {
+      var sourceMap = {};
+      var allNews = (latest || []).concat(accepted || []);
+      allNews.forEach(function(n) {
+        var src = n.source || 'その他';
+        sourceMap[src] = (sourceMap[src] || 0) + 1;
+      });
+      var sourceKeys = Object.keys(sourceMap).sort(function(a, b) { return sourceMap[b] - sourceMap[a]; });
+      if (sourceKeys.length > 0) {
+        sourcesEl.innerHTML = sourceKeys.map(function(s, i) {
+          var border = i < sourceKeys.length - 1 ? 'border-bottom:1px solid rgba(255,255,255,0.04);' : '';
+          return '<div style="display:flex;justify-content:space-between;padding:8px 0;' + border + 'font-size:13px"><span>' + escHtml(s) + '</span><span style="color:var(--secondary)">' + sourceMap[s] + '件</span></div>';
+        }).join('');
+      } else {
+        sourcesEl.innerHTML = '<div style="padding:16px;font-size:12px;color:var(--tertiary)">データなし</div>';
+      }
     }
   }
 
@@ -720,11 +749,24 @@ export const JS = `
     var badgeCls = score >= 90 ? 'nf-badge-emergency' : score >= 70 ? 'nf-badge-trend' : 'nf-badge-info';
     var badgeText = score >= 90 ? '緊急' : score >= 70 ? 'トレンド' : '情報';
     var borderCls = score >= 90 ? 'nf-emergency' : score >= 70 ? 'nf-trend' : '';
+    var whyHtml = '';
+    if (n.why_chain && n.why_chain.length > 0) {
+      whyHtml = '<div style="margin-top:8px;padding-top:8px;border-top:1px solid rgba(255,255,255,0.04)">' +
+        '<div style="font-size:11px;color:var(--tertiary);margin-bottom:4px">Why\\u00d75</div>' +
+        '<div style="font-size:12px;color:var(--secondary);line-height:1.6;padding-left:8px;border-left:2px solid var(--tertiary)">' +
+        n.why_chain.map(function(w, i) { return '\\u2460\\u2461\\u2462\\u2463\\u2464'.charAt(i) + ' ' + escHtml(w); }).join('<br>') +
+        '</div></div>';
+    }
+    var crossHtml = '';
+    if (n.attention && n.action_pair) {
+      crossHtml = '<div style="margin-top:8px"><span class="cross-link" onclick="switchTab(\'tab-portfolio\')">\\u2192 今タブでポジション確認</span></div>';
+    }
     return '<div class="nf-item ' + borderCls + '">' +
-      '<div class="nf-header"><span class="nf-badge ' + badgeCls + '">' + badgeText + ' · score ' + score + '</span><span class="nf-time">' + fmtTimeAgo(n.analyzed_at || '') + '</span></div>' +
+      '<div class="nf-header"><span class="nf-badge ' + badgeCls + '">' + badgeText + ' \\u00b7 score ' + score + '</span><span class="nf-time">' + fmtTimeAgo(n.analyzed_at || '') + '</span></div>' +
       '<div class="nf-headline">' + escHtml(n.title_ja || n.title || '') + '</div>' +
       (n.desc_ja ? '<div class="nf-ai"><span class="nf-ai-label">AI判断</span><span class="nf-ai-text">' + escHtml(n.desc_ja) + '</span></div>' : '') +
       (n.action_text ? '<div class="nf-action"><span style="font-size:12px;color:var(--tertiary)">\\u2192</span><span class="nf-action-text">' + n.action_text + '</span></div>' : '') +
+      whyHtml + crossHtml +
     '</div>';
   }
 
@@ -804,30 +846,59 @@ export const JS = `
       matrixEl.innerHTML = '<div style="padding:16px;font-size:12px;color:var(--tertiary)">データ蓄積中...</div>';
       return;
     }
-    var rows = sm.strategyStats.map(function(s) {
-      var wrColor = s.winRate >= 0.55 ? 'var(--green)' : s.winRate >= 0.45 ? 'var(--orange)' : 'var(--red)';
-      return '<tr><td>' + escHtml(s.strategy || '—') + '</td><td>' + escHtml(s.regime || '—') + '</td>' +
-        '<td style="text-align:right">' + s.count + '</td>' +
-        '<td style="text-align:right;color:' + wrColor + '">' + (s.winRate * 100).toFixed(0) + '%</td>' +
-        '<td style="text-align:right">' + (s.avgPnl >= 0 ? '+' : '') + s.avgPnl.toFixed(1) + '</td></tr>';
-    }).join('');
-    matrixEl.innerHTML = '<table style="width:100%;font-size:11px;border-collapse:collapse"><thead><tr style="color:var(--tertiary);border-bottom:1px solid var(--separator)"><th style="text-align:left;padding:4px">手法</th><th style="text-align:left;padding:4px">環境</th><th style="text-align:right;padding:4px">N</th><th style="text-align:right;padding:4px">勝率</th><th style="text-align:right;padding:4px">期待値</th></tr></thead><tbody>' + rows + '</tbody></table>';
+    // Build matrix: strategy x regime
+    var strategies = [];
+    var regimes = [];
+    var cellMap = {};
+    sm.strategyStats.forEach(function(s) {
+      var strat = s.strategy || '—';
+      var reg = s.regime || '—';
+      if (strategies.indexOf(strat) === -1) strategies.push(strat);
+      if (regimes.indexOf(reg) === -1) regimes.push(reg);
+      cellMap[strat + '|' + reg] = s;
+    });
+    if (regimes.length === 0) regimes = ['低VIX', '中VIX', '高VIX'];
+    var html = '<div class="matrix-h"></div>';
+    regimes.forEach(function(r) { html += '<div class="matrix-h">' + escHtml(r) + '</div>'; });
+    strategies.forEach(function(strat) {
+      html += '<div class="matrix-p">' + escHtml(strat) + '</div>';
+      regimes.forEach(function(reg) {
+        var cell = cellMap[strat + '|' + reg];
+        if (cell) {
+          var wr = (cell.winRate * 100).toFixed(0);
+          var bgColor = cell.winRate >= 0.55 ? 'rgba(48,209,88,0.25)' : cell.winRate >= 0.50 ? 'rgba(48,209,88,0.15)' : 'rgba(255,69,58,0.2)';
+          var prefix = cell.winRate >= 0.50 ? '+' : '';
+          html += '<div class="matrix-c" style="background:' + bgColor + '">' + prefix + wr + '%</div>';
+        } else {
+          html += '<div class="matrix-c">—</div>';
+        }
+      });
+    });
+    matrixEl.innerHTML = html;
   }
 
   function renderStatsVerdict(data) {
-    // TODO: data.statistics から worked/didnt/pending を計算
+    var ph = data.paramHistory || [];
+    var worked = 0, didnt = 0, pending = 0;
+    ph.forEach(function(h) {
+      var v = h.verdict || h.result;
+      if (v === 'worked' || v === 'improved') worked++;
+      else if (v === 'worsened' || v === 'didnt') didnt++;
+      else pending++;
+    });
     var svWorked = el('sv-worked');
     var svDidnt = el('sv-didnt');
     var svPending = el('sv-pending');
-    if (svWorked) svWorked.textContent = '—';
-    if (svDidnt) svDidnt.textContent = '—';
-    if (svPending) svPending.textContent = '—';
+    if (svWorked) { svWorked.textContent = worked > 0 ? String(worked) : '—'; svWorked.style.color = 'var(--green)'; }
+    if (svDidnt) { svDidnt.textContent = didnt > 0 ? String(didnt) : '—'; svDidnt.style.color = 'var(--red)'; }
+    if (svPending) { svPending.textContent = pending > 0 ? String(pending) : '—'; svPending.style.color = 'var(--tertiary)'; }
   }
 
   function renderEvoCards(data) {
     var container = el('evo-cards');
     if (!container) return;
     var byPair = data.performanceByPair || {};
+    var ph = data.paramHistory || [];
     var traded = INSTRUMENTS.filter(function(i) { var p = byPair[i.pair]; return p && p.total > 0; });
     if (traded.length === 0) {
       container.innerHTML = '<div style="padding:16px;font-size:12px;color:var(--tertiary)">データ蓄積中...</div>';
@@ -835,15 +906,78 @@ export const JS = `
     }
     container.innerHTML = traded.map(function(instr) {
       var p = byPair[instr.pair];
-      var wr = p.total > 0 ? (p.wins / p.total * 100).toFixed(0) : 0;
-      var pnlF = fmtPnl(p.totalPnl, instr.unit);
-      var pnlColor = p.totalPnl > 0 ? 'var(--green)' : p.totalPnl < 0 ? 'var(--red)' : '';
-      return '<div class="evo-card" id="perf-' + instr.pair.replace(/[\\/\\s]/g, '-') + '">' +
-        '<div style="display:flex;justify-content:space-between;align-items:center">' +
-          '<span style="font-weight:600">' + escHtml(instr.label) + '</span>' +
-          '<span style="color:' + pnlColor + ';font-weight:700">' + pnlF.text + '</span>' +
+      var wr = p.total > 0 ? (p.wins / p.total * 100).toFixed(0) : '—';
+      var pairChanges = ph.filter(function(h) { return h.pair === instr.pair; });
+      var pairId = instr.pair.replace(/[\\/\\s]/g, '-');
+
+      // verdict
+      var verdictCls = 'unchanged';
+      var verdictText = '検証中';
+      if (p.totalPnl > 0) { verdictCls = 'worked'; verdictText = '改善中'; }
+      else if (p.totalPnl < 0) { verdictCls = 'didnt'; verdictText = '悪化'; }
+
+      // mini sparkline from sparklines data
+      var chartHtml = '';
+      var sp = data.sparklines && data.sparklines[instr.pair];
+      if (sp && sp.length > 2) {
+        var rates = sp.map(function(pt) { return pt.rate; });
+        var mn = Math.min.apply(null, rates);
+        var mx = Math.max.apply(null, rates);
+        var rng = mx - mn || 1;
+        var pts = rates.map(function(r, i) {
+          var x = (i / (rates.length - 1) * 300).toFixed(1);
+          var y = (48 - ((r - mn) / rng) * 44).toFixed(1);
+          return x + ',' + y;
+        }).join(' ');
+        var sColor = p.totalPnl >= 0 ? '#30D158' : '#FF453A';
+        chartHtml = '<div class="evo-chart"><svg viewBox="0 0 300 48"><polyline points="' + pts + '" fill="none" stroke="' + sColor + '" stroke-width="1.5" stroke-linecap="round"/></svg></div>';
+      }
+
+      // changes
+      var changesHtml = '';
+      if (pairChanges.length > 0) {
+        changesHtml = '<div class="evo-changes">' + pairChanges.map(function(c) {
+          var dotCls = c.verdict === 'worked' || c.verdict === 'improved' ? 'improved' : c.verdict === 'worsened' || c.verdict === 'didnt' ? 'worsened' : 'neutral';
+          var resCls = dotCls === 'improved' ? 'worked' : dotCls === 'worsened' ? 'didnt' : 'unchanged';
+          var whyHtml = '';
+          if (c.why_chain && c.why_chain.length > 0) {
+            var uid = 'why-evo-' + pairId + '-' + Math.random().toString(36).slice(2, 6);
+            whyHtml = '<div class="why-toggle" onclick="var t=document.getElementById(\'' + uid + '\');t.classList.toggle(\'open\')">\\u25b6 ' + (dotCls === 'improved' ? 'なぜ効いた？' : dotCls === 'worsened' ? 'なぜ効かなかった？' : '根拠') + '</div>' +
+              '<div class="why-tree" id="' + uid + '">' + buildWhyTree(c.why_chain) + '</div>';
+          }
+          return '<div class="evo-change"><div class="evo-dot ' + dotCls + '"></div><div style="flex:1">' +
+            '<div class="evo-text">' + escHtml(c.description || c.change || '') + '</div>' +
+            '<div class="evo-result ' + resCls + '">' + escHtml(c.result_text || '') + '</div>' +
+            whyHtml +
+            '<span class="cross-link" onclick="switchTab(\'tab-strategy\')">\\u2192 戦略で詳細</span>' +
+            '<span class="cross-link" style="margin-left:12px" onclick="switchTab(\'tab-ai\')">\\u2192 AIタブで判断を確認</span>' +
+          '</div></div>';
+        }).join('') + '</div>';
+      } else {
+        changesHtml = '<div class="evo-changes"><div class="evo-change"><div class="evo-dot neutral"></div><div style="flex:1">' +
+          '<div class="evo-text">勝率 ' + wr + '% \\u00b7 ' + p.wins + '勝' + (p.total - p.wins) + '敗\\uff08計' + p.total + '\\uff09</div>' +
+          '<div class="evo-result unchanged">パラメーター変更なし</div>' +
+        '</div></div></div>';
+      }
+
+      return '<div class="evo-card" id="evo-' + pairId + '">' +
+        '<div class="evo-header">' +
+          '<span class="evo-pair">' + escHtml(instr.label) + '</span>' +
+          '<span class="evo-verdict ' + verdictCls + '">' + verdictText + '</span>' +
         '</div>' +
-        '<div style="margin-top:4px;font-size:12px;color:var(--tertiary)">勝率 ' + wr + '% · ' + p.wins + '勝' + (p.total - p.wins) + '敗（計' + p.total + '）</div>' +
+        chartHtml + changesHtml +
+      '</div>';
+    }).join('');
+  }
+
+  function buildWhyTree(chain) {
+    if (!chain || chain.length === 0) return '';
+    return chain.map(function(w, i) {
+      var depth = w.depth || i;
+      return '<div class="why-node">' +
+        '<div class="why-q">Why' + (i + 1) + ': ' + escHtml(w.question || w.q || '') + '</div>' +
+        '<div class="why-a">' + escHtml(w.answer || w.a || '') + '</div>' +
+        (w.evidence ? '<div class="why-evidence">裏付: ' + escHtml(w.evidence) + '</div>' : '') +
       '</div>';
     }).join('');
   }
@@ -858,26 +992,65 @@ export const JS = `
 
     // ヒーロー正解率
     var scoreNum = el('ai-score-num');
-    if (scoreNum) scoreNum.textContent = acc ? (acc.accuracy * 100).toFixed(1) + '%' : '—%';
-
+    if (scoreNum) {
+      scoreNum.textContent = acc ? (acc.accuracy * 100).toFixed(0) + '%' : '—%';
+      scoreNum.style.color = acc && acc.accuracy >= 0.6 ? 'var(--green)' : acc && acc.accuracy >= 0.5 ? 'var(--orange)' : 'var(--red)';
+    }
     var scoreSub = el('ai-score-sub');
-    if (scoreSub) scoreSub.textContent = acc ? 'n=' + acc.n + ' Brier=' + acc.brierScore.toFixed(2) : '—';
+    if (scoreSub) scoreSub.textContent = acc ? '直近' + acc.n + '件のAI行動のうち、' + (acc.correct || 0) + '件が正しかった' : '—';
 
     // ニュース分析/Param Review内訳
     var newsVal = el('ai-brk-news-val');
+    var newsSub = el('ai-brk-news-sub');
     var prVal = el('ai-brk-pr-val');
-    // TODO: 内訳データがAPIにあれば表示
-    if (newsVal) newsVal.textContent = '—';
-    if (prVal) prVal.textContent = '—';
+    var prSub = el('ai-brk-pr-sub');
+    if (acc && acc.newsAccuracy != null) {
+      if (newsVal) { newsVal.textContent = (acc.newsAccuracy * 100).toFixed(0) + '%'; newsVal.style.color = acc.newsAccuracy >= 0.6 ? 'var(--green)' : 'var(--orange)'; }
+      if (newsSub) newsSub.textContent = (acc.newsN || 0) + '件中' + (acc.newsCorrect || 0) + '件正解';
+    } else {
+      if (newsVal) newsVal.textContent = '—';
+      if (newsSub) newsSub.textContent = '—';
+    }
+    if (acc && acc.prAccuracy != null) {
+      if (prVal) { prVal.textContent = (acc.prAccuracy * 100).toFixed(0) + '%'; prVal.style.color = acc.prAccuracy >= 0.6 ? 'var(--green)' : 'var(--orange)'; }
+      if (prSub) prSub.textContent = (acc.prN || 0) + '件中' + (acc.prCorrect || 0) + '件正解';
+    } else {
+      if (prVal) prVal.textContent = '—';
+      if (prSub) prSub.textContent = '—';
+    }
 
     // Brierスパークライン
     var brierVal = el('ai-brier-val');
-    if (brierVal) brierVal.textContent = acc ? acc.brierScore.toFixed(2) : '—';
+    var brierTrend = el('ai-brier-trend');
+    if (brierVal) {
+      brierVal.textContent = acc ? acc.brierScore.toFixed(2) : '—';
+      if (acc) brierVal.style.color = acc.brierScore < 0.25 ? 'var(--green)' : 'var(--orange)';
+    }
+    if (brierTrend && acc) {
+      brierTrend.textContent = acc.brierTrend === 'improving' ? '\\u2193改善中' : acc.brierTrend === 'worsening' ? '\\u2191悪化' : '';
+    }
+    // Brier sparkline SVG
+    var brierSpark = el('ai-brier-spark');
+    if (brierSpark && acc && acc.brierHistory && acc.brierHistory.length > 2) {
+      var bh = acc.brierHistory;
+      var bMin = Math.min.apply(null, bh);
+      var bMax = Math.max.apply(null, bh);
+      var bRng = bMax - bMin || 1;
+      var bPts = bh.map(function(v, i) {
+        var x = (i / (bh.length - 1) * 80).toFixed(1);
+        var y = (20 - ((v - bMin) / bRng) * 16 - 2).toFixed(1);
+        return x + ',' + y;
+      }).join(' ');
+      brierSpark.innerHTML = '<polyline points="' + bPts + '" fill="none" stroke="var(--green)" stroke-width="1.2" stroke-linecap="round"/>';
+    }
 
     // 正解/不正解/判定中
-    var vCorrect = el('ai-v-correct'); if (vCorrect) vCorrect.textContent = acc ? String(acc.correct || 0) : '—';
-    var vWrong = el('ai-v-wrong'); if (vWrong) vWrong.textContent = acc ? String(acc.wrong || 0) : '—';
-    var vPending = el('ai-v-pending'); if (vPending) vPending.textContent = acc ? String(acc.pending || 0) : '—';
+    var vCorrect = el('ai-v-correct');
+    if (vCorrect) { vCorrect.textContent = acc ? String(acc.correct || 0) : '—'; vCorrect.style.color = 'var(--green)'; }
+    var vWrong = el('ai-v-wrong');
+    if (vWrong) { vWrong.textContent = acc ? String(acc.wrong || 0) : '—'; vWrong.style.color = 'var(--red)'; }
+    var vPending = el('ai-v-pending');
+    if (vPending) { vPending.textContent = acc ? String(acc.pending || 0) : '—'; vPending.style.color = 'var(--blue)'; }
 
     // PARAM REVIEW カード
     renderAiPrCards(data);
@@ -885,57 +1058,89 @@ export const JS = `
     // ニュース分析カード
     renderAiNewsCards(data);
 
-    // AI判断タイムライン
+    // AI判断タイムライン (hidden if verdict cards suffice)
     renderAiTimeline(data);
+  }
+
+  function verdictCard(item) {
+    var v = item.verdict || 'pending';
+    var cardCls = v === 'correct' ? 'correct' : v === 'wrong' ? 'wrong' : 'pending';
+    var verdictText = v === 'correct' ? '正解' : v === 'wrong' ? '不正解' : '判定中';
+    var outcomeCls = v === 'correct' ? 'worked' : v === 'wrong' ? 'didnt' : '';
+    var outcomeStyle = v === 'pending' ? ' style="color:var(--blue)"' : '';
+
+    var whyHtml = '';
+    if (item.why_chain && item.why_chain.length > 0) {
+      var uid = 'why-ai-' + Math.random().toString(36).slice(2, 8);
+      whyHtml = '<div class="why-toggle" onclick="var t=document.getElementById(\'' + uid + '\');t.classList.toggle(\'open\')">\\u25b6 Why\\u00d75 根拠チェーン</div>' +
+        '<div class="why-tree" id="' + uid + '">' + buildWhyTree(item.why_chain) + '</div>';
+    }
+
+    var crossHtml = '';
+    if (item.crossLink) {
+      crossHtml = '<span class="cross-link" onclick="switchTab(\'' + escHtml(item.crossLink.tab || 'tab-stats') + '\')">' + escHtml(item.crossLink.text || '\\u2192 詳細') + '</span>';
+    }
+
+    return '<div class="verdict-card ' + cardCls + '">' +
+      '<div class="vc-header"><span class="vc-action">' + escHtml(item.action || '') + '</span><span class="vc-verdict ' + cardCls + '">' + verdictText + '</span></div>' +
+      '<div class="vc-reason">' + escHtml(item.reason || '') + '</div>' +
+      (item.outcome ? '<div class="vc-outcome ' + outcomeCls + '"' + outcomeStyle + '>\\u2192 ' + escHtml(item.outcome) + '</div>' : '') +
+      whyHtml +
+      '<div class="vc-time">' + fmtTimeAgo(item.time || '') + '</div>' +
+      crossHtml +
+    '</div>';
   }
 
   function renderAiPrCards(data) {
     var container = el('ai-pr-cards');
     if (!container) return;
-    // param_review 履歴がAPIに含まれていれば表示
-    container.innerHTML = '<div style="padding:16px;font-size:12px;color:var(--tertiary)">データ読込中...</div>';
+    var ph = data.paramHistory || [];
+    if (ph.length === 0) {
+      container.innerHTML = '<div style="padding:16px;font-size:12px;color:var(--tertiary)">データ蓄積中...</div>';
+      return;
+    }
+    container.innerHTML = ph.map(function(h) {
+      var v = h.verdict === 'worked' || h.verdict === 'improved' ? 'correct' : h.verdict === 'worsened' || h.verdict === 'didnt' ? 'wrong' : 'pending';
+      return verdictCard({
+        action: (h.pair || '') + ' Param Review',
+        verdict: v,
+        reason: h.description || h.change || '',
+        outcome: h.result_text || '',
+        time: h.created_at || h.time || '',
+        why_chain: h.why_chain || null,
+        crossLink: { tab: 'tab-stats', text: '\\u2192 学びで効果を確認' }
+      });
+    }).join('');
   }
 
   function renderAiNewsCards(data) {
     var container = el('ai-news-cards');
     if (!container) return;
     var analysis = data.newsAnalysis || [];
-    if (analysis.length === 0) {
+    var items = analysis.filter(function(n) { return n.attention; });
+    if (items.length === 0) {
       container.innerHTML = '<div style="padding:16px;font-size:12px;color:var(--tertiary)">分析データなし</div>';
       return;
     }
-    container.innerHTML = analysis.slice(0, 5).map(function(n) {
-      return '<div style="padding:8px 16px;border-bottom:1px solid var(--separator)">' +
-        '<div style="font-size:13px;font-weight:500">' + escHtml(n.title_ja || n.title || '') + '</div>' +
-        '<div style="font-size:11px;color:var(--tertiary);margin-top:2px">' + fmtTimeAgo(n.analyzed_at) + (n.attention ? ' · 注目' : '') + '</div>' +
-      '</div>';
+    container.innerHTML = items.slice(0, 5).map(function(n) {
+      var v = n.verdict || 'pending';
+      return verdictCard({
+        action: (n.action_pair || '') + ' ニュース ' + (n.action_direction || ''),
+        verdict: v,
+        reason: escHtml(n.title_ja || n.title || '') + (n.impact ? ' score=' + n.impact : ''),
+        outcome: n.outcome_text || '',
+        time: n.analyzed_at || '',
+        why_chain: n.why_chain || null,
+        crossLink: { tab: 'tab-portfolio', text: '\\u2192 今タブで進行確認' }
+      });
     }).join('');
   }
 
   function renderAiTimeline(data) {
     var container = el('ai-timeline');
     if (!container) return;
-    var decisions = data.recentDecisions || [];
-    if (decisions.length === 0) {
-      container.innerHTML = '<div style="padding:24px;text-align:center;font-size:13px;color:var(--tertiary)">判断データなし</div>';
-      return;
-    }
-    container.innerHTML = decisions.slice(0, 15).map(function(d) {
-      var dirCls = d.decision === 'BUY' ? 'buy' : d.decision === 'SELL' ? 'sell' : 'hold';
-      var trigger = inferTrigger(d);
-      var reasoning = fmtReasoning(d.reasoning);
-      return '<div class="tl-card">' +
-        '<div class="tl-inner">' +
-          '<div class="tl-row1"><div class="tl-left">' +
-            '<span class="tl-pair">' + escHtml(d.pair || 'USD/JPY') + '</span>' +
-            '<span class="tl-rate">' + fmt(d.rate, 3) + '</span>' +
-            '<span class="dir-badge ' + dirCls + '">' + d.decision + '</span>' +
-          '</div><div class="tl-meta"><span class="tl-time">' + fmtTimeAgo(d.created_at) + '</span></div></div>' +
-          '<div class="tl-row2"><span class="tl-chip ' + trigger + '">' + escHtml(triggerLabel(trigger)) + '</span>' +
-            (reasoning !== '—' ? '<span class="tl-reasoning-chip">' + escHtml(reasoning.slice(0, 40)) + '</span>' : '') +
-          '</div>' +
-        '</div></div>';
-    }).join('');
+    // Timeline is now secondary; verdict cards above are primary
+    container.innerHTML = '';
   }
 
   // ══════════════════════════════════════════
@@ -945,29 +1150,114 @@ export const JS = `
   function renderStrategyTab(data) {
     var container = el('journey-cards');
     if (!container) return;
-    var sm = data.strategyMap;
-    if (!sm || !sm.instrumentTiers) {
+    var byPair = data.performanceByPair || {};
+    var ph = data.paramHistory || [];
+    var traded = INSTRUMENTS.filter(function(i) { var p = byPair[i.pair]; return p && p.total > 0; });
+
+    if (traded.length === 0) {
       container.innerHTML = '<div style="padding:16px;font-size:12px;color:var(--tertiary)">データ蓄積中...</div>';
       return;
     }
 
-    var tiers = sm.instrumentTiers;
-    var byPair = data.performanceByPair || {};
-
-    container.innerHTML = tiers.map(function(t) {
-      var instr = findInstr(t.pair);
-      var label = instr ? instr.label : t.pair;
-      var p = byPair[t.pair] || { total: 0, wins: 0, totalPnl: 0 };
+    container.innerHTML = traded.map(function(instr) {
+      var p = byPair[instr.pair] || { total: 0, wins: 0, totalPnl: 0 };
+      var pairId = instr.pair.replace(/[\\/\\s]/g, '-').toLowerCase();
+      var pairChanges = ph.filter(function(h) { return h.pair === instr.pair; });
+      var currentVersion = pairChanges.length > 0 ? 'v' + (pairChanges.length + 1) : 'v1';
       var wr = p.total > 0 ? (p.wins / p.total * 100).toFixed(0) : '—';
-      var colors = { A: 'var(--green)', B: 'var(--blue)', C: 'var(--orange)', D: 'var(--tertiary)' };
-      var tierColor = colors[t.tier] || 'var(--tertiary)';
+      var pnlF = fmtPnl(p.totalPnl, instr.unit);
 
-      return '<div class="journey-card" style="border-left:3px solid ' + tierColor + '">' +
-        '<div style="display:flex;justify-content:space-between;align-items:center">' +
-          '<span style="font-weight:600">' + escHtml(label) + '</span>' +
-          '<span style="color:' + tierColor + ';font-weight:700">Tier ' + t.tier + '</span>' +
-        '</div>' +
-        '<div style="font-size:12px;color:var(--tertiary);margin-top:4px">勝率 ' + wr + '% · ' + p.total + '件</div>' +
+      // Summary text
+      var summaryText = pairChanges.length > 0
+        ? pairChanges[0].summary || ('AIレビューを' + pairChanges.length + '回実施。勝率 ' + wr + '%。')
+        : '初期設定で運用中。取引 ' + p.total + '件。';
+
+      // Score breakdown (from params data if available)
+      var scoreHtml = '';
+      if (paramsData && paramsData.instruments) {
+        var pConf = null;
+        for (var pi = 0; pi < paramsData.instruments.length; pi++) {
+          if (paramsData.instruments[pi].pair === instr.pair) { pConf = paramsData.instruments[pi]; break; }
+        }
+        if (pConf && pConf.weights) {
+          var w = pConf.weights;
+          var scoreItems = [
+            { label: 'RSI', weight: w.rsi || 0.35, value: pConf.rsiScore || 0 },
+            { label: 'ER', weight: w.er || 0.25, value: pConf.erScore || 0 },
+            { label: 'MTF', weight: w.mtf || 0.20, value: pConf.mtfScore || 0 },
+            { label: 'S/R', weight: w.sr || 0.10, value: pConf.srScore || 0 },
+            { label: 'PA', weight: w.pa || 0.10, value: pConf.paScore || 0 },
+            { label: 'BB', weight: w.bb || 0.10, value: pConf.bbScore || 0 }
+          ];
+          var totalScore = 0;
+          var scoreRowsHtml = scoreItems.map(function(si) {
+            var pct = Math.round(si.value * 100);
+            var contrib = si.weight * si.value;
+            totalScore += contrib;
+            var fillColor = pct < 30 ? 'var(--red)' : pct < 50 ? 'var(--orange)' : 'var(--green)';
+            return '<div class="score-row"><span class="score-label">' + si.label + '</span>' +
+              '<div class="score-bar"><div class="score-fill" style="width:' + pct + '%;background:' + fillColor + '"></div></div>' +
+              '<span class="score-val">' + si.weight.toFixed(2) + ' \\u00d7 ' + si.value.toFixed(2) + ' = ' + contrib.toFixed(3) + '</span></div>';
+          }).join('');
+          var totalColor = totalScore >= 0.5 ? 'var(--green)' : totalScore >= 0.3 ? 'var(--orange)' : 'var(--red)';
+          var threshold = pConf.entryThreshold || 0.30;
+          var threshText = totalScore >= threshold ? 'OK' : 'ギリギリ';
+          scoreHtml = '<div style="margin-bottom:12px;padding:8px 12px;background:var(--bg);border-radius:var(--rs)">' +
+            '<div style="font-size:11px;color:var(--tertiary);font-weight:600;margin-bottom:8px">現在のエントリースコア内訳</div>' +
+            scoreRowsHtml +
+            '<div class="score-total">Total: <span style="color:' + totalColor + '">' + totalScore.toFixed(3) + '</span> <span style="font-size:11px;color:var(--secondary)">(閾値 ' + threshold.toFixed(2) + ' ' + threshText + ')</span></div>' +
+          '</div>';
+        }
+      }
+
+      // Timeline steps
+      var timelineHtml = '';
+      if (pairChanges.length > 0) {
+        var steps = pairChanges.map(function(c, idx) {
+          var stepCls = idx === 0 ? 'current' : (c.verdict === 'worked' || c.verdict === 'improved' ? 'good' : c.verdict === 'worsened' || c.verdict === 'didnt' ? 'bad' : 'good');
+          var ver = 'v' + (pairChanges.length - idx + 1);
+          if (idx === 0) ver = currentVersion + '\\uff08現在\\uff09';
+          var resCls = c.verdict === 'worked' || c.verdict === 'improved' ? 'worked' : c.verdict === 'worsened' || c.verdict === 'didnt' ? 'didnt' : '';
+          return '<div class="jc-step ' + stepCls + '">' +
+            '<div class="jc-step-header"><span class="jc-step-ver">' + ver + '</span><span class="jc-step-time">' + fmtTimeAgo(c.created_at || c.time || '') + '</span></div>' +
+            '<div class="jc-step-desc">' + escHtml(c.description || c.change || '') + '</div>' +
+            (c.result_text ? '<div class="jc-step-result ' + resCls + '">' + escHtml(c.result_text) + '</div>' : '') +
+          '</div>';
+        });
+        // Add v1 initial step
+        steps.push('<div class="jc-step good"><div class="jc-step-header"><span class="jc-step-ver">v1\\uff08初期\\uff09</span></div><div class="jc-step-desc">デフォルト設定</div></div>');
+        timelineHtml = '<div class="jc-timeline">' + steps.join('') + '</div>';
+      }
+
+      // Params toggle
+      var paramsHtml = '';
+      if (paramsData && paramsData.instruments) {
+        var pc = null;
+        for (var pj = 0; pj < paramsData.instruments.length; pj++) {
+          if (paramsData.instruments[pj].pair === instr.pair) { pc = paramsData.instruments[pj]; break; }
+        }
+        if (pc) {
+          var uid = 'jcp-' + pairId;
+          var rows = [];
+          if (pc.rsiOversold != null) rows.push('<div class="jc-param-row"><span>RSI 売/買</span><span class="val">' + pc.rsiOversold + ' / ' + pc.rsiOverbought + '</span></div>');
+          if (pc.adxMin != null) rows.push('<div class="jc-param-row"><span>ADX最小</span><span class="val">' + pc.adxMin + '</span></div>');
+          if (pc.atrTpMultiplier != null) rows.push('<div class="jc-param-row"><span>TP倍率</span><span class="val">' + pc.atrTpMultiplier + '</span></div>');
+          if (pc.atrSlMultiplier != null) rows.push('<div class="jc-param-row"><span>SL倍率</span><span class="val">' + pc.atrSlMultiplier + '</span></div>');
+          if (pc.strategy) rows.push('<div class="jc-param-row"><span>戦略</span><span class="val">' + escHtml(pc.strategy) + '</span></div>');
+          if (pc.maxHoldingMinutes) rows.push('<div class="jc-param-row"><span>最大保有</span><span class="val">' + pc.maxHoldingMinutes + '分</span></div>');
+          if (pc.cooldownMinutes) rows.push('<div class="jc-param-row"><span>クールダウン</span><span class="val">' + pc.cooldownMinutes + '分</span></div>');
+          if (rows.length > 0) {
+            paramsHtml = '<div class="jc-params-toggle" onclick="var t=document.getElementById(\'' + uid + '\');t.classList.toggle(\'open\')">\\u25b6 パラメーター全量</div>' +
+              '<div class="jc-params" id="' + uid + '">' + rows.join('') + '</div>';
+          }
+        }
+      }
+
+      return '<div class="journey-card" id="jc-' + pairId + '">' +
+        '<div class="jc-header"><span class="jc-pair">' + escHtml(instr.label) + '</span><span class="jc-ver">現在 ' + currentVersion + '</span></div>' +
+        '<div class="jc-summary">' + escHtml(summaryText) + '</div>' +
+        scoreHtml + timelineHtml + paramsHtml +
+        '<span class="cross-link" onclick="switchTab(\'tab-stats\')">\\u2192 学びで成果確認</span>' +
       '</div>';
     }).join('');
   }
@@ -980,31 +1270,51 @@ export const JS = `
     // ヘルスヒーロー
     var healthText = el('health-text');
     var healthSub = el('health-sub');
+    var heroEl = el('health-hero');
     var logs = data.systemLogs || [];
     var errCount = logs.filter(function(l) { return l.level === 'ERROR'; }).length;
+    var isOk = errCount === 0;
 
     if (healthText) {
-      if (errCount > 0) {
-        healthText.textContent = 'エラー検出: ' + errCount + '件';
-        healthText.style.color = 'var(--red)';
-      } else {
+      if (isOk) {
         healthText.textContent = '全システム正常';
         healthText.style.color = 'var(--green)';
+      } else {
+        healthText.textContent = 'エラー検出: ' + errCount + '件';
+        healthText.style.color = 'var(--red)';
+      }
+    }
+    // Update SVG color in health hero
+    if (heroEl) {
+      var svgCircle = heroEl.querySelector('circle');
+      var svgPath = heroEl.querySelector('path');
+      if (svgCircle) {
+        svgCircle.setAttribute('fill', isOk ? 'rgba(48,209,88,0.15)' : 'rgba(255,69,58,0.15)');
+        svgCircle.setAttribute('stroke', isOk ? '#30D158' : '#FF453A');
+      }
+      if (svgPath) {
+        svgPath.setAttribute('stroke', isOk ? '#30D158' : '#FF453A');
       }
     }
     if (healthSub) {
-      healthSub.textContent = data.systemStatus
-        ? '稼働 ' + data.systemStatus.totalRuns + '回 · 最終 ' + fmtTimeAgo(data.systemStatus.lastRun)
+      var ss = data.systemStatus;
+      healthSub.textContent = ss
+        ? '最終チェック: ' + new Date().toLocaleTimeString('ja-JP', { hour: '2-digit', minute: '2-digit' }) + ' \\u00b7 稼働 ' + (ss.totalRuns || 0).toLocaleString('ja-JP') + '回'
         : '—';
     }
 
     // DD段階バー
     var ddCurrent = el('dd-current');
-    if (ddCurrent && data.riskStatus) {
+    if (ddCurrent) {
       var rs = data.riskStatus;
-      var ddPct = rs.maxDailyLoss > 0 ? Math.round(Math.abs(rs.todayLoss) / rs.maxDailyLoss * 100) : 0;
-      ddCurrent.textContent = ddPct + '%';
-      ddCurrent.style.color = ddPct > 80 ? 'var(--red)' : ddPct > 50 ? 'var(--orange)' : 'var(--green)';
+      if (rs) {
+        var ddPct = rs.maxDailyLoss > 0 ? (Math.abs(rs.todayLoss || 0) / rs.maxDailyLoss * 100) : 0;
+        ddCurrent.textContent = '\\u25b2 現在 ' + ddPct.toFixed(1) + '%';
+        ddCurrent.style.color = ddPct > 8 ? 'var(--red)' : ddPct > 5 ? 'var(--orange)' : 'var(--green)';
+        ddCurrent.style.fontWeight = '600';
+      } else {
+        ddCurrent.textContent = '—';
+      }
     }
 
     // 稼働率/エラー率
@@ -1012,10 +1322,15 @@ export const JS = `
     var errRateEl = el('sys-error-rate');
     if (uptimeEl) {
       var totalRuns = data.systemStatus ? data.systemStatus.totalRuns : 0;
-      uptimeEl.textContent = totalRuns > 0 ? '99.9%' : '—';
+      var errRate = totalRuns > 0 ? (errCount / Math.max(logs.length, 1) * 100) : 0;
+      var uptime = 100 - errRate;
+      uptimeEl.textContent = totalRuns > 0 ? uptime.toFixed(2) + '%' : '—';
+      uptimeEl.style.color = uptime >= 99 ? 'var(--green)' : uptime >= 95 ? 'var(--orange)' : 'var(--red)';
     }
     if (errRateEl) {
-      errRateEl.textContent = errCount > 0 ? (errCount / Math.max(logs.length, 1) * 100).toFixed(1) + '%' : '0%';
+      var eRate = errCount > 0 ? (errCount / Math.max(logs.length, 1) * 100) : 0;
+      errRateEl.textContent = eRate.toFixed(2) + '%';
+      errRateEl.style.color = eRate < 1 ? 'var(--green)' : eRate < 5 ? 'var(--orange)' : 'var(--red)';
     }
 
     // ヘルスチェック6項目
@@ -1028,20 +1343,57 @@ export const JS = `
   function renderHealthChecks(data) {
     var container = el('health-checks');
     if (!container) return;
+    var ss = data.systemStatus || {};
+    var rs = data.riskStatus || {};
+    var ddPct = rs.maxDailyLoss > 0 ? (Math.abs(rs.todayLoss || 0) / rs.maxDailyLoss * 100).toFixed(1) : '0';
+    var ddStage = parseFloat(ddPct) > 8 ? 'WARNING' : parseFloat(ddPct) > 5 ? 'CAUTION' : 'NORMAL';
+
     var checks = [
-      { name: 'Cron実行', ok: data.systemStatus && data.systemStatus.totalRuns > 0 },
-      { name: 'DB接続', ok: true },
-      { name: 'レート取得', ok: data.rate != null },
-      { name: 'Gemini API', ok: data.recentDecisions && data.recentDecisions.length > 0 },
-      { name: 'ニュース取得', ok: data.latestNews && data.latestNews.length > 0 },
-      { name: 'RiskGuard', ok: data.riskStatus != null },
+      {
+        name: 'Cron 実行',
+        ok: ss.totalRuns > 0,
+        value: ss.lastRunDuration ? (ss.lastRunDuration / 1000).toFixed(1) + 's \\u00b7 正常' : '—',
+        expand: ss.runBreakdown ? '内訳: ' + ss.runBreakdown : null
+      },
+      {
+        name: 'RiskGuard',
+        ok: rs != null && !rs.killSwitchActive,
+        value: 'DD ' + ddPct + '% \\u00b7 ' + ddStage,
+        expand: null
+      },
+      {
+        name: 'レート取得',
+        ok: data.rate != null,
+        value: data.rate != null ? INSTRUMENTS.length + '/' + INSTRUMENTS.length + ' 銘柄' : 'エラー',
+        expand: null
+      },
+      {
+        name: 'AI API',
+        ok: data.recentDecisions && data.recentDecisions.length > 0,
+        value: '応答正常',
+        expand: ss.aiCalls24h ? '24hコール: ' + ss.aiCalls24h + '回' : null
+      },
+      {
+        name: 'D1 DB',
+        ok: true,
+        value: ss.dbSize ? ss.dbSize : '正常',
+        expand: ss.dbDetails || null
+      },
+      {
+        name: 'ニュース',
+        ok: data.latestNews && data.latestNews.length > 0,
+        value: (data.latestNews || []).length > 0 ? '取得中' : 'エラー',
+        expand: null
+      }
     ];
     container.innerHTML = checks.map(function(c) {
-      var cls = c.ok ? 'ok' : 'error';
-      var icon = c.ok ? '\\u2713' : '\\u2717';
-      return '<div class="hc">' +
-        '<div class="hc-row"><div class="hc-left"><span class="dot ' + (c.ok ? 'ok' : 'danger') + '"></span><span class="hc-label">' + c.name + '</span></div>' +
-        '<span class="hc-value ' + cls + '">' + icon + '</span></div></div>';
+      var valCls = c.ok ? 'ok' : 'error';
+      var expandHtml = c.expand ? '<div class="hc-expand"><div class="hc-detail"><span class="hc-detail-label">' + escHtml(c.expand) + '</span></div></div>' : '<div class="hc-expand"></div>';
+      return '<div class="hc" onclick="var exp=this.querySelector(\'.hc-expand\');if(exp)exp.classList.toggle(\'open\')">' +
+        '<div class="hc-row"><div class="hc-left"><span class="hc-label">' + escHtml(c.name) + '</span></div>' +
+        '<div class="hc-value ' + valCls + '">' + c.value + '</div></div>' +
+        expandHtml +
+      '</div>';
     }).join('');
   }
 
@@ -1052,28 +1404,40 @@ export const JS = `
     var abnormal = logs.filter(function(l) { return l.level === 'ERROR' || l.level === 'WARN'; });
     if (abnormal.length === 0) {
       logList.innerHTML = '<div style="padding:16px;font-size:12px;color:var(--tertiary)">異常なし</div>';
-      return;
+    } else {
+      logList.innerHTML = abnormal.slice(0, 20).map(function(l) {
+        var lvlCls = l.level === 'ERROR' ? 'error' : 'warn';
+        var crossHtml = l.relatedPair ? '<span class="cross-link" onclick="switchTab(\'tab-portfolio\')">\\u2192 関連ポジション</span>' : '';
+        return '<div class="log-item">' +
+          '<div class="log-header"><span class="log-level ' + lvlCls + '">' + l.level + '</span>' +
+          '<span class="log-cat">' + escHtml(l.category || '') + '</span>' +
+          '<span class="log-time">' + fmtTimeAgo(l.created_at) + '</span></div>' +
+          '<div class="log-msg">' + escHtml(l.message || '') + '</div>' +
+          crossHtml +
+        '</div>';
+      }).join('');
     }
-    logList.innerHTML = abnormal.slice(0, 20).map(function(l) {
-      var lvlCls = l.level === 'ERROR' ? 'error' : 'warn';
-      return '<div class="log-item">' +
-        '<div class="log-header"><span class="log-level ' + lvlCls + '">' + l.level + '</span>' +
-        '<span class="log-cat">' + (l.category || '') + '</span>' +
-        '<span class="log-time">' + fmtTimeAgo(l.created_at) + '</span></div>' +
-        '<div class="log-msg">' + escHtml(l.message || '') + '</div>' +
-      '</div>';
-    }).join('');
 
     // 全ログ
     var allLogs = el('all-logs');
     if (allLogs) {
       allLogs.innerHTML = logs.slice(0, 50).map(function(l) {
-        var color = l.level === 'ERROR' ? 'var(--red)' : l.level === 'WARN' ? 'var(--orange)' : 'var(--tertiary)';
-        return '<div style="padding:4px 0;border-bottom:1px solid var(--separator);font-size:11px">' +
-          '<span style="color:' + color + ';font-weight:600">' + l.level + '</span> ' +
-          '<span style="color:var(--tertiary)">' + fmtTimeAgo(l.created_at) + '</span> ' +
-          escHtml(l.message || '') + '</div>';
+        var lvlCls = l.level === 'ERROR' ? 'error' : l.level === 'WARN' ? 'warn' : 'info';
+        return '<div class="log-item">' +
+          '<div class="log-header"><span class="log-level ' + lvlCls + '">' + l.level + '</span>' +
+          '<span class="log-cat">' + escHtml(l.category || '') + '</span>' +
+          '<span class="log-time">' + fmtTimeAgo(l.created_at) + '</span></div>' +
+          '<div class="log-msg">' + escHtml(l.message || '') + '</div></div>';
       }).join('');
+    }
+
+    // 次回レビュー
+    var reviewEl = el('sys-next-review');
+    if (reviewEl) {
+      var nextReview = data.systemStatus && data.systemStatus.nextReview;
+      if (nextReview) {
+        reviewEl.textContent = '次回レビュー: ' + fmtTime(nextReview);
+      }
     }
   }
 
