@@ -908,7 +908,7 @@ export const JS = `
       // 同バッチのAI判断を表示
       var tdRows = n.trade_decisions.map(function(td) {
         var dec = td.decision || '';
-        var decColor = dec === 'BUY' ? 'var(--green)' : dec === 'SELL' ? 'var(--red)' : 'var(--secondary)';
+        var decColor = dec === 'BUY' ? 'var(--blue)' : dec === 'SELL' ? 'var(--teal)' : 'var(--secondary)';
         var decLabel = dec === 'BUY' ? '買い' : dec === 'SELL' ? '売り' : 'HOLD';
         var timeStr = td.created_at ? fmtTimeAgo(td.created_at) : '';
         var rateStr = td.rate ? fmtPrice(td.pair, td.rate) : '';
@@ -924,7 +924,7 @@ export const JS = `
     } else if (n.linked_trade) {
       var ltDir = n.linked_trade.direction || '';
       var ltPair = n.linked_trade.pair || '';
-      var dirColor = ltDir === 'BUY' ? 'var(--green)' : 'var(--red)';
+      var dirColor = ltDir === 'BUY' ? 'var(--blue)' : 'var(--teal)';
       var ltLabel = ltPair ? ltPair + ' ' + ltDir : ltDir;
       tradeActionHtml = '<div class="nf-action"><span style="font-size:12px;color:var(--tertiary)">\\u2192</span>' +
         '<span class="nf-action-text"><b style="color:' + dirColor + '">' + escHtml(ltLabel) + '</b>' +
@@ -1521,10 +1521,10 @@ export const JS = `
         var l = item;
         var isUp = l.direction === 'UP';
         var tagCls2 = isUp ? 'feed-tag-trend-up' : 'feed-tag-trend-dn';
-        var dirIcon = isUp ? '↑' : '↓';
+        var tagTxt2 = isUp ? '上昇' : '下落';
         var timeStr2 = fmtTime(l.created_at);
         return '<div class="feed-item feed-item-ind">'
-          + '<span class="feed-tag ' + tagCls2 + '">トレンド ' + dirIcon + '</span>'
+          + '<span class="feed-tag ' + tagCls2 + '">' + tagTxt2 + '</span>'
           + '<span class="feed-time">' + escHtml(timeStr2) + '</span>'
           + '<span class="feed-pair">' + escHtml(l.pair) + '</span>'
           + '<span class="feed-note">' + escHtml(l.note || (l.metric + ' ' + l.prev_value + '→' + l.curr_value)) + '</span>'
@@ -2044,7 +2044,7 @@ export const JS = `
 
       title.textContent = (instr ? instr.label : pair) + ' ポジション詳細';
       body.innerHTML =
-        row('方向', '<span style="color:' + (pos.direction === 'BUY' ? 'var(--green)' : 'var(--red)') + ';font-weight:700">' + (pos.direction === 'BUY' ? '買い' : '空売り') + '</span>') +
+        row('方向', '<span style="color:' + (pos.direction === 'BUY' ? 'var(--blue)' : 'var(--teal)') + ';font-weight:700">' + (pos.direction === 'BUY' ? '買い' : '空売り') + '</span>') +
         (cr != null ? row('現在値', fmtPrice(pair, cr)) : '') +
         row('含み損益', '<span style="color:' + pnlColor + ';font-weight:700">' + pnlF.text + '</span>') +
         row('エントリー', fmtPrice(pair, pos.entry_rate)) +
