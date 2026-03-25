@@ -135,7 +135,6 @@ body{background:var(--bg);color:var(--text);font-size:15px;line-height:1.47;
 .metrics{display:flex;gap:1px;margin:16px 16px 0}
 .m{flex:1;text-align:center;padding:8px 0;background:var(--surface)}.m:first-child{border-radius:var(--rs) 0 0 var(--rs)}.m:last-child{border-radius:0 var(--rs) var(--rs) 0}
 .m-val{font-size:14px;font-weight:600;font-variant-numeric:tabular-nums}.m-lbl{font-size:11px;color:var(--tertiary);text-transform:uppercase;letter-spacing:0.4px;margin-top:4px}
-.sig{margin:8px 16px 0;display:flex;align-items:center;gap:8px}.sig-track{flex:1;height:3px;background:var(--tertiary);border-radius:2px;overflow:hidden}.sig-fill{height:100%;border-radius:2px;background:linear-gradient(90deg,var(--orange),var(--green))}.sig-lbl{font-size:11px;color:var(--tertiary)}
 .story{margin:16px 16px 0;padding:16px;background:var(--surface);border-radius:var(--r);border-left:3px solid var(--blue)}
 .story-text{font-size:14px;line-height:1.6;color:var(--secondary)}.story-text b{color:var(--text);font-weight:600}.story-text .g{color:var(--green)}.story-text .r{color:var(--red)}.story-text .o{color:var(--orange)}
 .drivers{display:flex;gap:8px;margin-top:12px}
@@ -147,9 +146,7 @@ body{background:var(--bg);color:var(--text);font-size:15px;line-height:1.47;
 .chip{padding:8px 12px;border-radius:14px;font-size:11px;font-weight:500;min-height:44px;display:inline-flex;align-items:center;cursor:pointer;-webkit-tap-highlight-color:transparent}
 .chip:active{opacity:0.6}
 .chip.w{background:rgba(255,159,10,0.1);color:var(--orange)}.chip.i{background:rgba(10,132,255,0.1);color:var(--blue)}
-.hm{margin:12px 16px 0;background:var(--surface);border-radius:var(--rs);padding:8px;overflow-x:auto}
-.hm-g{display:grid;grid-template-columns:72px repeat(4,1fr);gap:2px;font-size:11px}
-.hm-h{padding:4px 6px;color:var(--tertiary);font-weight:600;text-align:center;font-size:11px}.hm-h:first-child{text-align:left}.hm-p{padding:4px 6px;font-weight:500}.hm-c{padding:4px 6px;text-align:center;border-radius:4px;font-variant-numeric:tabular-nums}
+
 .news-feed{margin:0 16px}.nf-item{padding:16px;background:var(--surface);border-radius:var(--rs);margin-bottom:8px;border-left:3px solid var(--tertiary)}
 .nf-item.nf-emergency{border-left-color:var(--red)}.nf-item.nf-trend{border-left-color:var(--orange)}
 .nf-header{display:flex;justify-content:space-between;align-items:center;margin-bottom:8px}

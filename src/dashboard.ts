@@ -58,22 +58,11 @@ export function getDashboardHtml(): string {
     <div class="m"><div class="m-val" id="m-trades">--</div><div class="m-lbl">取引</div></div>
   </div>
 
-  <!-- 有意性バー -->
-  <div class="sig">
-    <div class="sig-track"><div class="sig-fill" id="sig-fill" style="width:0%"></div></div>
-    <span class="sig-lbl" id="sig-label">有意性 --%</span>
-  </div>
-
   <!-- ストーリーカード -->
   <div class="story" id="story-card" style="display:none">
     <div class="story-text" id="story-text"></div>
     <div class="drivers" id="causal-drivers"></div>
     <div class="chips" id="causal-chips"></div>
-  </div>
-
-  <!-- ヒートマップ -->
-  <div class="hm" id="causal-heatmap" style="display:none">
-    <div class="hm-g" id="heatmap-grid"></div>
   </div>
 
   <!-- 保有ポジション -->

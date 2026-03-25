@@ -441,17 +441,6 @@ export const JS = `
     var tradesEl = el('m-trades');
     if (tradesEl) tradesEl.textContent = (perf.totalClosed != null ? perf.totalClosed + '件' : '—');
 
-    // 有意性バー
-    var sigFill = el('sig-fill');
-    var sigLabel = el('sig-label');
-    var st = data.statistics;
-    if (sigFill && st && st.powerAnalysis) {
-      var pa = st.powerAnalysis;
-      var pct = Math.max(0, Math.min(Math.round(pa.progressPct), 100));
-      sigFill.style.width = pct + '%';
-      if (pa.isAdequate) sigFill.style.background = 'var(--green)';
-      if (sigLabel) sigLabel.textContent = '有意性 ' + pct + '%';
-    }
   }
 
   // ══════════════════════════════════════════
@@ -549,54 +538,6 @@ export const JS = `
       }).join('');
     }
 
-    // ヒートマップ
-    renderHeatmap(cs.heatmap);
-  }
-
-  function renderHeatmap(heatmapData) {
-    var hmEl = el('causal-heatmap');
-    if (!hmEl) return;
-    if (!heatmapData || heatmapData.length === 0) { hmEl.style.display = 'none'; return; }
-    hmEl.style.display = '';
-    var gridEl = el('heatmap-grid');
-    if (!gridEl) return;
-
-    var cols = ['銘柄', 'PnL', 'VIX', 'PR', 'ニュース'];
-    var keys = ['pnl_closed', 'vix_effect', 'param_changed', 'news_impact'];
-    var html = '';
-    for (var h = 0; h < cols.length; h++) html += '<div class="hm-h">' + cols[h] + '</div>';
-    var limit = Math.min(heatmapData.length, 8);
-    for (var i = 0; i < limit; i++) {
-      var row = heatmapData[i];
-      html += '<div class="hm-p">' + escHtml(row.pair) + '</div>';
-      for (var k = 0; k < keys.length; k++) {
-        var val = (row.factors && row.factors[keys[k]]) || 0;
-        var bg = hmColor(val, keys[k]);
-        html += '<div class="hm-c" style="background:' + bg + '">' + hmLabel(val, keys[k]) + '</div>';
-      }
-    }
-    gridEl.innerHTML = html;
-  }
-
-  function hmColor(val, key) {
-    if (key === 'pnl_closed') {
-      if (val > 0) return 'rgba(48,209,88,' + Math.min(Math.abs(val) / 500, 0.6) + ')';
-      if (val < 0) return 'rgba(255,69,58,' + Math.min(Math.abs(val) / 500, 0.6) + ')';
-    }
-    // vix_effectは0.65以上で警告オレンジ、0.4-0.65は薄いオレンジ、0.4未満は無色（情報ノイズを減らす）
-    if (key === 'vix_effect' && val >= 0.65) return 'rgba(255,159,10,' + Math.min(val, 0.6) + ')';
-    if (key === 'vix_effect' && val >= 0.4) return 'rgba(255,159,10,0.18)';
-    if (key === 'param_changed' && val > 0) return 'rgba(10,132,255,0.3)';
-    if (key === 'news_impact' && val > 0) return 'rgba(255,69,58,' + Math.min(val / 100 * 0.6, 0.6) + ')';
-    return 'transparent';
-  }
-
-  function hmLabel(val, key) {
-    if (key === 'pnl_closed' && val !== 0) return (val > 0 ? '+' : '') + Math.round(val);
-    if (key === 'vix_effect' && val > 0) return val.toFixed(1);
-    if (key === 'param_changed' && val > 0) return '\\u2713';
-    if (key === 'news_impact' && val > 0) return '<span style="display:inline-block;background:rgba(10,132,255,0.25);color:#0A84FF;border-radius:4px;padding:0 5px;font-size:11px;font-weight:700">' + Math.round(val) + '</span>';
-    return '\\u2014';
   }
 
   // ══════════════════════════════════════════
