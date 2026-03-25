@@ -202,6 +202,12 @@ export interface StatusResponse {
     weekly:  { total: number; wins: number; avg_rr: number; win_rate: number };
     monthly: { total: number; wins: number; avg_rr: number; win_rate: number };
   } | null;
+  /** RR帯別内訳（3層: 勝ち/小益/損失） */
+  rrBreakdown: {
+    wins:        { n: number; totalPnl: number; avgRr: number; avgPnl: number };
+    smallProfit: { n: number; totalPnl: number; avgRr: number; avgPnl: number };
+    losses:      { n: number; totalPnl: number; avgRr: number; avgPnl: number };
+  } | null;
   /** IPA品質修正: LIMITに依存しない今日の判断件数（UTC基準） */
   todayDecisionCount: number;
   todayBuyCount: number;
@@ -267,6 +273,23 @@ export interface StatusResponse {
     }>;
     entryWhyChain: string[] | null;
   }> | null;
+  /** 取引履歴（直近50件クローズ済みポジション + エントリー根拠） */
+  tradeHistory: Array<{
+    id: number;
+    entry_at: string;
+    closed_at: string | null;
+    pair: string;
+    direction: string;
+    lot: number;
+    entry_rate: number;
+    close_rate: number | null;
+    close_reason: string | null;
+    pnl: number | null;
+    realized_rr: number | null;
+    mfe: number | null;
+    mae: number | null;
+    reasoning: string | null;
+  }>;
   /** テスタ施策21: 戦略マップデータ */
   strategyMap: {
     strategyStats: Array<{
@@ -283,7 +306,7 @@ export interface StatusResponse {
 }
 
 export async function getApiStatus(db: D1Database, tradingEnv?: { TRADING_ENABLED?: string; OANDA_LIVE?: string; RISK_MAX_DAILY_LOSS?: string; RISK_MAX_LIVE_POSITIONS?: string; RISK_MAX_LOT_SIZE?: string; RISK_ANOMALY_THRESHOLD?: string }): Promise<StatusResponse> {
-  const [rateRow, openPositions, perf, latest, recent, sysRow, sparkRaw, perfByPairRaw, recentClosesRaw, acceptedNewsRaw, sysLogsRaw, logStatsRaw, instrScoresRaw, rrSummaryRow, slPatternsRow, cronTimingsRow, todayDecisionCountRow, paramReviewLogRaw, indicatorLogsRaw] =
+  const [rateRow, openPositions, perf, latest, recent, sysRow, sparkRaw, perfByPairRaw, recentClosesRaw, acceptedNewsRaw, sysLogsRaw, logStatsRaw, instrScoresRaw, rrSummaryRow, slPatternsRow, cronTimingsRow, todayDecisionCountRow, paramReviewLogRaw, indicatorLogsRaw, tradeHistoryRaw] =
     await Promise.all([
       db
         .prepare("SELECT value FROM market_cache WHERE key = 'prev_rate_USD/JPY'")
@@ -427,6 +450,29 @@ export async function getApiStatus(db: D1Database, tradingEnv?: { TRADING_ENABLE
         )
         .all<IndicatorLog>()
         .catch(() => ({ results: [] as IndicatorLog[] })),
+
+      // 取引履歴: 直近50件クローズ済みポジション + 最近接のエントリー根拠
+      db
+        .prepare(
+          `SELECT p.id, p.entry_at, p.closed_at, p.pair, p.direction, p.lot,
+                  p.entry_rate, p.close_rate, p.close_reason, p.pnl,
+                  p.realized_rr, p.mfe, p.mae,
+                  (SELECT d.reasoning FROM decisions d
+                   WHERE d.pair = p.pair AND d.decision = p.direction
+                   AND d.created_at <= datetime(p.entry_at, '+5 minutes')
+                   ORDER BY d.created_at DESC LIMIT 1) AS reasoning
+           FROM positions p
+           WHERE p.status = 'CLOSED'
+           ORDER BY p.closed_at DESC LIMIT 50`
+        )
+        .all<{
+          id: number; entry_at: string; closed_at: string | null;
+          pair: string; direction: string; lot: number;
+          entry_rate: number; close_rate: number | null; close_reason: string | null;
+          pnl: number | null; realized_rr: number | null; mfe: number | null; mae: number | null;
+          reasoning: string | null;
+        }>()
+        .catch(() => ({ results: [] as Array<{ id: number; entry_at: string; closed_at: string | null; pair: string; direction: string; lot: number; entry_rate: number; close_rate: number | null; close_reason: string | null; pnl: number | null; realized_rr: number | null; mfe: number | null; mae: number | null; reasoning: string | null }> })),
     ]);
 
   const rate = rateRow ? parseFloat(rateRow.value) : null;
@@ -492,6 +538,7 @@ export async function getApiStatus(db: D1Database, tradingEnv?: { TRADING_ENABLE
 
   // 統計計算（T003: 統計学的信頼性）
   let statistics: StatusResponse['statistics'] = null;
+  let rrBreakdown: StatusResponse['rrBreakdown'] = null;
   if (totalClosed >= 10) {
     try {
       const [allPnlRaw, aiOutcomesRaw] = await Promise.all([
@@ -517,9 +564,25 @@ export async function getApiStatus(db: D1Database, tradingEnv?: { TRADING_ENABLE
       //   pnlMultiplier差（USD/JPY=100 vs EUR/USD=10000）と
       //   「RR<1.0でもPnL>0の取引（trailing止め）」の混入により
       //   265倍などの無意味な値になる
-      const rrWinRows = allPnlRows.filter(r => (r.realized_rr ?? 0) >= 1.0);
-      const rrLoseRows = allPnlRows.filter(r => (r.realized_rr ?? 0) < 1.0);
+      const rrWinRows   = allPnlRows.filter(r => (r.realized_rr ?? 0) >= 1.0);
+      const rrLoseRows  = allPnlRows.filter(r => (r.realized_rr ?? 0) < 1.0);
       const rrValidRows = allPnlRows.filter(r => r.realized_rr != null);
+
+      // RR帯別内訳（3層）
+      const rrTierWins  = allPnlRows.filter(r => r.realized_rr != null && r.realized_rr >= 1.0);
+      const rrTierSmall = allPnlRows.filter(r => r.realized_rr != null && r.realized_rr >= 0 && r.realized_rr < 1.0);
+      const rrTierLoss  = allPnlRows.filter(r => r.realized_rr != null && r.realized_rr < 0);
+      const calcTier = (rows: typeof allPnlRows) => {
+        const n = rows.length;
+        const totalPnl = rows.reduce((s, r) => s + (r.pnl ?? 0), 0);
+        const totalRr  = rows.reduce((s, r) => s + r.realized_rr!, 0);
+        return { n, totalPnl, avgRr: n > 0 ? totalRr / n : 0, avgPnl: n > 0 ? totalPnl / n : 0 };
+      };
+      rrBreakdown = {
+        wins:        calcTier(rrTierWins),
+        smallProfit: calcTier(rrTierSmall),
+        losses:      calcTier(rrTierLoss),
+      };
       // 平均実現RR（CLAUDE.md定義: 実現利益/初期リスク の全取引平均）
       const avgRR = rrValidRows.length > 0
         ? rrValidRows.reduce((s, r) => s + r.realized_rr!, 0) / rrValidRows.length
@@ -672,6 +735,7 @@ export async function getApiStatus(db: D1Database, tradingEnv?: { TRADING_ENABLE
       lastRun: logStatsRaw?.lastRun ?? null,
     },
     statistics,
+    rrBreakdown,
     slPatterns: (() => {
       try { return slPatternsRow ? JSON.parse(slPatternsRow.value) : []; } catch { return []; }
     })(),
@@ -686,6 +750,7 @@ export async function getApiStatus(db: D1Database, tradingEnv?: { TRADING_ENABLE
       : null,
     paramHistory: buildParamHistory(paramReviewLogRaw as unknown as { results: Array<{ pair: string; param_version: number; reason: string; win_rate: number | null; actual_rr: number | null; profit_factor: number | null; trades_eval: number | null; created_at: string }> }),
     recentIndicatorLogs: (indicatorLogsRaw as unknown as { results: IndicatorLog[] }).results ?? [],
+    tradeHistory: (tradeHistoryRaw as unknown as { results: StatusResponse['tradeHistory'] }).results ?? [],
   };
 }
 

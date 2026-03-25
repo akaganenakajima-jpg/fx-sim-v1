@@ -25,6 +25,11 @@ export interface Position {
   tp1_hit?: number | null;
   // トリガー識別子（'RATE'=レート変動, 'SCHED'=定期30m, 'NEWS'=ニュース）
   trigger?: string | null;
+  // MAE/MFE（最大含み損益: cronで毎分蓄積）
+  mae?: number | null;  // Max Adverse Excursion（最大含み損 ← 負値）
+  mfe?: number | null;  // Max Favorable Excursion（最大含み益 ← 正値）
+  // original_sl_rate: エントリー時のSL（trailing/TP1で変動しない初期リスク基準）
+  original_sl_rate?: number | null;
 }
 
 export interface DecisionRecord {

@@ -81,7 +81,9 @@ export async function checkAndCloseAllPositions(
       if (holdMinutes > maxHold) {
         const pnl = calcPnl(pos.direction, pos.entry_rate, currentRate, multiplier);
         const lr = logReturn(pos.entry_rate, currentRate);
-        const timeRealizedRR = pos.sl_rate != null ? calcRealizedRR(pos.direction, pos.entry_rate, currentRate, pos.sl_rate) : 0;
+        // original_sl_rate優先: エントリー時SL距離でRR正規化（trailing後も初期リスク基準）
+        const rrSlRef = pos.original_sl_rate ?? pos.sl_rate;
+        const timeRealizedRR = rrSlRef != null ? calcRealizedRR(pos.direction, pos.entry_rate, currentRate, rrSlRef) : 0;
         console.log(`[position] TIME_STOP: ${pos.pair} id=${pos.id} held=${Math.round(holdMinutes)}min > ${maxHold}min pnl=${pnl.toFixed(2)}`);
         await closePosition(db, pos.id, currentRate, 'TIME_STOP', pnl, lr, timeRealizedRR);
         // TIME_STOP も outcome 更新（AI精度計算から漏れないようにする）
@@ -133,6 +135,17 @@ export async function checkAndCloseAllPositions(
           }
         }
       }
+    }
+
+    // MAE/MFE更新（取引履歴用: 毎tick最大含み損益を蓄積）
+    const unrealizedPnl = calcPnl(pos.direction, pos.entry_rate, currentRate, multiplier);
+    const newMfe = pos.mfe == null ? unrealizedPnl : Math.max(pos.mfe, unrealizedPnl);
+    const newMae = pos.mae == null ? unrealizedPnl : Math.min(pos.mae, unrealizedPnl);
+    if (newMfe !== pos.mfe || newMae !== pos.mae) {
+      await db.prepare('UPDATE positions SET mfe = ?, mae = ? WHERE id = ?')
+        .bind(newMfe, newMae, pos.id).run();
+      pos.mfe = newMfe;
+      pos.mae = newMae;
     }
 
     // テスタ施策10: 分割決済 — TP1(RR1:1地点)で決済 + 建値ストップ
@@ -194,7 +207,9 @@ export async function checkAndCloseAllPositions(
         }
       }
 
-      const tpRealizedRR = calcRealizedRR(pos.direction, pos.entry_rate, currentRate, pos.sl_rate!);
+      // original_sl_rate優先: エントリー時SL距離でRR正規化（trailing/TP1で変動したSLではなく初期リスク基準）
+      const tpSlRef = pos.original_sl_rate ?? pos.sl_rate!;
+      const tpRealizedRR = calcRealizedRR(pos.direction, pos.entry_rate, currentRate, tpSlRef);
       await closePosition(db, pos.id, currentRate, 'TP', pnl, lr, tpRealizedRR);
       // TP 通知（currentRate はこの時点で number に絞り込まれている）
       await sendNotification(webhookUrl, buildTpSlMessage({
@@ -232,7 +247,9 @@ export async function checkAndCloseAllPositions(
         }
       }
 
-      const slRealizedRR = calcRealizedRR(pos.direction, pos.entry_rate, currentRate, pos.sl_rate!);
+      // original_sl_rate優先: エントリー時SL距離でRR正規化
+      const slSlRef = pos.original_sl_rate ?? pos.sl_rate!;
+      const slRealizedRR = calcRealizedRR(pos.direction, pos.entry_rate, currentRate, slSlRef);
       await closePosition(db, pos.id, currentRate, 'SL', pnl, lr, slRealizedRR);
       // SL 通知
       await sendNotification(webhookUrl, buildTpSlMessage({
@@ -415,12 +432,12 @@ export async function openPosition(
     .prepare(
       `INSERT INTO positions
          (pair, direction, entry_rate, tp_rate, sl_rate, lot, status, entry_at, source, oanda_trade_id,
-          strategy, regime, session, confidence, original_lot, trigger)
-       VALUES (?, ?, ?, ?, ?, ?, 'OPEN', ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+          strategy, regime, session, confidence, original_lot, trigger, original_sl_rate)
+       VALUES (?, ?, ?, ?, ?, ?, 'OPEN', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     )
     .bind(pair, direction, entryRate, tpRate, slRate, lot, new Date().toISOString(), source, oandaTradeId,
       extra?.strategy ?? null, extra?.regime ?? null, extra?.session ?? null, extra?.confidence ?? null, lot,
-      extra?.trigger ?? null)
+      extra?.trigger ?? null, slRate)  // original_sl_rate = エントリー時のSL（trailing後も不変）
     .run();
 
   console.log(`[position] Opened ${pair} ${direction} @ ${entryRate} TP=${tpRate} SL=${slRate} [${source}${oandaTradeId ? ` trade=${oandaTradeId}` : ''}]`);

@@ -149,8 +149,14 @@ export function getDashboardHtml(): string {
     <div class="kpi"><div class="kpi-val" id="sk-total">--</div><div class="kpi-lbl">総取引</div></div>
   </div>
 
+  <!-- RR帯別内訳 -->
+  <div style="margin:8px 16px 0;background:var(--surface);border-radius:var(--rs);padding:12px" id="rr-breakdown-card">
+    <div style="font-size:11px;color:var(--tertiary);margin-bottom:8px;font-weight:600">RR帯別内訳</div>
+    <div id="rr-breakdown"></div>
+  </div>
+
   <!-- エクイティカーブ -->
-  <div style="margin:12px 16px 0;background:var(--surface);border-radius:var(--rs);padding:12px">
+  <div style="margin:8px 16px 0;background:var(--surface);border-radius:var(--rs);padding:12px">
     <div style="font-size:11px;color:var(--tertiary);margin-bottom:8px;font-weight:600">エクイティカーブ</div>
     <div id="equity-chart" style="height:60px;position:relative">
       <svg viewBox="0 0 320 60" style="width:100%;height:100%"></svg>
@@ -177,6 +183,16 @@ export function getDashboardHtml(): string {
   <div style="padding:16px;text-align:center">
     <span class="cross-link" onclick="switchTab('tab-ai')">→ AIタブで全判断の正解率を確認</span>
   </div>
+
+  <!-- 取引履歴 -->
+  <div class="sec" style="display:flex;align-items:center;justify-content:space-between;padding-right:16px">
+    <span>取引履歴</span>
+    <div id="th-sort-toggle" style="display:flex;gap:4px">
+      <button class="th-sort-btn th-sort-active" data-sort="closed" onclick="setThSort('closed')">決済順</button>
+      <button class="th-sort-btn" data-sort="entry" onclick="setThSort('entry')">エントリー順</button>
+    </div>
+  </div>
+  <div id="trade-history" style="padding:0 16px 16px"></div>
 
 </div>
 

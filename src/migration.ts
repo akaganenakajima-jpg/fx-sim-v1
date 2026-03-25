@@ -233,6 +233,35 @@ const MIGRATIONS: Array<{ version: number; description: string; sql: string }> =
     description: 'instrument_scores に期間別RR集計カラム追加（rr_30t/wr_30t/rr_daily/rr_weekly/rr_monthly/rr_trend）',
     sql: `CREATE TABLE IF NOT EXISTS _dummy_v220 (id INTEGER PRIMARY KEY)`,
   },
+  // v221: positions に mae カラム追加（取引履歴: 最大含み損）
+  {
+    version: 221,
+    description: 'positions に mae カラム追加（Max Adverse Excursion: 最大含み損）',
+    sql: 'ALTER TABLE positions ADD COLUMN mae REAL',
+  },
+  // v222: positions に mfe カラム追加（取引履歴: 最大含み益）
+  {
+    version: 222,
+    description: 'positions に mfe カラム追加（Max Favorable Excursion: 最大含み益）',
+    sql: 'ALTER TABLE positions ADD COLUMN mfe REAL',
+  },
+  // v224: 旧データ修正 — realized_rr=0.00かつPnL>0の誤計算レコードをNULLに置換
+  // 原因: trailing/TP1でsl_rate=entry_rateになった後の決済 → リスク距離=0 → 0返し
+  // 修正: original_sl_rateが未存在の旧記録はNULL（計算不能）として扱う
+  {
+    version: 224,
+    description: '旧realized_rr誤計算修正: pnl>0かつrealized_rr=0.0の誤レコードをNULLに置換',
+    sql: `UPDATE positions SET realized_rr = NULL
+          WHERE status = 'CLOSED' AND realized_rr = 0.0 AND pnl > 0`,
+  },
+  // v223: positions に original_sl_rate カラム追加（エントリー時SL保存 — realized_rr正規化用）
+  // CLAUDE.md定義: 実現RR = 実現利益 / 初期リスク（エントリー時のSL距離）
+  // trailing/TP1でsl_rateが変動しても初期リスクは不変
+  {
+    version: 223,
+    description: 'positions に original_sl_rate カラム追加（エントリー時SL距離でのRR計算正規化）',
+    sql: 'ALTER TABLE positions ADD COLUMN original_sl_rate REAL',
+  },
 ];
 
 export async function runMigrations(db: D1Database): Promise<void> {
