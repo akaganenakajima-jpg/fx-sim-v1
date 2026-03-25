@@ -221,6 +221,7 @@ export interface StatusResponse {
     news_title: string;
     news_score: number;
     affected_pairs: string | null;
+    detail: string | null;
     created_at: string;
   }>;
   /** Ph.6: 因果サマリー — ナラティブ+キードライバー+ヒートマップ */
@@ -463,11 +464,11 @@ export async function getApiStatus(db: D1Database, tradingEnv?: { TRADING_ENABLE
       // アクティビティフィード: ニューストリガー発火ログ（直近30件）
       db
         .prepare(
-          `SELECT trigger_type, news_title, news_score, affected_pairs, created_at
+          `SELECT trigger_type, news_title, news_score, affected_pairs, detail, created_at
            FROM news_trigger_log ORDER BY id DESC LIMIT 30`
         )
-        .all<{ trigger_type: string; news_title: string; news_score: number; affected_pairs: string | null; created_at: string }>()
-        .catch(() => ({ results: [] as Array<{ trigger_type: string; news_title: string; news_score: number; affected_pairs: string | null; created_at: string }> })),
+        .all<{ trigger_type: string; news_title: string; news_score: number; affected_pairs: string | null; detail: string | null; created_at: string }>()
+        .catch(() => ({ results: [] as Array<{ trigger_type: string; news_title: string; news_score: number; affected_pairs: string | null; detail: string | null; created_at: string }> })),
 
       // 取引履歴: 直近50件クローズ済みポジション + 最近接のエントリー根拠
       db

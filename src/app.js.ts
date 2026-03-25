@@ -1681,19 +1681,22 @@ export const JS = `
         var ntTagCls = isEmg ? 'feed-tag-emergency' : 'feed-tag-trend-inf';
         var ntTagTxt = isEmg ? '緊急発火' : 'トレンド';
         var ntTimeStr = fmtTime(nt.created_at);
-        var ntTitle = (nt.news_title || '').slice(0, 35);
-        if ((nt.news_title || '').length > 35) ntTitle += '…';
         var ntPairs = nt.affected_pairs || '全銘柄';
-        var ntScore = nt.news_score != null ? nt.news_score.toFixed(1) : '';
+        var ntAction = isEmg ? '再判定' : '調整';
+        var ntScore100 = Math.round(nt.news_score * 10);
+        // Row2: detailがあれば理由文、なければニュースタイトル
+        var ntDetail = nt.detail || nt.news_title || '';
+        var ntDetailShort = ntDetail.slice(0, 40);
+        if (ntDetail.length > 40) ntDetailShort += '…';
         return '<div class="feed-item">'
           + '<div class="feed-row1">'
             + '<span class="feed-tag ' + ntTagCls + '">' + ntTagTxt + '</span>'
             + '<span class="feed-pair" style="font-size:12px">' + escHtml(ntPairs) + '</span>'
-            + '<span class="feed-act" style="color:var(--tertiary);font-size:11px">' + Math.round(nt.news_score * 10) + '/100</span>'
+            + '<span class="feed-act" style="font-size:11px">' + escHtml(ntAction) + ' ' + ntScore100 + '/100</span>'
           + '</div>'
           + '<div class="feed-row2">'
             + '<span class="feed-time">' + escHtml(ntTimeStr) + '</span>'
-            + '<span class="feed-note">' + escHtml(ntTitle) + '</span>'
+            + '<span class="feed-note">' + escHtml(ntDetailShort) + '</span>'
           + '</div>'
           + '</div>';
       } else if (item._type === 'param') {
