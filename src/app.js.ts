@@ -556,17 +556,32 @@ export const JS = `
     }
     if (newsHeader) newsHeader.style.display = '';
 
+    // news_trigger_logからスコアlookup用マップ構築（タイトル→score）
+    var trigScoreMap = {};
+    (data.recentNewsTriggers || []).forEach(function(nt) {
+      if (nt.news_title && nt.news_score != null) {
+        trigScoreMap[nt.news_title] = nt.news_score;
+      }
+    });
+
     feedEl.innerHTML = items.map(function(n) {
-      var score = n.impact ? parseInt(n.impact) : 0;
-      if (isNaN(score)) score = 0;
-      var badgeCls = score >= 90 ? 'nf-badge-emergency' : score >= 70 ? 'nf-badge-trend' : 'nf-badge-info';
-      var badgeText = score >= 90 ? '緊急' : score >= 70 ? 'トレンド' : '情報';
-      var borderCls = score >= 90 ? 'nf-emergency' : score >= 70 ? 'nf-trend' : '';
+      // score優先: newsAnalysis.score → news_trigger_log.news_score（タイトルマッチ）
+      var rawScore = n.score;
+      if (rawScore == null || rawScore <= 0) {
+        var title = n.title_ja || n.title || '';
+        rawScore = trigScoreMap[title] || null;
+      }
+      var hasScore = rawScore != null && rawScore > 0;
+      var score100 = hasScore ? Math.round(rawScore * 10) : 0;
+      var badgeCls = score100 >= 90 ? 'nf-badge-emergency' : score100 >= 70 ? 'nf-badge-trend' : 'nf-badge-info';
+      var badgeText = score100 >= 90 ? '緊急' : score100 >= 70 ? 'トレンド' : '情報';
+      var borderCls = score100 >= 90 ? 'nf-emergency' : score100 >= 70 ? 'nf-trend' : '';
+      var scoreStr = hasScore ? ' ' + score100 + '/100' : '';
       var headline = n.title_ja || n.title || '';
       var aiText = n.desc_ja || n.title_ja || n.title || '';
 
       return '<div class="nf-item ' + borderCls + '" onclick="switchTab(\\'tab-news\\')">' +
-        '<div class="nf-header"><span class="nf-badge ' + badgeCls + '">' + badgeText + ' · score ' + score + '</span>' +
+        '<div class="nf-header"><span class="nf-badge ' + badgeCls + '">' + badgeText + scoreStr + '</span>' +
         '<span class="nf-time">' + fmtTimeAgo(n.analyzed_at || '') + '</span></div>' +
         '<div class="nf-headline">' + escHtml(headline) + '</div>' +
         '<div class="nf-ai"><span class="nf-ai-label">AI判断</span><span class="nf-ai-text">' + escHtml(aiText) + '</span></div>' +
@@ -865,7 +880,7 @@ export const JS = `
     var isEmergency = isAttention && n.affected_pairs && n.affected_pairs.length >= 2;
     var badgeCls = isEmergency ? 'nf-badge-emergency' : isAttention ? 'nf-badge-trend' : 'nf-badge-info';
     var badgeBase = isEmergency ? '緊急' : isAttention ? 'トレンド' : '情報';
-    var badgeText = n.score != null ? badgeBase + ' · score ' + n.score : badgeBase;
+    var badgeText = (n.score != null && n.score > 0) ? badgeBase + ' ' + Math.round(n.score * 10) + '/100' : badgeBase;
     var borderCls = isEmergency ? 'nf-emergency' : isAttention ? 'nf-trend' : 'nf-info';
     // impactフィールドはAI判断テキスト（数値スコアではない）
     var impactText = typeof n.impact === 'string' ? n.impact : '';
@@ -1674,7 +1689,7 @@ export const JS = `
           + '<div class="feed-row1">'
             + '<span class="feed-tag ' + ntTagCls + '">' + ntTagTxt + '</span>'
             + '<span class="feed-pair" style="font-size:12px">' + escHtml(ntPairs) + '</span>'
-            + '<span class="feed-act" style="color:var(--tertiary);font-size:11px">sc ' + ntScore + '</span>'
+            + '<span class="feed-act" style="color:var(--tertiary);font-size:11px">' + Math.round(nt.news_score * 10) + '/100</span>'
           + '</div>'
           + '<div class="feed-row2">'
             + '<span class="feed-time">' + escHtml(ntTimeStr) + '</span>'

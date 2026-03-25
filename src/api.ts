@@ -1256,9 +1256,25 @@ async function getNewsAnalysis(db: D1Database): Promise<{
         description?: string | null; source?: string | null; score?: number | null;
         affected_pairs?: string[] | null; verdict?: string | null; why_chain?: string[] | null;
       }>;
+      // scoreが未設定の記事にnews_rawのcomposite_scoreを補完
+      const needsScore = raw.some(item => item.score == null);
+      let scoreMap = new Map<string, number>();
+      if (needsScore) {
+        try {
+          const scoreRows = await db.prepare(
+            `SELECT title, title_ja, composite_score FROM news_raw WHERE haiku_accepted = 1 AND composite_score IS NOT NULL ORDER BY id DESC LIMIT 80`
+          ).all<{ title: string; title_ja: string | null; composite_score: number }>();
+          for (const r of scoreRows.results ?? []) {
+            scoreMap.set(r.title, r.composite_score);
+            if (r.title_ja) scoreMap.set(r.title_ja, r.composite_score);
+          }
+        } catch {}
+      }
+
       // why_chainが未設定の場合は合成生成
       const items = raw.map(item => ({
         ...item,
+        score: item.score ?? scoreMap.get(item.title ?? '') ?? scoreMap.get(item.title_ja ?? '') ?? null,
         verdict: (item.verdict as 'correct' | 'wrong' | 'pending' | null | undefined) ?? null,
         why_chain: (item.why_chain && item.why_chain.length > 0)
           ? item.why_chain

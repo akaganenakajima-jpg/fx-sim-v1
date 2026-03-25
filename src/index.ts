@@ -935,6 +935,17 @@ async function run(env: Env): Promise<void> {
 
       // news_analysis + latest_news キャッシュ更新
       if (result.newsAnalysis.length > 0) {
+        // news_raw から composite_score を一括取得して score lookup map を構築
+        const scoreMap = new Map<string, number>();
+        try {
+          const scoreRows = await env.DB.prepare(
+            `SELECT title, composite_score FROM news_raw WHERE haiku_accepted = 1 AND composite_score IS NOT NULL ORDER BY id DESC LIMIT 80`
+          ).all<{ title: string; composite_score: number }>();
+          for (const r of scoreRows.results ?? []) {
+            scoreMap.set(r.title, r.composite_score);
+          }
+        } catch {}
+
         const enriched = result.newsAnalysis.map(a => {
           // 同バッチのtrade_decisionsから該当ペアの判断を紐付け
           const pairedDecisions = (result.decisions ?? [])
@@ -946,12 +957,14 @@ async function run(env: Env): Promise<void> {
             const hasOpenPos = (a.affected_pairs ?? []).some((p: string) => openPairsForPathB.has(p));
             hold_reason = hasOpenPos ? '既存ポジションあり' : 'AI判断: 様子見';
           }
+          const newsTitle = news[a.index]?.title ?? '';
           return {
             ...a,
             title: news[a.index]?.title_ja || (news[a.index]?.title ?? null),
             pubDate: news[a.index]?.pubDate ?? null,
             description: news[a.index]?.desc_ja || (news[a.index]?.description ?? null),
             source: (news[a.index] as any)?.source ?? null,
+            score: scoreMap.get(newsTitle) ?? null,
             trade_decisions: pairedDecisions.length > 0 ? pairedDecisions : null,
             hold_reason,
           };
