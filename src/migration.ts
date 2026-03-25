@@ -221,6 +221,18 @@ const MIGRATIONS: Array<{ version: number; description: string; sql: string }> =
   created_at  TEXT    NOT NULL
 )`,
   },
+  // v219: RR≥1.0勝率統一 — positions に realized_rr カラム追加
+  {
+    version: 219,
+    description: 'positions に realized_rr カラム追加（RR≥1.0勝率統一）',
+    sql: 'ALTER TABLE positions ADD COLUMN realized_rr REAL',
+  },
+  // v220: instrument_scores に期間別RR集計カラム追加
+  {
+    version: 220,
+    description: 'instrument_scores に期間別RR集計カラム追加（rr_30t/wr_30t/rr_daily/rr_weekly/rr_monthly/rr_trend）',
+    sql: `CREATE TABLE IF NOT EXISTS _dummy_v220 (id INTEGER PRIMARY KEY)`,
+  },
 ];
 
 export async function runMigrations(db: D1Database): Promise<void> {
@@ -443,6 +455,51 @@ export async function runMigrations(db: D1Database): Promise<void> {
         'ALTER TABLE instrument_params ADD COLUMN divergence_lookback INTEGER NOT NULL DEFAULT 14',
         'ALTER TABLE instrument_params ADD COLUMN min_confirm_signals INTEGER NOT NULL DEFAULT 2',
         'ALTER TABLE instrument_params ADD COLUMN er_upper_limit REAL NOT NULL DEFAULT 0.85',
+      ]) {
+        try { await db.prepare(col).run(); } catch {}
+      }
+      await db.prepare(
+        'INSERT OR IGNORE INTO schema_version (version, description, applied_at) VALUES (?, ?, ?)'
+      ).bind(m.version, m.description, new Date().toISOString()).run();
+      console.log(`[migration] Applied v${m.version}: ${m.description}`);
+      continue;
+    }
+
+    // version 219: positions に realized_rr カラム追加 + バックフィル
+    if (m.version === 219) {
+      try {
+        await db.prepare('ALTER TABLE positions ADD COLUMN realized_rr REAL').run();
+      } catch {}
+      // バックフィル: 既存クローズ済みポジションの realized_rr を計算
+      try {
+        await db.prepare(`
+          UPDATE positions SET realized_rr =
+            CASE direction
+              WHEN 'BUY' THEN (close_rate - entry_rate) / NULLIF(entry_rate - sl_rate, 0)
+              WHEN 'SELL' THEN (entry_rate - close_rate) / NULLIF(sl_rate - entry_rate, 0)
+            END
+          WHERE status = 'CLOSED' AND realized_rr IS NULL AND sl_rate IS NOT NULL AND close_rate IS NOT NULL
+        `).run();
+        console.log('[migration] v219: realized_rr backfill complete');
+      } catch (e) {
+        console.warn('[migration] v219 backfill warning:', e);
+      }
+      await db.prepare(
+        'INSERT OR IGNORE INTO schema_version (version, description, applied_at) VALUES (?, ?, ?)'
+      ).bind(m.version, m.description, new Date().toISOString()).run();
+      console.log(`[migration] Applied v${m.version}: ${m.description}`);
+      continue;
+    }
+
+    // version 220: instrument_scores に期間別RR集計カラム追加
+    if (m.version === 220) {
+      for (const col of [
+        'ALTER TABLE instrument_scores ADD COLUMN rr_30t REAL',
+        'ALTER TABLE instrument_scores ADD COLUMN wr_30t REAL',
+        'ALTER TABLE instrument_scores ADD COLUMN rr_daily REAL',
+        'ALTER TABLE instrument_scores ADD COLUMN rr_weekly REAL',
+        'ALTER TABLE instrument_scores ADD COLUMN rr_monthly REAL',
+        "ALTER TABLE instrument_scores ADD COLUMN rr_trend TEXT DEFAULT 'STABLE'",
       ]) {
         try { await db.prepare(col).run(); } catch {}
       }

@@ -106,6 +106,7 @@ export async function closePosition(
   reason: string,
   pnl: number,
   logReturnVal?: number,
+  realizedRR?: number,
 ): Promise<void> {
   await db
     .prepare(
@@ -115,10 +116,11 @@ export async function closePosition(
            close_reason = ?,
            closed_at    = ?,
            pnl          = ?,
-           log_return   = ?
+           log_return   = ?,
+           realized_rr  = ?
        WHERE id = ?`
     )
-    .bind(closeRate, reason, new Date().toISOString(), pnl, logReturnVal ?? null, id)
+    .bind(closeRate, reason, new Date().toISOString(), pnl, logReturnVal ?? null, realizedRR ?? null, id)
     .run();
 }
 

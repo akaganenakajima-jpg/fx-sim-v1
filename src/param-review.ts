@@ -8,6 +8,7 @@
 //   fx-strategy.md §2.2: 目標RR ≥ 2.0 → 勝率40%でもEV=+0.20
 
 import { insertSystemLog } from './db';
+import { RR_DEFINITION_PROMPT } from './gemini';
 import type { InstrumentParamsRow } from './logic-indicators';
 
 const REVIEW_PROMPT_VERSION = 'PARAM_REVIEW_v1';
@@ -139,7 +140,7 @@ function buildReviewPrompt(
 
   return [
     `あなたはアルゴリズムトレーディングのパラメーター最適化アナリストです。`,
-    `以下の実績データを分析し、RR2.0以上を達成するためのパラメーター調整をJSONで返してください。`,
+    `${RR_DEFINITION_PROMPT}\n以下の実績データを分析し、RR_DEFINITION_PROMPT を踏まえ、RRの改善・最大化のためのパラメーター調整をJSONで返してください。`,
     ``,
     `【対象銘柄】${pair}`,
     `【現在パラメーター（基本）】`,

@@ -41,7 +41,7 @@ export function getDashboardHtml(): string {
   <div class="metrics" id="metrics-strip">
     <div class="m"><div class="m-val" id="m-balance">--</div><div class="m-lbl">残高</div></div>
     <div class="m"><div class="m-val" id="m-roi">--</div><div class="m-lbl">ROI</div></div>
-    <div class="m"><div class="m-val" id="m-winrate">--</div><div class="m-lbl">勝率</div></div>
+    <div class="m"><div class="m-val" id="m-winrate">--</div><div class="m-lbl">勝率(RR≥1.0)</div></div>
     <div class="m"><div class="m-val" id="m-pf">--</div><div class="m-lbl">PF</div></div>
     <div class="m"><div class="m-val" id="m-trades">--</div><div class="m-lbl">取引</div></div>
   </div>
@@ -129,7 +129,7 @@ export function getDashboardHtml(): string {
   <!-- KPI 6つ -->
   <div class="sec">全体パフォーマンス</div>
   <div class="kpi-grid" id="stats-kpi">
-    <div class="kpi"><div class="kpi-val" id="sk-winrate">--</div><div class="kpi-lbl">勝率</div></div>
+    <div class="kpi"><div class="kpi-val" id="sk-winrate">--</div><div class="kpi-lbl">勝率(RR≥1.0)</div></div>
     <div class="kpi"><div class="kpi-val" id="sk-pf">--</div><div class="kpi-lbl">PF</div></div>
     <div class="kpi"><div class="kpi-val" id="sk-sharpe">--</div><div class="kpi-lbl">シャープ</div></div>
     <div class="kpi"><div class="kpi-val" id="sk-maxdd">--</div><div class="kpi-lbl">最大DD</div></div>

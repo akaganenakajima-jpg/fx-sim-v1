@@ -2,7 +2,7 @@
 // Wilson CI, Sharpe SE, VaR/CVaR, Kelly基準, マルコフ遷移
 // ローリングリターン, 最大DD%, 期間別パフォーマンス, PnLボラティリティ
 
-/** Wilsonスコア区間（勝率の95%信頼区間） */
+/** Wilsonスコア区間（勝率=RR≥1.0の95%信頼区間） */
 export function wilsonCI(wins: number, total: number, z = 1.96): { lower: number; upper: number } {
   if (total === 0) return { lower: 0, upper: 0 };
   const p = wins / total;
@@ -94,6 +94,7 @@ export function rollingReturns(
     result[w] = {
       roi: (sum / initialBalance) * 100,
       sharpe: sh.sharpe,
+      // NOTE: wins は呼び出し元で realized_rr >= 1.0 基準でカウントすること（RR勝率統一）
       winRate: slice.length > 0 ? (wins / slice.length) * 100 : 0,
       count: slice.length,
     };
@@ -462,7 +463,7 @@ export function slPatternAnalysis(
     .sort((a, b) => b.slRate - a.slRate);
 }
 
-/** 検出力分析: 勝率の差を統計的に検出するのに必要なサンプル数
+/** 検出力分析: 勝率(RR≥1.0)の差を統計的に検出するのに必要なサンプル数
  *  Cohen の方法: n = (z_α + z_β)^2 / (2 * arcsin(√p1) - 2 * arcsin(√p0))^2
  *  簡略化: p0=0.5（ランダム）、p1=目標勝率（例: 0.55）、α=0.05、β=0.2
  */
@@ -608,7 +609,7 @@ export function engleGrangerCointegration(
   return { residualADF, cointegrated, sampleN: n };
 }
 
-/** 階層ベイズ勝率推定（Beta-Binomial 共役更新）
+/** 階層ベイズ勝率推定（勝ち=RR≥1.0）（Beta-Binomial 共役更新）
  *  プール推定を事前分布として使い、銘柄固有勝率を補正
  *  コールドスタート（データ少）の銘柄をプール平均に引き寄せる
  *

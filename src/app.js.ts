@@ -1236,7 +1236,7 @@ export const JS = `
         }).join('') + '</div>';
       } else {
         changesHtml = '<div class="evo-changes"><div class="evo-change"><div class="evo-dot neutral"></div><div style="flex:1">' +
-          '<div class="evo-text">勝率 ' + wr + '% \\u00b7 ' + p.wins + '勝' + (p.total - p.wins) + '敗\\uff08計' + p.total + '\\uff09</div>' +
+          '<div class="evo-text">勝率(RR\\u22651.0) ' + wr + '% \\u00b7 ' + p.wins + '勝' + (p.total - p.wins) + '敗\\uff08計' + p.total + '\\uff09</div>' +
           '<div class="evo-result unchanged">パラメーター変更なし</div>' +
         '</div></div></div>';
       }
@@ -1567,12 +1567,12 @@ export const JS = `
         if (changeDesc && resultDesc) {
           summaryText = 'AIレビューを' + pairChanges.length + '回実施。' + changeDesc + '。' + resultDesc + '。';
         } else if (changeDesc) {
-          summaryText = 'AIレビューを' + pairChanges.length + '回実施。' + changeDesc + '。勝率 ' + wr + '%（' + verdictLabel + '）。';
+          summaryText = 'AIレビューを' + pairChanges.length + '回実施。' + changeDesc + '。勝率(RR≥1.0) ' + wr + '%（' + verdictLabel + '）。';
         } else {
-          summaryText = 'AIレビューを' + pairChanges.length + '回実施。勝率 ' + wr + '%。結果: ' + verdictLabel + '。';
+          summaryText = 'AIレビューを' + pairChanges.length + '回実施。勝率(RR≥1.0) ' + wr + '%。結果: ' + verdictLabel + '。';
         }
       } else {
-        summaryText = '初期設定で運用中。取引 ' + p.total + '件、勝率 ' + wr + '%。パラメーター変更なし。';
+        summaryText = '初期設定で運用中。取引 ' + p.total + '件、勝率(RR≥1.0) ' + wr + '%。パラメーター変更なし。';
       }
 
       // Score breakdown (from params data if available)

@@ -21,6 +21,19 @@ function calcPnl(
     : (entryRate - closeRate) * pnlMultiplier;
 }
 
+/** 実現RR計算: 実現利益 / 初期リスク（エントリー時SL距離）
+ *  RR ≥ 1.0 = 勝ち（リスクと同等以上のリターン）
+ *  RR < 1.0 = 負け */
+export function calcRealizedRR(direction: string, entryRate: number, closeRate: number, slRate: number): number {
+  if (direction === 'BUY') {
+    const risk = entryRate - slRate;
+    return risk > 0 ? (closeRate - entryRate) / risk : 0;
+  } else {
+    const risk = slRate - entryRate;
+    return risk > 0 ? (entryRate - closeRate) / risk : 0;
+  }
+}
+
 function shouldTriggerTP(pos: Position, currentRate: number): boolean {
   if (pos.tp_rate == null) return false;
   return pos.direction === 'BUY'
@@ -67,8 +80,9 @@ export async function checkAndCloseAllPositions(
       if (holdMinutes > maxHold) {
         const pnl = calcPnl(pos.direction, pos.entry_rate, currentRate, multiplier);
         const lr = logReturn(pos.entry_rate, currentRate);
+        const timeRealizedRR = pos.sl_rate != null ? calcRealizedRR(pos.direction, pos.entry_rate, currentRate, pos.sl_rate) : 0;
         console.log(`[position] TIME_STOP: ${pos.pair} id=${pos.id} held=${Math.round(holdMinutes)}min > ${maxHold}min pnl=${pnl.toFixed(2)}`);
-        await closePosition(db, pos.id, currentRate, 'TIME_STOP', pnl, lr);
+        await closePosition(db, pos.id, currentRate, 'TIME_STOP', pnl, lr, timeRealizedRR);
         await insertSystemLog(db, 'INFO', 'POSITION',
           `時間切れ決済: ${pos.pair} ${pos.direction} ${Math.round(holdMinutes)}分保有 PnL ${pnl >= 0 ? '+' : ''}${pnl.toFixed(2)}`,
           JSON.stringify({ id: pos.id, holdMinutes: Math.round(holdMinutes), maxHold, pnl }));
@@ -177,7 +191,8 @@ export async function checkAndCloseAllPositions(
         }
       }
 
-      await closePosition(db, pos.id, currentRate, 'TP', pnl, lr);
+      const tpRealizedRR = calcRealizedRR(pos.direction, pos.entry_rate, currentRate, pos.sl_rate!);
+      await closePosition(db, pos.id, currentRate, 'TP', pnl, lr, tpRealizedRR);
       // TP 通知（currentRate はこの時点で number に絞り込まれている）
       await sendNotification(webhookUrl, buildTpSlMessage({
         pair: pos.pair,
@@ -187,9 +202,9 @@ export async function checkAndCloseAllPositions(
         entryRate: pos.entry_rate,
         closeRate: currentRate,
       }));
-      await updateDecisionOutcome(db, pos.pair, pos.direction, pos.entry_at, pnl > 0 ? 'WIN' : 'LOSE');
+      await updateDecisionOutcome(db, pos.pair, pos.direction, pos.entry_at, tpRealizedRR >= 1.0 ? 'WIN' : 'LOSE');
       // トンプソン・サンプリングパラメータ更新
-      await updateThompsonParams(db, pos.pair, pnl > 0).catch(() => {});
+      await updateThompsonParams(db, pos.pair, tpRealizedRR >= 1.0).catch(() => {});
       await insertSystemLog(db, 'INFO', 'POSITION',
         `TP決済: ${pos.pair} ${pos.direction} PnL ${pnl >= 0 ? '+' : ''}${pnl.toFixed(2)}`,
         JSON.stringify({ id: pos.id, entry: pos.entry_rate, close: currentRate, pnl }));
@@ -214,7 +229,8 @@ export async function checkAndCloseAllPositions(
         }
       }
 
-      await closePosition(db, pos.id, currentRate, 'SL', pnl, lr);
+      const slRealizedRR = calcRealizedRR(pos.direction, pos.entry_rate, currentRate, pos.sl_rate!);
+      await closePosition(db, pos.id, currentRate, 'SL', pnl, lr, slRealizedRR);
       // SL 通知
       await sendNotification(webhookUrl, buildTpSlMessage({
         pair: pos.pair,
@@ -224,9 +240,9 @@ export async function checkAndCloseAllPositions(
         entryRate: pos.entry_rate,
         closeRate: currentRate,
       }));
-      await updateDecisionOutcome(db, pos.pair, pos.direction, pos.entry_at, pnl > 0 ? 'WIN' : 'LOSE');
+      await updateDecisionOutcome(db, pos.pair, pos.direction, pos.entry_at, slRealizedRR >= 1.0 ? 'WIN' : 'LOSE');
       // トンプソン・サンプリングパラメータ更新
-      await updateThompsonParams(db, pos.pair, pnl > 0).catch(() => {});
+      await updateThompsonParams(db, pos.pair, slRealizedRR >= 1.0).catch(() => {});
       await insertSystemLog(db, 'WARN', 'POSITION',
         `SL決済: ${pos.pair} ${pos.direction} PnL ${pnl >= 0 ? '+' : ''}${pnl.toFixed(2)}`,
         JSON.stringify({ id: pos.id, entry: pos.entry_rate, close: currentRate, pnl }));
