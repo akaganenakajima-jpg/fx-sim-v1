@@ -348,6 +348,8 @@ export async function getDecisionWithHedge(params: {
 export interface NewsAnalysisItem {
   index: number;
   attention: boolean;
+  /** テスタ理論指標ティア: S=50-300pip超, A=20-80pip, B=10-40pip, C=その他 */
+  impact_level?: 'S' | 'A' | 'B' | 'C';
   impact: string;
   title_ja: string;
   affected_pairs: string[];
@@ -584,8 +586,15 @@ export async function newsStage1(params: {
     '1. 各ニュースの注目度評価（news_analysis）\n' +
     '2. ニュースに基づいた売買シグナル（trade_signals）\n\n' +
     '必ず以下のJSON形式のみで返答してください:\n' +
-    '{"news_analysis":[{"index":0,"attention":true,"impact":"円安・株安要因（50文字以内）","affected_pairs":["USD/JPY","Nikkei225"]}],' +
+    '{"news_analysis":[{"index":0,"attention":true,"impact_level":"S","impact":"円安・株安要因（50文字以内）","affected_pairs":["USD/JPY","Nikkei225"]}],' +
     '"trade_signals":[{"pair":"USD/JPY","decision":"BUY","tp_rate":160.50,"sl_rate":158.00,"reasoning":"日本語100文字以内"}]}\n\n' +
+    'impact_levelの定義（テスタ理論指標ティア）:\n' +
+    '- S: FOMC金利決定・米雇用統計・米CPI・日銀会合・地政学リスク急変。50-300pip超の値動き\n' +
+    '- A: GDP・ISM・ECB/BOE金利決定・要人発言の方針転換・地政学リスク拡大。20-80pipの値動き\n' +
+    '- B: ADP・PPI・小売売上高・PMI・企業決算。10-40pipの小〜中程度の値動き\n' +
+    '- C: 一般ニュース・既知情報・直接インパクトが薄いもの\n' +
+    '→ attention:trueはSまたはAのみ設定する\n' +
+    '→ trade_signalsに含めるのはimpact_levelがSまたはAのニュースのみ（BとCのニュースでのエントリーは禁止）\n\n' +
     'TP/SL方向の絶対ルール（違反はシステムが自動拒否）:\n' +
     '- BUY: tp_rate は現在レートより【高い】価格 / sl_rate は現在レートより【低い】価格\n' +
     '- SELL: tp_rate は現在レートより【低い】価格 / sl_rate は現在レートより【高い】価格\n' +
@@ -609,12 +618,13 @@ export async function newsStage1(params: {
     '- trade_signalsはBUYまたはSELLのみ（HOLDは含めない）\n' +
     '- [OP]マークの銘柄: 通常はtrade_signalsに含めない。ただしニュースが現在のポジション方向と明確に逆行し、かつ確信度が非常に高い場合のみ含めてよい（その場合reasoningの先頭に必ず"REVERSAL:"を付記すること）\n' +
     '- tp_rate/sl_rateは必ず数値で返す（nullは不可）\n' +
-    '- 【RR比設定手順・必須・自動拒否回避】①SL距離を決める（最低tpSlMin以上必須・未満は即自動拒否。USD/JPYなら最低0.2円・推奨0.3〜0.8円）②RR比を計算・検証【送信前必須チェック】RR=TP距離÷SL距離を計算し1.5以上を確認してから送信（有効なRR例: 1.50✅, 1.67✅, 2.00✅ / 無効で即自動拒否: 0.60❌, 0.83❌, 0.88❌, 0.93❌, 0.99❌, 1.2❌, 1.4❌（RR<1.0はTPがSLより近い致命的エラー）。TP距離の計算: SL=0.4円→TP最低0.6円・SL=0.3円→TP最低0.45円・SL=0.5円→TP最低0.75円）③絶対価格に変換【entryレートは小数点以下を含めそのまま使う・絶対に丸めない（entry=158.396を158.4にするのは禁止）】（BUY: sl=entry-SL距離【sl<entry厳守。sl≥entryは即自動拒否・距離ゼロも拒否】, tp=entry+TP距離【tp>entry厳守】 / SELL: sl=entry+SL距離【sl>entry厳守。sl≤entryは即自動拒否・距離ゼロも拒否】, tp=entry-TP距離【tp<entry厳守】）。例BUY entry=158.396→sl=158.096(=158.396-0.3), tp=158.896(=158.396+0.5)(RR=1.67✅)。例SELL entry=158.396→sl=158.696(=158.396+0.3), tp=157.896(=158.396-0.5)(RR=1.67✅)\n' +
+    '- 【RR比設定手順・必須・自動拒否回避】①SL距離を決める（最低tpSlMin以上必須・未満は即自動拒否。USD/JPYなら最低0.2円・推奨0.3〜0.8円）②RR比を計算・検証【送信前必須チェック】RR=TP距離÷SL距離を計算し2.0以上を確認してから送信（目標はRR3.0以上。有効なRR例: 2.00✅, 2.50✅, 3.00✅, 4.00✅ / 無効で即自動拒否: 0.60❌, 0.83❌, 0.88❌, 0.93❌, 0.99❌, 1.2❌, 1.4❌, 1.5❌, 1.6❌, 1.8❌, 1.9❌（RR<2.0は全て自動拒否対象）。TP距離の計算: SL=0.4円→TP最低0.8円(RR2.0)・推奨1.2円(RR3.0)、SL=0.3円→TP最低0.6円・推奨0.9円、SL=0.5円→TP最低1.0円・推奨1.5円）③絶対価格に変換【entryレートは小数点以下を含めそのまま使う・絶対に丸めない（entry=158.396を158.4にするのは禁止）】（BUY: sl=entry-SL距離【sl<entry厳守。sl≥entryは即自動拒否・距離ゼロも拒否】, tp=entry+TP距離【tp>entry厳守】 / SELL: sl=entry+SL距離【sl>entry厳守。sl≤entryは即自動拒否・距離ゼロも拒否】, tp=entry-TP距離【tp<entry厳守】）。例BUY entry=158.396→sl=158.096(=158.396-0.3), tp=159.296(=158.396+0.9)(RR=3.00✅)。例SELL entry=158.396→sl=158.696(=158.396+0.3), tp=157.496(=158.396-0.9)(RR=3.00✅)\n' +
     '- 【SL距離の厳守・自動拒否回避】SL距離は必ずtpSlMin以上tpSlMax以下でなければならない（この範囲外は値の大小を問わず例外なく即自動拒否）。USD/JPYの場合: 0.2≤SL距離≤1.2が必須。下限違反例: 0.19, 0.16, 0.08（0.2未満）/ 上限違反例: 1.21, 1.25, 1.38, 1.50, 2.00, 2.38, 2.40（1.2超はどんな値でも拒否）。安全な推奨範囲: 0.30〜0.80（迷ったら必ずこの範囲で設定すること）\n' +
     '- 【方向最終チェック・送信前必須】BUY: sl_rate < entry_rate でなければ即自動拒否（sl_rate ≥ entry_rateは全て拒否。例: entry=158.337でsl=158.5はBUYとして拒否）。SELL: sl_rate > entry_rate でなければ即自動拒否（sl_rate ≤ entry_rateは全て拒否）。送信前に必ずsl_rateとentry_rateの大小を数値で確認すること\n' +
+    '- 【ニュース品質フィルタ・最重要】impact_levelがSまたはAのニュースのみtrade_signalsに含めること。BまたはCレベルのニュースはtrade_signalsに含めない（BまたはCレベルのニュースでエントリーしても期待RRが出ない）\n' +
     '- 確信度が低いニュースはtrade_signalsに含めない\n' +
     '- 【送信前絶対検証・省略禁止】各シグナルを送信する前に必ず: (1)BUYなら tp_rate > entry_rate を確認 / (2)SELLなら tp_rate < entry_rate を確認 / 条件を満たさないシグナルは送信せず削除する\n' +
-    '- attention:falseのニュースはimpact/affected_pairsを空にする\n' +
+    '- attention:falseのニュースはimpact/impact_level/affected_pairsを空にする\n' +
     '- affected_pairs選定: 直接影響だけでなく間接影響も含める。地政学リスク・原油高・米金利急変はNikkei225/S&P500/NASDAQ/DAXにも影響する。為替と株式指数は同じニュースで同時に動くことが多い';
 
   const res = await fetchWithTimeout(`${GEMINI_ENDPOINT}?key=${apiKey}`, {
@@ -696,6 +706,8 @@ export async function newsStage2(params: {
     'actionの種類:\n' +
     '- CONFIRM: B1の判断を維持（tp_rate/sl_rateはB1値をそのまま使用）\n' +
     '- REVISE: TP/SLを修正（方向は変えない）。new_tp_rate/new_sl_rateを指定（省略=B1値を維持）\n' +
+    '  → REVISE時の必須ルール: new_tp_rateは必ずB1のtp_rateよりTPを遠くする（RRを現在以上に改善すること）。SLを広げてRRを下げることは禁止。\n' +
+    '  → RR改善の判断: og:descriptionで期待値が高いと判断できる場合、RR3.0以上になるようにTPを遠く設定すること\n' +
     '- REVERSE: 反対方向に変更推奨（既存ポジションがあれば決済）\n' +
     'B1シグナルの全pairに対してcorrectionsを返すこと。';
 
@@ -811,8 +823,15 @@ async function newsStage1GPT(params: {
     '1. 各ニュースの注目度評価（news_analysis）\n' +
     '2. ニュースに基づいた売買シグナル（trade_signals）\n\n' +
     '必ず以下のJSON形式のみで返答してください:\n' +
-    '{"news_analysis":[{"index":0,"attention":true,"impact":"円安・株安要因（50文字以内）","affected_pairs":["USD/JPY","Nikkei225"]}],' +
+    '{"news_analysis":[{"index":0,"attention":true,"impact_level":"S","impact":"円安・株安要因（50文字以内）","affected_pairs":["USD/JPY","Nikkei225"]}],' +
     '"trade_signals":[{"pair":"USD/JPY","decision":"BUY","tp_rate":160.50,"sl_rate":158.00,"reasoning":"日本語100文字以内"}]}\n\n' +
+    'impact_levelの定義（テスタ理論指標ティア）:\n' +
+    '- S: FOMC金利決定・米雇用統計・米CPI・日銀会合・地政学リスク急変。50-300pip超の値動き\n' +
+    '- A: GDP・ISM・ECB/BOE金利決定・要人発言の方針転換・地政学リスク拡大。20-80pipの値動き\n' +
+    '- B: ADP・PPI・小売売上高・PMI・企業決算。10-40pipの小〜中程度の値動き\n' +
+    '- C: 一般ニュース・既知情報・直接インパクトが薄いもの\n' +
+    '→ attention:trueはSまたはAのみ設定する\n' +
+    '→ trade_signalsに含めるのはimpact_levelがSまたはAのニュースのみ（BとCのニュースでのエントリーは禁止）\n\n' +
     'TP/SL方向の絶対ルール（違反はシステムが自動拒否）:\n' +
     '- BUY → tp_rate > 現在レート かつ sl_rate < 現在レート（上が利確・下が損切）\n' +
     '- SELL → tp_rate < 現在レート かつ sl_rate > 現在レート（下が利確・上が損切）\n' +
