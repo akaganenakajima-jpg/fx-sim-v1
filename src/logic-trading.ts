@@ -356,7 +356,7 @@ export async function runLogicDecisions(
         const rawTpDist = Math.abs(scaledTp - currentRate);
         const rrRatio = rawSlDist > 0 ? rawTpDist / rawSlDist : 1.5;
         const clampedSlDist = instrument.tpSlMin;
-        const clampedTpDist = clampedSlDist * Math.max(rrRatio, 1.5);
+        const clampedTpDist = clampedSlDist * Math.max(rrRatio, 2.0);
         scaledSl = parseFloat((isBuySignal ? currentRate - clampedSlDist : currentRate + clampedSlDist).toFixed(5));
         scaledTp = parseFloat((isBuySignal ? currentRate + clampedTpDist : currentRate - clampedTpDist).toFixed(5));
       }
@@ -410,10 +410,10 @@ export async function runLogicDecisions(
     let consecutiveLossMult = 1.0;
     if (params.consecutive_loss_shrink > 0) {
       const recentClosedRows = await db.prepare(
-        `SELECT pnl FROM positions WHERE pair=? AND status='CLOSED' ORDER BY id DESC LIMIT ?`
-      ).bind(pair, params.consecutive_loss_shrink).all<{pnl: number}>();
+        `SELECT pnl, realized_rr FROM positions WHERE pair=? AND status='CLOSED' ORDER BY id DESC LIMIT ?`
+      ).bind(pair, params.consecutive_loss_shrink).all<{pnl: number; realized_rr: number | null}>();
       const recentClosed = recentClosedRows.results ?? [];
-      if (recentClosed.length >= params.consecutive_loss_shrink && recentClosed.every(r => r.pnl < 0)) {
+      if (recentClosed.length >= params.consecutive_loss_shrink && recentClosed.every(r => (r.realized_rr ?? 0) < 1.0)) {
         consecutiveLossMult = 0.5;
       }
     }

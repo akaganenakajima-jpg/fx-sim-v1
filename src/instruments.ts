@@ -43,7 +43,7 @@ export const INSTRUMENTS: InstrumentConfig[] = [
     broker: 'oanda',
     oandaSymbol: 'USD_JPY',
     rateChangeTh: 0.015,
-    tpSlHint: 'SLは0.2〜1.2円（entry ATRの0.7〜4倍）、TPはSLの最大8倍まで自由（RR1.5以上推奨）',
+    tpSlHint: 'SLは0.2〜1.2円（entry ATRの0.7〜4倍）、TPはSLの最大8倍まで自由（RR2.0以上推奨）',
     tpSlMin: 0.2,    // H1-ATR≈0.3円。0.2円未満は拒否
     tpSlMax: 1.2,    // SLは1.2円以内（ATR×4）
     rrMax: 8,        // RR最大8倍（TP上限 = SL × 8）
@@ -59,7 +59,7 @@ export const INSTRUMENTS: InstrumentConfig[] = [
     broker: 'oanda',
     oandaSymbol: 'JP225_USD',
     rateChangeTh: 15,
-    tpSlHint: 'SLは80〜500pt（ATRの0.8〜5倍）、TPはSLの最大12倍まで自由（RR1.5以上推奨）',
+    tpSlHint: 'SLは80〜500pt（ATRの0.8〜5倍）、TPはSLの最大12倍まで自由（RR2.0以上推奨）',
     tpSlMin: 80,     // H1-ATR≈100pt。80pt未満は拒否
     tpSlMax: 500,    // SLは500pt以内（ATR×5）
     rrMax: 12,       // RR最大12倍（高ボラ指数のため広めに設定）
@@ -75,7 +75,7 @@ export const INSTRUMENTS: InstrumentConfig[] = [
     broker: 'oanda',
     oandaSymbol: 'SPX500_USD',
     rateChangeTh: 1.5,
-    tpSlHint: 'SLは15〜80pt（ATRの0.75〜4倍）、TPはSLの最大10倍まで自由（RR1.5以上推奨）',
+    tpSlHint: 'SLは15〜80pt（ATRの0.75〜4倍）、TPはSLの最大10倍まで自由（RR2.0以上推奨）',
     tpSlMin: 15,     // H1-ATR≈20pt。15pt未満は拒否
     tpSlMax: 80,     // SLは80pt以内（ATR×4）
     rrMax: 10,       // RR最大10倍
@@ -103,7 +103,7 @@ export const INSTRUMENTS: InstrumentConfig[] = [
     broker: 'oanda',
     oandaSymbol: 'XAU_USD',
     rateChangeTh: 1.5,
-    tpSlHint: 'SLは$15〜$80（ATRの0.75〜4倍）、TPはSLの最大10倍まで自由（RR1.5以上推奨）',
+    tpSlHint: 'SLは$15〜$80（ATRの0.75〜4倍）、TPはSLの最大10倍まで自由（RR2.0以上推奨）',
     tpSlMin: 15,     // H1-ATR≈$20。$15未満は拒否
     tpSlMax: 80,     // SLは$80以内（ATR×4）
     rrMax: 10,       // RR最大10倍（地政学リスクで大きく動く）
@@ -119,7 +119,7 @@ export const INSTRUMENTS: InstrumentConfig[] = [
     broker: 'oanda',
     oandaSymbol: 'EUR_USD',
     rateChangeTh: 0.001,
-    tpSlHint: 'SLは0.004〜0.025（ATRの0.7〜4倍）、TPはSLの最大8倍まで自由（RR1.5以上推奨）',
+    tpSlHint: 'SLは0.004〜0.025（ATRの0.7〜4倍）、TPはSLの最大8倍まで自由（RR2.0以上推奨）',
     tpSlMin: 0.004,  // H1-ATR≈0.006。0.004未満は拒否
     tpSlMax: 0.025,  // SLは0.025以内（ATR×4）
     rrMax: 8,        // RR最大8倍
@@ -141,7 +141,7 @@ export const INSTRUMENTS: InstrumentConfig[] = [
     broker: 'oanda',
     oandaSymbol: 'WTICO_USD',
     rateChangeTh: 0.15,
-    tpSlHint: 'SLは$0.5〜$3.0（ATRの0.7〜4倍）、TPはSLの最大10倍まで自由（RR1.5以上推奨）',
+    tpSlHint: 'SLは$0.5〜$3.0（ATRの0.7〜4倍）、TPはSLの最大10倍まで自由（RR2.0以上推奨）',
     tpSlMin: 0.5,    // H1-ATR≈$0.7。$0.5未満は拒否
     tpSlMax: 3.0,    // SLは$3.0以内（ATR×4）
     rrMax: 10,       // RR最大10倍
@@ -157,7 +157,7 @@ export const INSTRUMENTS: InstrumentConfig[] = [
     broker: 'oanda',
     oandaSymbol: 'NATGAS_USD',
     rateChangeTh: 0.015,
-    tpSlHint: 'SLは$0.04〜$0.25（ATRの0.7〜4倍）、TPはSLの最大10倍まで自由（RR1.5以上推奨）',
+    tpSlHint: 'SLは$0.04〜$0.25（ATRの0.7〜4倍）、TPはSLの最大10倍まで自由（RR2.0以上推奨）',
     tpSlMin: 0.04,   // H1-ATR≈$0.06。$0.04未満は拒否
     tpSlMax: 0.25,   // SLは$0.25以内（ATR×4）
     rrMax: 10,       // RR最大10倍
@@ -173,7 +173,7 @@ export const INSTRUMENTS: InstrumentConfig[] = [
     broker: 'oanda',
     oandaSymbol: 'COPPER',
     rateChangeTh: 0.01,
-    tpSlHint: 'SLは$0.03〜$0.20（ATRの0.75〜5倍）、TPはSLの最大10倍まで自由（RR1.5以上推奨）',
+    tpSlHint: 'SLは$0.03〜$0.20（ATRの0.75〜5倍）、TPはSLの最大10倍まで自由（RR2.0以上推奨）',
     tpSlMin: 0.03,   // H1-ATR≈$0.04。$0.03未満は拒否
     tpSlMax: 0.20,   // SLは$0.20以内（ATR×5）
     rrMax: 10,       // RR最大10倍
@@ -189,7 +189,7 @@ export const INSTRUMENTS: InstrumentConfig[] = [
     broker: 'oanda',
     oandaSymbol: 'XAG_USD',
     rateChangeTh: 0.08,
-    tpSlHint: 'SLは$0.25〜$1.6（ATRの0.6〜4倍）、TPはSLの最大10倍まで自由（RR1.5以上推奨）',
+    tpSlHint: 'SLは$0.25〜$1.6（ATRの0.6〜4倍）、TPはSLの最大10倍まで自由（RR2.0以上推奨）',
     tpSlMin: 0.25,   // H1-ATR≈$0.4。$0.25未満は拒否
     tpSlMax: 1.6,    // SLは$1.6以内（ATR×4）
     rrMax: 10,       // RR最大10倍
@@ -205,7 +205,7 @@ export const INSTRUMENTS: InstrumentConfig[] = [
     broker: 'oanda',
     oandaSymbol: 'GBP_USD',
     rateChangeTh: 0.001,
-    tpSlHint: 'SLは0.005〜0.028（ATRの0.7〜4倍）、TPはSLの最大8倍まで自由（RR1.5以上推奨）',
+    tpSlHint: 'SLは0.005〜0.028（ATRの0.7〜4倍）、TPはSLの最大8倍まで自由（RR2.0以上推奨）',
     tpSlMin: 0.005,  // H1-ATR≈0.007。0.005未満は拒否
     tpSlMax: 0.028,  // SLは0.028以内（ATR×4）
     rrMax: 8,        // RR最大8倍（メジャーFXペア）
@@ -221,7 +221,7 @@ export const INSTRUMENTS: InstrumentConfig[] = [
     broker: 'oanda',
     oandaSymbol: 'AUD_USD',
     rateChangeTh: 0.001,
-    tpSlHint: 'SLは0.004〜0.025（ATRの0.8〜5倍）、TPはSLの最大8倍まで自由（RR1.5以上推奨）',
+    tpSlHint: 'SLは0.004〜0.025（ATRの0.8〜5倍）、TPはSLの最大8倍まで自由（RR2.0以上推奨）',
     tpSlMin: 0.004,  // H1-ATR≈0.005。0.004未満は拒否
     tpSlMax: 0.025,  // SLは0.025以内（ATR×5）
     rrMax: 8,        // RR最大8倍（メジャーFXペア）
@@ -237,7 +237,7 @@ export const INSTRUMENTS: InstrumentConfig[] = [
     broker: 'paper',
     oandaSymbol: null,
     rateChangeTh: 0.5,
-    tpSlHint: 'SLは$2〜$12（ATRの0.7〜4倍）、TPはSLの最大8倍まで自由（RR1.5以上推奨）',
+    tpSlHint: 'SLは$2〜$12（ATRの0.7〜4倍）、TPはSLの最大8倍まで自由（RR2.0以上推奨）',
     tpSlMin: 2.0,    // H1-ATR≈$3。$2未満は拒否
     tpSlMax: 12.0,   // SLは$12以内（ATR×4）
     rrMax: 8,        // RR最大8倍（高ボラ暗号資産）
@@ -253,7 +253,7 @@ export const INSTRUMENTS: InstrumentConfig[] = [
     broker: 'oanda',
     oandaSymbol: 'DE30_EUR',
     rateChangeTh: 15,
-    tpSlHint: 'SLは50〜300pt（ATRの0.7〜4倍）、TPはSLの最大10倍まで自由（RR1.5以上推奨）',
+    tpSlHint: 'SLは50〜300pt（ATRの0.7〜4倍）、TPはSLの最大10倍まで自由（RR2.0以上推奨）',
     tpSlMin: 50,     // H1-ATR≈75pt。50pt未満は拒否
     tpSlMax: 300,    // SLは300pt以内（ATR×4）
     rrMax: 10,       // RR最大10倍（欧州株価指数）
@@ -269,7 +269,7 @@ export const INSTRUMENTS: InstrumentConfig[] = [
     broker: 'oanda',
     oandaSymbol: 'NAS100_USD',
     rateChangeTh: 15,
-    tpSlHint: 'SLは80〜500pt（ATRの0.8〜5倍）、TPはSLの最大12倍まで自由（RR1.5以上推奨）',
+    tpSlHint: 'SLは80〜500pt（ATRの0.8〜5倍）、TPはSLの最大12倍まで自由（RR2.0以上推奨）',
     tpSlMin: 80,     // H1-ATR≈100pt。80pt未満は拒否
     tpSlMax: 500,    // SLは500pt以内（ATR×5）
     rrMax: 12,       // RR最大12倍（高ボラ指数）
@@ -286,7 +286,7 @@ export const INSTRUMENTS: InstrumentConfig[] = [
     broker: 'oanda',
     oandaSymbol: 'UK100_GBP',
     rateChangeTh: 10,
-    tpSlHint: 'SLは30〜200pt（ATRの0.6〜4倍）、TPはSLの最大10倍まで自由（RR1.5以上推奨）',
+    tpSlHint: 'SLは30〜200pt（ATRの0.6〜4倍）、TPはSLの最大10倍まで自由（RR2.0以上推奨）',
     tpSlMin: 30,     // H1-ATR≈50pt。30pt未満は拒否
     tpSlMax: 200,    // SLは200pt以内（ATR×4）
     rrMax: 10,       // RR最大10倍（欧州株価指数）
@@ -303,7 +303,7 @@ export const INSTRUMENTS: InstrumentConfig[] = [
     broker: 'oanda',
     oandaSymbol: 'HK33_HKD',
     rateChangeTh: 30,
-    tpSlHint: 'SLは80〜500pt（ATRの0.8〜5倍）、TPはSLの最大12倍まで自由（RR1.5以上推奨）',
+    tpSlHint: 'SLは80〜500pt（ATRの0.8〜5倍）、TPはSLの最大12倍まで自由（RR2.0以上推奨）',
     tpSlMin: 80,     // H1-ATR≈100pt。80pt未満は拒否
     tpSlMax: 500,    // SLは500pt以内（ATR×5）
     rrMax: 12,       // RR最大12倍（高ボラアジア指数）

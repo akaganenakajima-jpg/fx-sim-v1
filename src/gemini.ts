@@ -27,7 +27,20 @@ export interface GeminiDecision {
 }
 
 /** プロンプトバージョン: プロンプトを変更したらこの値を更新する */
-export const PROMPT_VERSION = 'v15'; // v15: RR無効例に0.60追加・「RR<1.0は方向逆転と同じ致命的エラー」を強調
+export const PROMPT_VERSION = 'v16'; // v16: RR≥1.0=勝ちの統一定義を全プロンプトにハードコード
+
+/** RR定義プロンプト — 全AI共通・全プロンプトの先頭に挿入（変更禁止） */
+export const RR_DEFINITION_PROMPT =
+  '【絶対原則 — RR定義（全AI共通・変更禁止）】\n' +
+  '本システムにおける「勝ち」の定義:\n' +
+  '  勝ち = 実現RR ≥ 1.0（リスクと同等以上のリターンを獲得した取引）\n' +
+  '  負け = 実現RR < 1.0（リスクに見合うリターンを得られなかった取引）\n' +
+  '  実現RR = 実現利益 / 初期リスク（エントリー時のSL距離）\n' +
+  '\n' +
+  'あなたの唯一の目的は「RRの最大化」である。\n' +
+  '- TP/SL設定時: RR ≥ 2.0 を最低基準、RR ≥ 3.0 を推奨\n' +
+  '- 「pnlがプラスだから良い」という判断は禁止。RR < 1.0 のプラス取引は「負け」である\n' +
+  '- 「勝ち」という表現は上記定義以外での使用を禁止する\n';
 
 const GEMINI_ENDPOINT =
   'https://generativelanguage.googleapis.com/v1beta/models/gemini-3.1-pro-preview:generateContent';
@@ -382,6 +395,7 @@ export async function analyzeNews(params: {
   ).join('\n');
 
   const systemPrompt =
+    RR_DEFINITION_PROMPT + '\n' +
     'あなたは金融マーケットアナリストです。以下のニュース一覧を分析し、' +
     'マーケット（為替・株式・債券・暗号資産・コモディティ）に影響がありそうなニュースに注目フラグを付けてください。' +
     '必ず以下のJSON配列のみで返答してください:\n' +
@@ -564,6 +578,7 @@ export async function newsStage1(params: {
   ].join('\n');
 
   const systemPrompt =
+    RR_DEFINITION_PROMPT + '\n' +
     'あなたはFX・株式指数・コモディティのマルチアセットトレーダーのAIアシスタントです。\n' +
     '以下のニュース一覧（日本語翻訳済み）と市場状況を分析し、次の2つのことを返してください。\n' +
     '1. 各ニュースの注目度評価（news_analysis）\n' +
@@ -673,6 +688,7 @@ export async function newsStage2(params: {
   ].join('\n');
 
   const systemPrompt =
+    RR_DEFINITION_PROMPT + '\n' +
     'あなたは為替FXトレーダーのAIアシスタントです。\n' +
     'B1（速報）の売買シグナルをog:description（詳細情報）で再評価してください。\n\n' +
     '必ず以下のJSON形式のみで返答してください:\n' +
@@ -789,6 +805,7 @@ async function newsStage1GPT(params: {
   ].join('\n');
 
   const systemPrompt =
+    RR_DEFINITION_PROMPT + '\n' +
     'あなたはFX・株式指数・コモディティのマルチアセットトレーダーのAIアシスタントです。\n' +
     '以下のニュース一覧（日本語翻訳済み）と市場状況を分析し、次の2つのことを返してください。\n' +
     '1. 各ニュースの注目度評価（news_analysis）\n' +
@@ -893,6 +910,7 @@ async function newsStage1Claude(params: {
   ].join('\n');
 
   const systemPrompt =
+    RR_DEFINITION_PROMPT + '\n' +
     'あなたはFX・株式指数・コモディティのマルチアセットトレーダーのAIアシスタントです。\n' +
     'ニュース一覧（日本語翻訳済み）と市場状況を分析し、news_analysisとtrade_signalsを返してください。\n' +
     '必ずJSON形式で返答:\n' +

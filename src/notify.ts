@@ -82,7 +82,7 @@ export function buildDailySummaryMessage(params: {
   const sign = totalPnl >= 0 ? '+' : '';
   return (
     `📊 [fx-sim] 日次サマリー ${date}\n` +
-    `取引: ${totalTrades}件 | 勝率: ${winRate}% | PnL: ${sign}${totalPnl.toFixed(1)} pip\n` +
+    `取引: ${totalTrades}件 | 勝率(RR≥1.0): ${winRate}% | PnL: ${sign}${totalPnl.toFixed(1)} pip\n` +
     `AI: Gemini ${geminiOk} / GPT ${gptOk} / Claude ${claudeOk}`
   );
 }

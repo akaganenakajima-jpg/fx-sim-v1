@@ -3,7 +3,7 @@
 
 import type { InstrumentConfig } from './instruments';
 
-export type RRCategory = 'NORMAL' | 'REDUCED' | 'REJECTED';
+export type RRCategory = 'NORMAL' | 'REJECTED';
 
 export interface SanityResult {
   valid: boolean;
@@ -171,15 +171,12 @@ export function checkTpSlSanity(params: {
     return { valid: false, reason: `TP距離過大: RR=${rr.toFixed(1)} > max ${rrMax}（TP=${tpDist.toFixed(2)}, SL=${slDist.toFixed(2)}）` };
   }
 
-  // テスタ施策3: RR比段階制御
-  // ≧1.5 → NORMAL（通常ロット）
-  // 1.0〜1.5 → REDUCED（ロット50%削減、呼び出し元で処理）
+  // RR≥1.0勝率統一: RR比チェック
+  // ≧1.0 → NORMAL（通常ロット）
   // <1.0 → REJECTED（エントリー拒否）
   let rrCategory: RRCategory;
-  if (rr >= 1.5) {
+  if (rr >= 1.0) {
     rrCategory = 'NORMAL';
-  } else if (rr >= 1.0) {
-    rrCategory = 'REDUCED';
   } else {
     return { valid: false, reason: `RR比不足: ${rr.toFixed(2)} < 1.0`, rrRatio: rr, rrCategory: 'REJECTED' };
   }
@@ -196,11 +193,11 @@ export function checkTpSlSanity(params: {
 type RegimeForAtr = 'strong_trend' | 'weak_trend' | 'ranging' | 'volatile' | 'uncertain';
 
 const ATR_MULTIPLIERS: Record<RegimeForAtr, { sl: number; tp: number }> = {
-  strong_trend: { sl: 2.0, tp: 3.0 },   // RR=1.5
-  weak_trend:   { sl: 1.5, tp: 2.5 },   // RR=1.67
-  ranging:      { sl: 1.0, tp: 1.5 },   // RR=1.5
-  volatile:     { sl: 2.5, tp: 4.0 },   // RR=1.6
-  uncertain:    { sl: 1.5, tp: 2.5 },   // RR=1.67
+  strong_trend: { sl: 1.5, tp: 4.5 },   // RR=3.0（トレンドに乗せて伸ばす）
+  weak_trend:   { sl: 1.5, tp: 3.0 },   // RR=2.0
+  ranging:      { sl: 1.0, tp: 2.0 },   // RR=2.0
+  volatile:     { sl: 2.0, tp: 5.0 },   // RR=2.5（高ボラ時はTPを大きく）
+  uncertain:    { sl: 1.5, tp: 3.0 },   // RR=2.0
 };
 
 /** ATRベースのTP/SL推奨値を算出（Geminiプロンプトの参考値として使用） */

@@ -32,8 +32,8 @@
 
 | 戦略要素 | 定義 | 目標値 |
 |---|---|---|
-| **リスクリワード比** | 1回の損切り幅に対する利確幅 | 最低 1:1.5、理想 1:2 以上 |
-| **勝率** | 全トレード中の勝ちトレード割合 | RR 1:2 なら勝率 35% 以上で期待値プラス |
+| **リスクリワード比** | 1回の損切り幅に対する利確幅 | 最低 1:1.0（＝勝ちの定義）、推奨 1:2.0 以上、理想 1:3.0 以上 |
+| **勝率（RR≥1.0基準）** | 実現RR≥1.0の取引割合 | RRの最大化が唯一の目的。勝率35%でもavgRR≥2.0ならEV正 |
 | **期待値の算出** | `(勝率 × 平均利益) - (敗率 × 平均損失)` | 月次で正の期待値を維持 |
 | **手法の分散** | 単一手法依存を避ける | 最低3つの手法を環境別に運用 |
 
@@ -116,9 +116,10 @@
   シグナル発生時に 50% → 追加確認で残り 50%
 
 分割決済:
-  第1利確（RR 1:1 到達）: 50% 決済 → 損切りを建値に移動
-  第2利確（RR 1:2 到達）: 残り 50% 決済
+  第1利確（RR 1:1 到達 = 勝ちの定義）: 50% 決済 → 損切りを建値に移動
+  第2利確（RR 1:2 到達 = 推奨目標）: 残り 50% 決済
   ※ 建値ストップにより「負けないトレード」を作る
+  ※ RR≥1.0が「勝ち」の最低条件。RR<1.0のプラス決済は「負け」
 ```
 
 #### T2-3. トレーリングストップ
@@ -241,21 +242,25 @@ B級（注意しつつ通常運用）:
 ### V2. 統計分析（D1 に蓄積して自動集計）
 
 ```sql
--- 手法別の期待値
+-- 手法別の期待値（RR≥1.0基準）
 SELECT strategy,
        COUNT(*) as trades,
-       AVG(CASE WHEN pnl > 0 THEN 1.0 ELSE 0.0 END) as win_rate,
-       AVG(CASE WHEN pnl > 0 THEN pnl END) as avg_win,
-       AVG(CASE WHEN pnl < 0 THEN ABS(pnl) END) as avg_loss,
+       AVG(CASE WHEN realized_rr >= 1.0 THEN 1.0 ELSE 0.0 END) as win_rate,
+       AVG(CASE WHEN realized_rr >= 1.0 THEN pnl END) as avg_win,
+       AVG(CASE WHEN realized_rr < 1.0 THEN ABS(pnl) END) as avg_loss,
+       AVG(realized_rr) as avg_rr,
        SUM(pnl) as total_pnl
 FROM trade_logs
+WHERE realized_rr IS NOT NULL
 GROUP BY strategy;
 
--- 時間帯別の勝率
+-- 時間帯別の勝率（RR≥1.0基準）
 SELECT session_name,
        COUNT(*) as trades,
-       AVG(CASE WHEN pnl > 0 THEN 1.0 ELSE 0.0 END) as win_rate
+       AVG(CASE WHEN realized_rr >= 1.0 THEN 1.0 ELSE 0.0 END) as win_rate,
+       AVG(realized_rr) as avg_rr
 FROM trade_logs
+WHERE realized_rr IS NOT NULL
 GROUP BY session_name;
 
 -- 環境別の成績

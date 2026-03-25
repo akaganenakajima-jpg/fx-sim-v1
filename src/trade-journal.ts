@@ -157,7 +157,7 @@ export async function getStrategyStats(db: D1Database): Promise<StrategyStats[]>
         strategy,
         regime,
         COUNT(*) as count,
-        SUM(CASE WHEN pnl > 0 THEN 1 ELSE 0 END) as wins,
+        SUM(CASE WHEN rr_ratio >= 1.0 THEN 1 ELSE 0 END) as wins,
         AVG(pnl) as avg_pnl,
         SUM(pnl) as total_pnl,
         AVG(rr_ratio) as avg_rr
@@ -209,7 +209,7 @@ export async function generateWeeklyReview(db: D1Database): Promise<string> {
     .prepare(
       `SELECT
         COUNT(*) as count,
-        SUM(CASE WHEN pnl > 0 THEN 1 ELSE 0 END) as wins,
+        SUM(CASE WHEN rr_ratio >= 1.0 THEN 1 ELSE 0 END) as wins,
         COALESCE(SUM(pnl), 0) as total_pnl,
         COALESCE(SUM(CASE WHEN pnl > 0 THEN pnl ELSE 0 END), 0) as total_profit,
         COALESCE(SUM(CASE WHEN pnl < 0 THEN ABS(pnl) ELSE 0 END), 0) as total_loss
@@ -234,8 +234,8 @@ export async function generateWeeklyReview(db: D1Database): Promise<string> {
       `SELECT
         strategy,
         COUNT(*) as count,
-        SUM(CASE WHEN pnl > 0 THEN 1 ELSE 0 END) as wins,
-        ROUND(CAST(SUM(CASE WHEN pnl > 0 THEN 1 ELSE 0 END) AS REAL) / COUNT(*) * 100, 1) as win_rate,
+        SUM(CASE WHEN rr_ratio >= 1.0 THEN 1 ELSE 0 END) as wins,
+        ROUND(CAST(SUM(CASE WHEN rr_ratio >= 1.0 THEN 1 ELSE 0 END) AS REAL) / COUNT(*) * 100, 1) as win_rate,
         COALESCE(SUM(pnl), 0) as total_pnl
       FROM trade_logs
       WHERE closed_at >= ? AND strategy IS NOT NULL
@@ -256,14 +256,14 @@ export async function generateWeeklyReview(db: D1Database): Promise<string> {
     `期間: ${sevenDaysAgo.slice(0, 10)} ~ ${new Date().toISOString().slice(0, 10)}`,
     '',
     `総トレード数: ${summary.count}`,
-    `勝率: ${winRate}% (${summary.wins}/${summary.count})`,
+    `勝率(RR≥1.0): ${winRate}% (${summary.wins}/${summary.count})`,
     `PnL合計: ${Math.round(summary.total_pnl * 100) / 100} pips`,
     `PF (Profit Factor): ${pf === Infinity ? '∞' : pf}`,
     '',
   ];
 
   if (top3.length > 0) {
-    lines.push('--- 手法別 勝率Top3 ---');
+    lines.push('--- 手法別 勝率(RR≥1.0)Top3 ---');
     top3.forEach((s, i) => {
       lines.push(`  ${i + 1}. ${s.strategy}: ${s.win_rate}% (${s.wins}/${s.count}) PnL=${Math.round(s.total_pnl * 100) / 100}`);
     });
@@ -271,7 +271,7 @@ export async function generateWeeklyReview(db: D1Database): Promise<string> {
   }
 
   if (worst3.length > 0) {
-    lines.push('--- 手法別 勝率Worst3 ---');
+    lines.push('--- 手法別 勝率(RR≥1.0)Worst3 ---');
     worst3.forEach((s, i) => {
       lines.push(`  ${i + 1}. ${s.strategy}: ${s.win_rate}% (${s.wins}/${s.count}) PnL=${Math.round(s.total_pnl * 100) / 100}`);
     });
@@ -304,7 +304,7 @@ export async function generateMonthlyReview(db: D1Database): Promise<string> {
     .prepare(
       `SELECT
         COUNT(*) as count,
-        SUM(CASE WHEN pnl > 0 THEN 1 ELSE 0 END) as wins,
+        SUM(CASE WHEN rr_ratio >= 1.0 THEN 1 ELSE 0 END) as wins,
         COALESCE(SUM(pnl), 0) as total_pnl,
         COALESCE(SUM(CASE WHEN pnl > 0 THEN pnl ELSE 0 END), 0) as total_profit,
         COALESCE(SUM(CASE WHEN pnl < 0 THEN ABS(pnl) ELSE 0 END), 0) as total_loss
@@ -372,8 +372,8 @@ export async function generateMonthlyReview(db: D1Database): Promise<string> {
         strategy,
         regime,
         COUNT(*) as count,
-        SUM(CASE WHEN pnl > 0 THEN 1 ELSE 0 END) as wins,
-        ROUND(CAST(SUM(CASE WHEN pnl > 0 THEN 1 ELSE 0 END) AS REAL) / COUNT(*) * 100, 1) as win_rate,
+        SUM(CASE WHEN rr_ratio >= 1.0 THEN 1 ELSE 0 END) as wins,
+        ROUND(CAST(SUM(CASE WHEN rr_ratio >= 1.0 THEN 1 ELSE 0 END) AS REAL) / COUNT(*) * 100, 1) as win_rate,
         ROUND(AVG(pnl), 2) as avg_pnl,
         ROUND(SUM(pnl), 2) as total_pnl,
         ROUND(AVG(rr_ratio), 2) as avg_rr
@@ -393,7 +393,7 @@ export async function generateMonthlyReview(db: D1Database): Promise<string> {
     `  Sharpe Ratio (近似): ${sharpe}`,
     `  最大ドローダウン: ${maxDD} pips`,
     `  平均RR: ${avgRR}`,
-    `  的中率: ${winRate}% (${summary.wins}/${summary.count})`,
+    `  勝率(RR≥1.0): ${winRate}% (${summary.wins}/${summary.count})`,
     `  PF: ${pf === Infinity ? '∞' : pf}`,
     `  PnL合計: ${Math.round(summary.total_pnl * 100) / 100} pips`,
     '',
@@ -402,7 +402,7 @@ export async function generateMonthlyReview(db: D1Database): Promise<string> {
   const matrixRows = matrix.results ?? [];
   if (matrixRows.length > 0) {
     lines.push('--- 手法 x 環境 マトリクス ---');
-    lines.push('  手法 | 環境 | 件数 | 勝率 | 平均PnL | 合計PnL | 平均RR');
+    lines.push('  手法 | 環境 | 件数 | 勝率(RR≥1.0) | 平均PnL | 合計PnL | 平均RR');
     lines.push('  ' + '-'.repeat(70));
     matrixRows.forEach((row) => {
       lines.push(

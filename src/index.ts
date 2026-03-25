@@ -1092,14 +1092,14 @@ async function runDailyTasks(env: Env, _now: Date): Promise<void> {
   // 日次サマリー記録
   try {
     const dailyPerf = await env.DB.prepare(
-      `SELECT COUNT(*) AS total, COALESCE(SUM(CASE WHEN pnl > 0 THEN 1 ELSE 0 END), 0) AS wins,
+      `SELECT COUNT(*) AS total, COALESCE(SUM(CASE WHEN realized_rr >= 1.0 THEN 1 ELSE 0 END), 0) AS wins,
        COALESCE(SUM(pnl), 0) AS totalPnl FROM positions WHERE status = 'CLOSED'`
     ).first<{ total: number; wins: number; totalPnl: number }>();
     const openCount = (await env.DB.prepare(`SELECT COUNT(*) AS c FROM positions WHERE status = 'OPEN'`).first<{ c: number }>())?.c ?? 0;
     const balance = 10000 + (dailyPerf?.totalPnl ?? 0);
     const wr = dailyPerf && dailyPerf.total > 0 ? (dailyPerf.wins / dailyPerf.total * 100).toFixed(1) : '0';
     await insertSystemLog(env.DB, 'INFO', 'DAILY',
-      `日次サマリー: ¥${Math.round(balance).toLocaleString()} ROI ${((balance - 10000) / 100).toFixed(1)}% 勝率${wr}% ${dailyPerf?.total ?? 0}件 OP${openCount}`);
+      `日次サマリー: ¥${Math.round(balance).toLocaleString()} ROI ${((balance - 10000) / 100).toFixed(1)}% 勝率(RR≥1.0)${wr}% ${dailyPerf?.total ?? 0}件 OP${openCount}`);
   } catch {}
 
   // 銘柄スコア更新
@@ -1142,7 +1142,7 @@ async function runDailyTasks(env: Env, _now: Date): Promise<void> {
     const dailyStats = await env.DB.prepare(`
       SELECT
         COUNT(*) as total,
-        SUM(CASE WHEN pnl > 0 THEN 1 ELSE 0 END) as wins,
+        SUM(CASE WHEN realized_rr >= 1.0 THEN 1 ELSE 0 END) as wins,
         COALESCE(SUM(pnl), 0) as total_pnl
       FROM positions
       WHERE status = 'CLOSED'
@@ -1233,9 +1233,9 @@ async function updateInstrumentScores(db: D1Database): Promise<void> {
   const rows = await db.prepare(
     `SELECT pair,
        COUNT(*) AS total_trades,
-       COALESCE(SUM(CASE WHEN pnl > 0 THEN 1 ELSE 0 END), 0) AS wins,
-       COALESCE(SUM(CASE WHEN pnl > 0 THEN pnl ELSE 0 END), 0) AS total_win_pnl,
-       COALESCE(SUM(CASE WHEN pnl <= 0 THEN ABS(pnl) ELSE 0 END), 0) AS total_loss_pnl,
+       COALESCE(SUM(CASE WHEN realized_rr >= 1.0 THEN 1 ELSE 0 END), 0) AS wins,
+       COALESCE(SUM(CASE WHEN realized_rr >= 1.0 THEN pnl ELSE 0 END), 0) AS total_win_pnl,  -- RR≥1.0取引のPnL合計
+       COALESCE(SUM(CASE WHEN realized_rr IS NULL OR realized_rr < 1.0 THEN ABS(pnl) ELSE 0 END), 0) AS total_loss_pnl,  -- RR<1.0取引の|PnL|合計
        COALESCE(AVG(pnl), 0) AS avg_pnl,
        COALESCE(SUM(pnl), 0) AS total_pnl
      FROM positions WHERE status = 'CLOSED'
@@ -1290,9 +1290,11 @@ async function updateInstrumentScores(db: D1Database): Promise<void> {
       sharpe = stdev > 0 ? mean / stdev : 0;
     }
 
-    // 総合スコア: 勝率30% + RR比30% + Sharpe20% + 取引数20%（最低サンプル数考慮）
+    // RR中心スコア: avg_rr 40% + RR勝率 25% + Sharpe 20% + RRトレンド 15%
     const tradeScore = Math.min(r.total_trades / 20, 1); // 20件で満点
-    const score = winRate * 0.3 + Math.min(avgRR / 2, 1) * 0.3 + Math.min(Math.max(sharpe, 0) / 1, 1) * 0.2 + tradeScore * 0.2;
+    const avgRrNorm = Math.min(avgRR / 3, 1); // RR=3.0で満点（RR最大化ベクトル）
+    const rrTrendScore = tradeScore; // 暫定: 取引数スコアをトレンド代用
+    const score = avgRrNorm * 0.40 + winRate * 0.25 + Math.min(Math.max(sharpe, 0) / 1, 1) * 0.20 + rrTrendScore * 0.15;
 
     batch.push(stmt.bind(r.pair, r.total_trades, winRate, avgRR, sharpe, 0, score, now));
   }
@@ -1300,5 +1302,79 @@ async function updateInstrumentScores(db: D1Database): Promise<void> {
   if (batch.length > 0) {
     await db.batch(batch);
     console.log(`[fx-sim] instrument_scores updated: ${batch.length} pairs`);
+  }
+
+  // 期間別RR集計
+  try {
+    const now = new Date();
+    const todayStart = now.toISOString().slice(0, 10) + 'T00:00:00Z';
+    const weekAgo = new Date(now.getTime() - 7 * 86400000).toISOString();
+    const monthAgo = new Date(now.getTime() - 30 * 86400000).toISOString();
+
+    // 銘柄別期間RR更新
+    for (const r of rows.results) {
+      // 直近30取引
+      const last30 = await db.prepare(
+        `SELECT AVG(realized_rr) as avg_rr,
+                SUM(CASE WHEN realized_rr >= 1.0 THEN 1 ELSE 0 END) * 1.0 / COUNT(*) as wr
+         FROM (SELECT realized_rr FROM positions WHERE pair = ? AND status = 'CLOSED' AND realized_rr IS NOT NULL ORDER BY id DESC LIMIT 30)`
+      ).bind(r.pair).first<{ avg_rr: number | null; wr: number | null }>();
+
+      // デイリー
+      const daily = await db.prepare(
+        `SELECT AVG(realized_rr) as avg_rr FROM positions WHERE pair = ? AND status = 'CLOSED' AND realized_rr IS NOT NULL AND closed_at >= ?`
+      ).bind(r.pair, todayStart).first<{ avg_rr: number | null }>();
+
+      // ウィークリー
+      const weekly = await db.prepare(
+        `SELECT AVG(realized_rr) as avg_rr FROM positions WHERE pair = ? AND status = 'CLOSED' AND realized_rr IS NOT NULL AND closed_at >= ?`
+      ).bind(r.pair, weekAgo).first<{ avg_rr: number | null }>();
+
+      // マンスリー
+      const monthly = await db.prepare(
+        `SELECT AVG(realized_rr) as avg_rr FROM positions WHERE pair = ? AND status = 'CLOSED' AND realized_rr IS NOT NULL AND closed_at >= ?`
+      ).bind(r.pair, monthAgo).first<{ avg_rr: number | null }>();
+
+      // RRトレンド判定（直近30取引 vs 全体）
+      const allAvgRR = pnlByPair[r.pair] ? (pnlByPair[r.pair].reduce((s, v) => s + v, 0) / pnlByPair[r.pair].length) : 0;
+      const recentRR = last30?.avg_rr ?? 0;
+      const trend = recentRR > allAvgRR * 1.1 ? 'IMPROVING' : recentRR < allAvgRR * 0.9 ? 'DECLINING' : 'STABLE';
+
+      await db.prepare(
+        `UPDATE instrument_scores SET rr_30t = ?, wr_30t = ?, rr_daily = ?, rr_weekly = ?, rr_monthly = ?, rr_trend = ? WHERE pair = ?`
+      ).bind(
+        last30?.avg_rr ?? null, last30?.wr ?? null,
+        daily?.avg_rr ?? null, weekly?.avg_rr ?? null, monthly?.avg_rr ?? null,
+        trend, r.pair
+      ).run();
+    }
+
+    // 総合集計を market_cache に保存
+    const dailyTotal = await db.prepare(
+      `SELECT COUNT(*) as total, SUM(CASE WHEN realized_rr >= 1.0 THEN 1 ELSE 0 END) as wins, AVG(realized_rr) as avg_rr
+       FROM positions WHERE status = 'CLOSED' AND realized_rr IS NOT NULL AND closed_at >= ?`
+    ).bind(todayStart).first<{ total: number; wins: number; avg_rr: number | null }>();
+    const weeklyTotal = await db.prepare(
+      `SELECT COUNT(*) as total, SUM(CASE WHEN realized_rr >= 1.0 THEN 1 ELSE 0 END) as wins, AVG(realized_rr) as avg_rr
+       FROM positions WHERE status = 'CLOSED' AND realized_rr IS NOT NULL AND closed_at >= ?`
+    ).bind(weekAgo).first<{ total: number; wins: number; avg_rr: number | null }>();
+    const monthlyTotal = await db.prepare(
+      `SELECT COUNT(*) as total, SUM(CASE WHEN realized_rr >= 1.0 THEN 1 ELSE 0 END) as wins, AVG(realized_rr) as avg_rr
+       FROM positions WHERE status = 'CLOSED' AND realized_rr IS NOT NULL AND closed_at >= ?`
+    ).bind(monthAgo).first<{ total: number; wins: number; avg_rr: number | null }>();
+
+    const rrSummary = {
+      daily: { total: dailyTotal?.total ?? 0, wins: dailyTotal?.wins ?? 0, avg_rr: dailyTotal?.avg_rr ?? 0, win_rate: dailyTotal && dailyTotal.total > 0 ? (dailyTotal.wins / dailyTotal.total) : 0 },
+      weekly: { total: weeklyTotal?.total ?? 0, wins: weeklyTotal?.wins ?? 0, avg_rr: weeklyTotal?.avg_rr ?? 0, win_rate: weeklyTotal && weeklyTotal.total > 0 ? (weeklyTotal.wins / weeklyTotal.total) : 0 },
+      monthly: { total: monthlyTotal?.total ?? 0, wins: monthlyTotal?.wins ?? 0, avg_rr: monthlyTotal?.avg_rr ?? 0, win_rate: monthlyTotal && monthlyTotal.total > 0 ? (monthlyTotal.wins / monthlyTotal.total) : 0 },
+    };
+    await db.prepare(
+      `INSERT INTO market_cache (key, value, updated_at) VALUES ('rr_summary', ?, ?)
+       ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`
+    ).bind(JSON.stringify(rrSummary), now.toISOString()).run();
+
+    console.log(`[fx-sim] rr_summary updated: D=${rrSummary.daily.avg_rr?.toFixed(2)} W=${rrSummary.weekly.avg_rr?.toFixed(2)} M=${rrSummary.monthly.avg_rr?.toFixed(2)}`);
+  } catch (e) {
+    console.warn('[fx-sim] period RR update failed:', e);
   }
 }

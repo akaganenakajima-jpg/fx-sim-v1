@@ -153,6 +153,12 @@ export interface StatusResponse {
     avg_rr: number;
     sharpe: number;
     score: number;
+    rr_30t: number | null;
+    wr_30t: number | null;
+    rr_daily: number | null;
+    rr_weekly: number | null;
+    rr_monthly: number | null;
+    rr_trend: string | null;
     updated_at: string | null;
   }>;
   statistics: {
@@ -189,6 +195,12 @@ export interface StatusResponse {
     newsMs: number;
     aiLoopMs: number;
     totalMs: number;
+  } | null;
+  /** RR≥1.0基準の期間別サマリー */
+  rrSummary: {
+    daily:   { total: number; wins: number; avg_rr: number; win_rate: number };
+    weekly:  { total: number; wins: number; avg_rr: number; win_rate: number };
+    monthly: { total: number; wins: number; avg_rr: number; win_rate: number };
   } | null;
   /** IPA品質修正: LIMITに依存しない今日の判断件数（UTC基準） */
   todayDecisionCount: number;
@@ -271,7 +283,7 @@ export interface StatusResponse {
 }
 
 export async function getApiStatus(db: D1Database, tradingEnv?: { TRADING_ENABLED?: string; OANDA_LIVE?: string; RISK_MAX_DAILY_LOSS?: string; RISK_MAX_LIVE_POSITIONS?: string; RISK_MAX_LOT_SIZE?: string; RISK_ANOMALY_THRESHOLD?: string }): Promise<StatusResponse> {
-  const [rateRow, openPositions, perf, latest, recent, sysRow, sparkRaw, perfByPairRaw, recentClosesRaw, acceptedNewsRaw, sysLogsRaw, logStatsRaw, instrScoresRaw, slPatternsRow, cronTimingsRow, todayDecisionCountRow, paramReviewLogRaw, indicatorLogsRaw] =
+  const [rateRow, openPositions, perf, latest, recent, sysRow, sparkRaw, perfByPairRaw, recentClosesRaw, acceptedNewsRaw, sysLogsRaw, logStatsRaw, instrScoresRaw, rrSummaryRow, slPatternsRow, cronTimingsRow, todayDecisionCountRow, paramReviewLogRaw, indicatorLogsRaw] =
     await Promise.all([
       db
         .prepare("SELECT value FROM market_cache WHERE key = 'prev_rate_USD/JPY'")
@@ -287,9 +299,9 @@ export async function getApiStatus(db: D1Database, tradingEnv?: { TRADING_ENABLE
              COALESCE(SUM(pnl), 0)                                                                          AS totalPnl,
              COALESCE(SUM(CASE WHEN date(closed_at) = date('now') THEN pnl ELSE 0 END), 0)                 AS todayPnl,
              COUNT(*)                                                                                        AS totalClosed,
-             COALESCE(SUM(CASE WHEN pnl > 0 THEN 1 ELSE 0 END), 0)                                        AS wins,
-             COALESCE(SUM(CASE WHEN date(closed_at) = date('now') AND pnl > 0 THEN 1 ELSE 0 END), 0)      AS todayWins,
-             COALESCE(SUM(CASE WHEN date(closed_at) = date('now') AND pnl <= 0 THEN 1 ELSE 0 END), 0)     AS todayLosses
+             COALESCE(SUM(CASE WHEN realized_rr >= 1.0 THEN 1 ELSE 0 END), 0)                               AS wins,
+             COALESCE(SUM(CASE WHEN date(closed_at) = date('now') AND realized_rr >= 1.0 THEN 1 ELSE 0 END), 0)  AS todayWins,
+             COALESCE(SUM(CASE WHEN date(closed_at) = date('now') AND (realized_rr IS NULL OR realized_rr < 1.0) THEN 1 ELSE 0 END), 0) AS todayLosses
            FROM positions WHERE status = 'CLOSED'`
         )
         .first<{ totalPnl: number; todayPnl: number; totalClosed: number; wins: number; todayWins: number; todayLosses: number }>(),
@@ -330,7 +342,7 @@ export async function getApiStatus(db: D1Database, tradingEnv?: { TRADING_ENABLE
         .prepare(
           `SELECT pair,
              COUNT(*) AS total,
-             COALESCE(SUM(CASE WHEN pnl > 0 THEN 1 ELSE 0 END), 0) AS wins,
+             COALESCE(SUM(CASE WHEN realized_rr >= 1.0 THEN 1 ELSE 0 END), 0) AS wins,
              COALESCE(SUM(pnl), 0) AS totalPnl
            FROM positions WHERE status = 'CLOSED'
            GROUP BY pair`
@@ -364,8 +376,12 @@ export async function getApiStatus(db: D1Database, tradingEnv?: { TRADING_ENABLE
 
       // 銘柄スコア
       db
-        .prepare(`SELECT pair, total_trades, win_rate, avg_rr, sharpe, score, updated_at FROM instrument_scores ORDER BY score DESC`)
-        .all<{ pair: string; total_trades: number; win_rate: number; avg_rr: number; sharpe: number; score: number; updated_at: string | null }>(),
+        .prepare(`SELECT pair, total_trades, win_rate, avg_rr, sharpe, score, rr_30t, wr_30t, rr_daily, rr_weekly, rr_monthly, rr_trend, updated_at FROM instrument_scores ORDER BY score DESC`)
+        .all<{ pair: string; total_trades: number; win_rate: number; avg_rr: number; sharpe: number; score: number; rr_30t: number | null; wr_30t: number | null; rr_daily: number | null; rr_weekly: number | null; rr_monthly: number | null; rr_trend: string | null; updated_at: string | null }>(),
+
+      // RRサマリー（期間別）
+      db.prepare("SELECT value FROM market_cache WHERE key = 'rr_summary'")
+        .first<{ value: string }>(),
 
       // SLパターン（日次バッチ結果）
       db.prepare("SELECT value FROM market_cache WHERE key = 'sl_patterns'")
@@ -479,8 +495,8 @@ export async function getApiStatus(db: D1Database, tradingEnv?: { TRADING_ENABLE
   if (totalClosed >= 10) {
     try {
       const [allPnlRaw, aiOutcomesRaw] = await Promise.all([
-        db.prepare('SELECT pnl, log_return FROM positions WHERE status = \'CLOSED\' ORDER BY closed_at ASC')
-          .all<{ pnl: number; log_return: number | null }>(),
+        db.prepare('SELECT pnl, log_return, realized_rr FROM positions WHERE status = \'CLOSED\' ORDER BY closed_at ASC')
+          .all<{ pnl: number; log_return: number | null; realized_rr: number | null }>(),
         db.prepare('SELECT outcome FROM decisions WHERE decision IN (\'BUY\',\'SELL\') AND outcome IS NOT NULL ORDER BY id ASC')
           .all<{ outcome: string }>(),
       ]);
@@ -490,16 +506,17 @@ export async function getApiStatus(db: D1Database, tradingEnv?: { TRADING_ENABLE
       const logReturns = allPnlRows
         .map(r => r.log_return)
         .filter((v): v is number => v != null);
-      const outcomes = allPnls.map(p => p > 0);
+      const outcomes = allPnlRows.map(r => (r.realized_rr ?? 0) >= 1.0);
 
       const ci = wilsonCI(wins, totalClosed);
       const sharpeResult = sharpeWithSE(allPnls);
       const risk = varCvar(allPnls);
 
-      const winPnls = allPnls.filter(p => p > 0);
-      const losePnls = allPnls.filter(p => p <= 0);
-      const avgWin = winPnls.length > 0 ? winPnls.reduce((s, v) => s + v, 0) / winPnls.length : 0;
-      const avgLoss = losePnls.length > 0 ? Math.abs(losePnls.reduce((s, v) => s + v, 0) / losePnls.length) : 1;
+      // RR≥1.0基準でavgWin/avgLossを計算（Kelly/avgRRの分母分子を統一）
+      const rrWinRows = allPnlRows.filter(r => (r.realized_rr ?? 0) >= 1.0);
+      const rrLoseRows = allPnlRows.filter(r => (r.realized_rr ?? 0) < 1.0);
+      const avgWin = rrWinRows.length > 0 ? rrWinRows.reduce((s, r) => s + r.pnl, 0) / rrWinRows.length : 0;
+      const avgLoss = rrLoseRows.length > 0 ? Math.abs(rrLoseRows.reduce((s, r) => s + r.pnl, 0) / rrLoseRows.length) : 1;
       const avgRR = avgLoss > 0 ? avgWin / avgLoss : 0;
 
       const aiOutcomes = (aiOutcomesRaw.results ?? []).map(r => r.outcome as 'WIN' | 'LOSE');
@@ -560,7 +577,7 @@ export async function getApiStatus(db: D1Database, tradingEnv?: { TRADING_ENABLE
         kellyFraction: kellyFraction(wins / totalClosed, avgRR),
         markov: markovTransition(outcomes),
         drawdown: maxDrawdown(allPnls),
-        rolling: rollingReturns(allPnls, [7, 14, 30]),
+        rolling: rollingReturns(allPnls, [7, 14, 30], 10000, outcomes),
         volatility: pnlVolatility(allPnls),
         profitFactor: profitFactor(allPnls),
         randomBaseline: allPnls.length >= 10 ? randomBaselineComparison(allPnls) : null,
@@ -618,6 +635,9 @@ export async function getApiStatus(db: D1Database, tradingEnv?: { TRADING_ENABLE
     recentCloses: recentClosesRaw.results ?? [],
     riskStatus,
     instrumentScores: instrScoresRaw.results ?? [],
+    rrSummary: (() => {
+      try { return rrSummaryRow ? JSON.parse(rrSummaryRow.value) : null; } catch { return null; }
+    })(),
     latestNews,
     acceptedNews: (acceptedNewsRaw.results ?? []).map(r => ({
       id: r.id,
@@ -947,9 +967,9 @@ async function getStrategyMapData(db: D1Database): Promise<StatusResponse['strat
   try {
     const rows = await db.prepare(
       `SELECT strategy, regime, COUNT(*) as count,
-        SUM(CASE WHEN pnl > 0 THEN 1 ELSE 0 END) as wins,
-        AVG(pnl) as avgPnl
-       FROM trade_logs WHERE strategy IS NOT NULL
+        SUM(CASE WHEN p.realized_rr >= 1.0 THEN 1 ELSE 0 END) as wins,
+        AVG(p.pnl) as avgPnl
+       FROM trade_logs t LEFT JOIN positions p ON t.position_id = p.id WHERE t.strategy IS NOT NULL
        GROUP BY strategy, regime ORDER BY count DESC LIMIT 30`
     ).all<{ strategy: string | null; regime: string | null; count: number; wins: number; avgPnl: number }>();
 
@@ -1076,7 +1096,7 @@ function synthesizeParamWhyChain(reason: string, winRate: number | null, rr: num
   return [
     `AIが直近取引の${what}の必要性を検出`,
     `根拠: ${shortR}`,
-    `統計: 勝率=${wrStr}, RR=${rrStr} → 閾値と比較`,
+    `統計: 的中率=${wrStr}, RR=${rrStr} → 閾値と比較`,
     `最適化アルゴリズムが新パラメーターを算出`,
     `更新適用 → 次トレードから有効`,
   ];
@@ -1103,7 +1123,7 @@ function buildParamHistory(
     const change = r.reason || '';
     const wrPct = r.win_rate != null ? `${(r.win_rate * 100).toFixed(0)}%` : '—';
     const rrStr = r.actual_rr != null ? r.actual_rr.toFixed(2) : '—';
-    const result_text = `勝率 ${wrPct}, RR ${rrStr}${r.trades_eval ? `（${r.trades_eval}件評価）` : ''}`;
+    const result_text = `的中率 ${wrPct}, RR ${rrStr}${r.trades_eval ? `（${r.trades_eval}件評価）` : ''}`;
 
     return {
       pair: r.pair,

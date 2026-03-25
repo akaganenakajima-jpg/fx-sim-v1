@@ -2,7 +2,7 @@
 // Wilson CI, Sharpe SE, VaR/CVaR, Kelly基準, マルコフ遷移
 // ローリングリターン, 最大DD%, 期間別パフォーマンス, PnLボラティリティ
 
-/** Wilsonスコア区間（勝率の95%信頼区間） */
+/** Wilsonスコア区間（勝率=RR≥1.0の95%信頼区間） */
 export function wilsonCI(wins: number, total: number, z = 1.96): { lower: number; upper: number } {
   if (total === 0) return { lower: 0, upper: 0 };
   const p = wins / total;
@@ -79,17 +79,23 @@ export function maxDrawdown(pnls: number[], initialBalance = 10000): {
 export function rollingReturns(
   pnls: number[],
   windows: number[],
-  initialBalance = 10000
+  initialBalance = 10000,
+  /** RR≥1.0 基準の勝敗配列（pnls と同じ長さ）。省略時は pnl > 0 で判定（後方互換） */
+  rrOutcomes?: boolean[],
 ): Record<number, { roi: number; sharpe: number; winRate: number; count: number }> {
   const result: Record<number, { roi: number; sharpe: number; winRate: number; count: number }> = {};
   for (const w of windows) {
     const slice = pnls.slice(-w);
+    // RR≥1.0 基準の勝率を使用（プロジェクト統一定義）
+    const outcomeSlice = rrOutcomes ? rrOutcomes.slice(-w) : null;
     if (slice.length === 0) {
       result[w] = { roi: 0, sharpe: 0, winRate: 0, count: 0 };
       continue;
     }
     const sum = slice.reduce((s, v) => s + v, 0);
-    const wins = slice.filter(v => v > 0).length;
+    const wins = outcomeSlice
+      ? outcomeSlice.filter(v => v).length
+      : slice.filter(v => v > 0).length;
     const sh = sharpeWithSE(slice);
     result[w] = {
       roi: (sum / initialBalance) * 100,
@@ -462,15 +468,15 @@ export function slPatternAnalysis(
     .sort((a, b) => b.slRate - a.slRate);
 }
 
-/** 検出力分析: 勝率の差を統計的に検出するのに必要なサンプル数
+/** 検出力分析: 勝率(RR≥1.0)の差を統計的に検出するのに必要なサンプル数
  *  Cohen の方法: n = (z_α + z_β)^2 / (2 * arcsin(√p1) - 2 * arcsin(√p0))^2
  *  簡略化: p0=0.5（ランダム）、p1=目標勝率（例: 0.55）、α=0.05、β=0.2
  */
 export function powerAnalysis(
   currentN: number,
   currentWins: number,
-  targetWinRate = 0.55,
-  baselineWinRate = 0.5,
+  targetWinRate = 0.40,     // RR≥1.0基準: 勝率40%+avgRR2.0でEV正
+  baselineWinRate = 0.30,   // RR≥1.0基準: ランダムベースラインは約30%
   alpha = 0.05,
   power = 0.8,
 ): {
@@ -608,7 +614,7 @@ export function engleGrangerCointegration(
   return { residualADF, cointegrated, sampleN: n };
 }
 
-/** 階層ベイズ勝率推定（Beta-Binomial 共役更新）
+/** 階層ベイズ勝率推定（勝ち=RR≥1.0）（Beta-Binomial 共役更新）
  *  プール推定を事前分布として使い、銘柄固有勝率を補正
  *  コールドスタート（データ少）の銘柄をプール平均に引き寄せる
  *
