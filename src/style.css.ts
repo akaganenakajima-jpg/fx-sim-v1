@@ -647,21 +647,23 @@ body.drawer-open .tabs, body.sheet-open .tabs { transform: translateZ(0) transla
   to { transform: rotate(360deg); }
 }
 
-/* ═══ アクティビティフィード ═══ */
-.feed-item{display:grid;grid-template-columns:52px 38px 72px 1fr auto;align-items:center;column-gap:6px;padding:8px 16px;border-bottom:1px solid rgba(255,255,255,0.04);font-size:12px}
-.feed-item-ind{opacity:0.8}
-.feed-tag{padding:2px 6px;border-radius:4px;font-size:11px;font-weight:600;letter-spacing:0.2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+/* ═══ アクティビティフィード（2行カードレイアウト） ═══ */
+.feed-item{display:flex;flex-direction:column;gap:3px;padding:10px 16px;border-bottom:1px solid rgba(255,255,255,0.04);font-size:13px}
+.feed-item-ind{opacity:0.85}
+.feed-row1{display:flex;align-items:center;gap:8px}
+.feed-row2{display:flex;align-items:center;gap:8px;padding-left:2px}
+.feed-tag{padding:2px 8px;border-radius:6px;font-size:11px;font-weight:600;letter-spacing:0.3px;white-space:nowrap;flex-shrink:0}
 .feed-tag-buy{background:rgba(10,132,255,0.18);color:#0A84FF}
 .feed-tag-sell{background:rgba(100,210,255,0.18);color:#64D2FF}
 .feed-tag-loss{background:rgba(255,159,10,0.18);color:#FF9F0A}
 .feed-tag-trend-up{background:rgba(48,209,88,0.15);color:#30D158}
 .feed-tag-trend-dn{background:rgba(255,69,58,0.15);color:#FF453A}
-.feed-time{color:var(--tertiary);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.feed-pair{font-weight:600;color:var(--secondary);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.feed-rate{font-variant-numeric:tabular-nums;color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.feed-note{color:var(--secondary);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;grid-column:4/-1}
-.feed-act{font-weight:700;white-space:nowrap}
+.feed-pair{font-weight:600;color:var(--text);white-space:nowrap;flex-shrink:0}
+.feed-act{font-weight:700;white-space:nowrap;margin-left:auto;flex-shrink:0}
 .feed-act-buy{color:#0A84FF}
 .feed-act-sell{color:#64D2FF}
 .feed-act-hold{color:var(--tertiary)}
+.feed-time{color:var(--tertiary);font-size:11px;white-space:nowrap;flex-shrink:0}
+.feed-rate{font-variant-numeric:tabular-nums;color:var(--secondary);font-size:12px;white-space:nowrap}
+.feed-note{color:var(--secondary);font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1;min-width:0}
 `;

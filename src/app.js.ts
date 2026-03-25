@@ -1689,11 +1689,15 @@ export const JS = `
         var rateStr = fmtPrice(d.pair, d.rate);
         var timeStr = fmtTime(d.created_at);
         return '<div class="feed-item">'
-          + '<span class="feed-tag ' + tagCls + '">' + tagTxt + '</span>'
-          + '<span class="feed-time">' + escHtml(timeStr) + '</span>'
-          + '<span class="feed-pair">' + escHtml(d.pair) + '</span>'
-          + '<span class="feed-rate">' + escHtml(rateStr) + '</span>'
-          + '<span class="feed-act ' + actionCls + '">' + actionTxt + '</span>'
+          + '<div class="feed-row1">'
+            + '<span class="feed-tag ' + tagCls + '">' + tagTxt + '</span>'
+            + '<span class="feed-pair">' + escHtml(d.pair) + '</span>'
+            + '<span class="feed-act ' + actionCls + '">' + actionTxt + '</span>'
+          + '</div>'
+          + '<div class="feed-row2">'
+            + '<span class="feed-time">' + escHtml(timeStr) + '</span>'
+            + '<span class="feed-rate">' + escHtml(rateStr) + '</span>'
+          + '</div>'
           + '</div>';
       } else {
         // indicator log
@@ -1702,11 +1706,16 @@ export const JS = `
         var tagCls2 = isUp ? 'feed-tag-trend-up' : 'feed-tag-trend-dn';
         var tagTxt2 = isUp ? '上昇' : '下落';
         var timeStr2 = fmtTime(l.created_at);
+        var noteStr = l.note || (l.metric + ' ' + l.prev_value + '→' + l.curr_value);
         return '<div class="feed-item feed-item-ind">'
-          + '<span class="feed-tag ' + tagCls2 + '">' + tagTxt2 + '</span>'
-          + '<span class="feed-time">' + escHtml(timeStr2) + '</span>'
-          + '<span class="feed-pair">' + escHtml(l.pair) + '</span>'
-          + '<span class="feed-note">' + escHtml(l.note || (l.metric + ' ' + l.prev_value + '→' + l.curr_value)) + '</span>'
+          + '<div class="feed-row1">'
+            + '<span class="feed-tag ' + tagCls2 + '">' + tagTxt2 + '</span>'
+            + '<span class="feed-pair">' + escHtml(l.pair) + '</span>'
+          + '</div>'
+          + '<div class="feed-row2">'
+            + '<span class="feed-time">' + escHtml(timeStr2) + '</span>'
+            + '<span class="feed-note">' + escHtml(noteStr) + '</span>'
+          + '</div>'
           + '</div>';
       }
     }).join('');
