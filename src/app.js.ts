@@ -1135,8 +1135,8 @@ export const JS = `
       var rrStr     = t.realized_rr != null ? t.realized_rr.toFixed(2) : '—';
       // null=灰(未確定) / ≥1.0=緑(勝ち) / >0=青(小益) / ≤0=赤(損失または0)
       var rrColor   = t.realized_rr == null ? 'var(--tertiary)' : t.realized_rr >= 1.0 ? 'var(--green)' : t.realized_rr > 0 ? 'var(--blue)' : 'var(--red)';
-      var mfeStr    = t.mfe != null ? (t.mfe >= 0 ? '+' : '') + '¥' + Math.round(t.mfe).toLocaleString() : '—';
-      var maeStr    = t.mae != null ? (t.mae >= 0 ? '+' : '') + '¥' + Math.round(t.mae).toLocaleString() : '—';
+      var mfeStr    = t.mfe != null ? '+¥' + Math.abs(Math.round(t.mfe)).toLocaleString() : '—';
+      var maeStr    = t.mae != null ? '-¥' + Math.abs(Math.round(t.mae)).toLocaleString() : '—';
       var closeReason = t.close_reason || '—';
       var reasonColor = closeReason === 'TP' ? 'var(--green)' : closeReason === 'SL' ? 'var(--red)' : 'var(--tertiary)';
 

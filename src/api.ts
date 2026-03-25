@@ -457,7 +457,7 @@ export async function getApiStatus(db: D1Database, tradingEnv?: { TRADING_ENABLE
         .prepare(
           `SELECT p.id, p.entry_at, p.closed_at, p.pair, p.direction, p.lot,
                   p.entry_rate, p.close_rate, p.close_reason, p.pnl,
-                  p.realized_rr, p.mfe, p.mae,
+                  p.realized_rr, p.mfe, p.mae, p.status, p.original_sl_rate,
                   (SELECT d.reasoning FROM decisions d
                    WHERE d.pair = p.pair AND d.decision = p.direction
                    AND d.created_at <= datetime(p.entry_at, '+5 minutes')
@@ -471,9 +471,10 @@ export async function getApiStatus(db: D1Database, tradingEnv?: { TRADING_ENABLE
           pair: string; direction: string; lot: number;
           entry_rate: number; close_rate: number | null; close_reason: string | null;
           pnl: number | null; realized_rr: number | null; mfe: number | null; mae: number | null;
+          status: string; original_sl_rate: number | null;
           reasoning: string | null;
         }>()
-        .catch(() => ({ results: [] as Array<{ id: number; entry_at: string; closed_at: string | null; pair: string; direction: string; lot: number; entry_rate: number; close_rate: number | null; close_reason: string | null; pnl: number | null; realized_rr: number | null; mfe: number | null; mae: number | null; reasoning: string | null }> })),
+        .catch(() => ({ results: [] as Array<{ id: number; entry_at: string; closed_at: string | null; pair: string; direction: string; lot: number; entry_rate: number; close_rate: number | null; close_reason: string | null; pnl: number | null; realized_rr: number | null; mfe: number | null; mae: number | null; status: string; original_sl_rate: number | null; reasoning: string | null }> })),
     ]);
 
   const rate = rateRow ? parseFloat(rateRow.value) : null;

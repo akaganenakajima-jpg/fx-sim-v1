@@ -245,15 +245,6 @@ const MIGRATIONS: Array<{ version: number; description: string; sql: string }> =
     description: 'positions に mfe カラム追加（Max Favorable Excursion: 最大含み益）',
     sql: 'ALTER TABLE positions ADD COLUMN mfe REAL',
   },
-  // v224: 旧データ修正 — realized_rr=0.00かつPnL>0の誤計算レコードをNULLに置換
-  // 原因: trailing/TP1でsl_rate=entry_rateになった後の決済 → リスク距離=0 → 0返し
-  // 修正: original_sl_rateが未存在の旧記録はNULL（計算不能）として扱う
-  {
-    version: 224,
-    description: '旧realized_rr誤計算修正: pnl>0かつrealized_rr=0.0の誤レコードをNULLに置換',
-    sql: `UPDATE positions SET realized_rr = NULL
-          WHERE status = 'CLOSED' AND realized_rr = 0.0 AND pnl > 0`,
-  },
   // v223: positions に original_sl_rate カラム追加（エントリー時SL保存 — realized_rr正規化用）
   // CLAUDE.md定義: 実現RR = 実現利益 / 初期リスク（エントリー時のSL距離）
   // trailing/TP1でsl_rateが変動しても初期リスクは不変
@@ -262,13 +253,14 @@ const MIGRATIONS: Array<{ version: number; description: string; sql: string }> =
     description: 'positions に original_sl_rate カラム追加（エントリー時SL距離でのRR計算正規化）',
     sql: 'ALTER TABLE positions ADD COLUMN original_sl_rate REAL',
   },
-  // v226: OPEN/CLOSEDポジションの original_sl_rate バックフィル
-  // v223でカラム追加前に作成されたポジションは original_sl_rate=null
-  // sl_rateがまだ変動していない（trailingでentry超えていない）ポジションのsl_rateを初期値として記録
+  // v224: 旧データ修正 — realized_rr=0.00かつPnL>0の誤計算レコードをNULLに置換
+  // 原因: trailing/TP1でsl_rate=entry_rateになった後の決済 → リスク距離=0 → 0返し
+  // 修正: original_sl_rateが未存在の旧記録はNULL（計算不能）として扱う
   {
-    version: 226,
-    description: 'original_sl_rateバックフィル: NULL既存ポジションにsl_rateをコピー',
-    sql: `UPDATE positions SET original_sl_rate = sl_rate WHERE original_sl_rate IS NULL AND sl_rate IS NOT NULL`,
+    version: 224,
+    description: '旧realized_rr誤計算修正: pnl>0かつrealized_rr=0.0の誤レコードをNULLに置換',
+    sql: `UPDATE positions SET realized_rr = NULL
+          WHERE status = 'CLOSED' AND realized_rr = 0.0 AND pnl > 0`,
   },
   // v225: realized_rr 全件再計算 — Bロジック（値幅ベース・方向補正・ABS分母）統一
   // v219のバックフィルはABS未使用で trailing後SLがentry超えると負のRRになるバグがあった
@@ -283,6 +275,14 @@ const MIGRATIONS: Array<{ version: number; description: string; sql: string }> =
             END
           WHERE status = 'CLOSED' AND close_rate IS NOT NULL AND COALESCE(original_sl_rate, sl_rate) IS NOT NULL`,
   },
+  // v226: OPEN/CLOSEDポジションの original_sl_rate バックフィル
+  // v223でカラム追加前に作成されたポジションは original_sl_rate=null
+  // sl_rateがまだ変動していない（trailingでentry超えていない）ポジションのsl_rateを初期値として記録
+  {
+    version: 226,
+    description: 'original_sl_rateバックフィル: NULL既存ポジションにsl_rateをコピー',
+    sql: `UPDATE positions SET original_sl_rate = sl_rate WHERE original_sl_rate IS NULL AND sl_rate IS NOT NULL`,
+  },
   // v227: v226バックフィル後のrealized_rr再計算（v225と同一SQL）
   // v225が先にデプロイ済みの場合、v226でoriginal_sl_rateを埋めた後に再計算が必要
   {
@@ -294,6 +294,15 @@ const MIGRATIONS: Array<{ version: number; description: string; sql: string }> =
               WHEN 'SELL' THEN (entry_rate - close_rate) / NULLIF(ABS(entry_rate - COALESCE(original_sl_rate, sl_rate)), 0)
             END
           WHERE status = 'CLOSED' AND close_rate IS NOT NULL AND COALESCE(original_sl_rate, sl_rate) IS NOT NULL`,
+  },
+  // v228: realized_rr=NULL残存レコード救済
+  // sl_rateもoriginal_sl_rateもNULLのレコードは通常のRR計算不能
+  // → realized_rr = 0 として記録（「計算不能」ではなく「リスク距離不明のため中立」扱い）
+  {
+    version: 228,
+    description: 'realized_rr=NULL残存レコードを0で埋める（SL不明のため中立RR）',
+    sql: `UPDATE positions SET realized_rr = 0
+          WHERE status = 'CLOSED' AND realized_rr IS NULL AND close_rate IS NOT NULL`,
   },
 ];
 

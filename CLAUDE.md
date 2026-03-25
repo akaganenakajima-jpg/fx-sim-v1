@@ -492,7 +492,7 @@ chmod +x setup.sh
 | 観点 | チェック内容 |
 |---|---|
 | 機能 | データ取得・PnL計算・TP/SL・バナー表示 |
-| レイアウト | 3タブ・ヘッダー・タブバー・safe-area |
+| レイアウト | 6タブ（HOME・ニュース・学び・AI・戦略・系統）・ヘッダー・タブバー・safe-area |
 | UX | スパークライン・アニメーション・ボトムシート |
 | Apple HIG | 44pt タッチターゲット・8pt グリッド・SF Pro |
 | UX心理学 | Peak-End・Variable Reward・Goal Gradient・Loss Aversion |

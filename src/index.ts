@@ -478,8 +478,9 @@ async function runPathB(
   }
 
   // og:description 並列取得（attention上位5件, 英語4ソースはスキップ）
+  // 全体タイムアウト8秒: 個別fetchは3秒制限だが、5件並列全体が遅延した場合の安全弁
   const attentionItems = stage1.news_analysis.filter((a: NewsAnalysisItem) => a.attention).slice(0, 5);
-  const ogResults = await Promise.allSettled(
+  const ogPromise = Promise.allSettled(
     attentionItems.map(async (a: NewsAnalysisItem) => {
       const item = news[a.index];
       if (!item) return { index: a.index, og: null };
@@ -487,6 +488,13 @@ async function runPathB(
       return { index: a.index, og };
     })
   );
+  const ogTimeout = new Promise<PromiseSettledResult<{ index: number; og: string | null }>[]>(resolve =>
+    setTimeout(() => {
+      console.warn('[fx-sim] og:description fetch timed out (8s), skipping');
+      resolve(attentionItems.map(a => ({ status: 'rejected' as const, reason: 'timeout' })));
+    }, 8000)
+  );
+  const ogResults = await Promise.race([ogPromise, ogTimeout]);
   // og_description を news_analysis に付与
   for (const r of ogResults) {
     if (r.status === 'fulfilled' && r.value.og) {

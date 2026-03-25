@@ -16,6 +16,10 @@ function calcPnl(
   closeRate: number,
   pnlMultiplier: number
 ): number {
+  if (pnlMultiplier <= 0) {
+    console.warn(`[position] calcPnl: invalid pnlMultiplier=${pnlMultiplier}, defaulting to 100`);
+    pnlMultiplier = 100;
+  }
   return direction === 'BUY'
     ? (closeRate - entryRate) * pnlMultiplier
     : (entryRate - closeRate) * pnlMultiplier;
@@ -160,7 +164,9 @@ export async function checkAndCloseAllPositions(
         const tp1Params = await db.prepare(
           'SELECT tp1_ratio FROM instrument_params WHERE pair=?'
         ).bind(pos.pair).first<{tp1_ratio: number}>();
-        const tp1Ratio = tp1Params?.tp1_ratio ?? 0.5;
+        // tp1_ratio を 0.01〜0.99 にクランプ（1.0以上だと残lot=0のゴーストポジション発生）
+        const rawTp1Ratio = tp1Params?.tp1_ratio ?? 0.5;
+        const tp1Ratio = Math.min(Math.max(rawTp1Ratio, 0.01), 0.99);
         const halfLot = pos.lot * tp1Ratio;
         const partialPnl = calcPnl(pos.direction, pos.entry_rate, currentRate, multiplier) * tp1Ratio;
         console.log(`[position] TP1 hit: ${pos.pair} id=${pos.id} partial_close=${(tp1Ratio * 100).toFixed(0)}% pnl=${partialPnl.toFixed(2)}`);
