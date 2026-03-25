@@ -1684,10 +1684,9 @@ export const JS = `
         var ntPairs = nt.affected_pairs || '全銘柄';
         var ntAction = isEmg ? '再判定' : '調整';
         var ntScore100 = Math.round(nt.news_score * 10);
-        // Row2: detailがあれば理由文、なければニュースタイトル
-        var ntDetail = nt.detail || nt.news_title || '';
-        var ntDetailShort = ntDetail.slice(0, 40);
-        if (ntDetail.length > 40) ntDetailShort += '…';
+        // Row2: ニュースタイトル（原因）
+        var ntTitle = (nt.news_title || '').slice(0, 35);
+        if ((nt.news_title || '').length > 35) ntTitle += '…';
         return '<div class="feed-item">'
           + '<div class="feed-row1">'
             + '<span class="feed-tag ' + ntTagCls + '">' + ntTagTxt + '</span>'
@@ -1696,7 +1695,7 @@ export const JS = `
           + '</div>'
           + '<div class="feed-row2">'
             + '<span class="feed-time">' + escHtml(ntTimeStr) + '</span>'
-            + '<span class="feed-note">' + escHtml(ntDetailShort) + '</span>'
+            + '<span class="feed-note">' + escHtml(ntTitle) + '</span>'
           + '</div>'
           + '</div>';
       } else if (item._type === 'param') {
