@@ -547,8 +547,14 @@ export const JS = `
   function renderNewsFeedNow(data) {
     var feedEl = el('news-feed-now');
     if (!feedEl) return;
+    var newsHeader = el('news-now-header');
     var items = (data.newsAnalysis || []).filter(function(n) { return n.attention; }).slice(0, 3);
-    if (items.length === 0) { feedEl.innerHTML = '<div style="padding:16px;text-align:center;font-size:12px;color:var(--tertiary)">速報なし</div>'; return; }
+    if (items.length === 0) {
+      feedEl.innerHTML = '';
+      if (newsHeader) newsHeader.style.display = 'none';
+      return;
+    }
+    if (newsHeader) newsHeader.style.display = '';
 
     feedEl.innerHTML = items.map(function(n) {
       var score = n.impact ? parseInt(n.impact) : 0;

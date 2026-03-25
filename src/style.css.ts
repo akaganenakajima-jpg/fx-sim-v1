@@ -167,7 +167,7 @@ body{background:var(--bg);color:var(--text);font-size:15px;line-height:1.47;
 .pos-bot{display:flex;justify-content:space-between;align-items:center;margin-top:4px}.pos-meta{font-size:11px;color:var(--tertiary)}.pos-meta .time-warn{color:var(--orange)}
 .mkt-bar{display:grid;grid-template-columns:repeat(4,1fr);gap:4px;margin:0 16px}
 .mkt{padding:8px;background:var(--surface);border-radius:var(--rs);text-align:center}.mkt-v{font-size:14px;font-weight:600;font-variant-numeric:tabular-nums}.mkt-l{font-size:11px;color:var(--tertiary);margin-top:4px}.mkt-d{font-size:11px}.mkt-d.up{color:var(--green)}.mkt-d.dn{color:var(--red)}
-.wait-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:4px;margin:8px 16px 0}.wt{padding:8px;background:var(--surface);border-radius:var(--rs)}.wt-pair{font-size:12px;font-weight:500}.wt-price{font-size:11px;color:var(--secondary);font-variant-numeric:tabular-nums;margin-top:2px}
+.wait-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:4px;margin:8px 16px 16px}.wt{padding:8px;background:var(--surface);border-radius:var(--rs)}.wt-pair{font-size:12px;font-weight:500}.wt-price{font-size:11px;color:var(--secondary);font-variant-numeric:tabular-nums;margin-top:2px}
 
 /* ═══ TAB 2: 学び ═══ */
 .evo-card{margin:0 16px 8px;padding:16px;background:var(--surface);border-radius:var(--r)}
