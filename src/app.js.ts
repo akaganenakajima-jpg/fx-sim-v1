@@ -1682,16 +1682,30 @@ export const JS = `
         var ntTagTxt = isEmg ? '緊急発火' : 'トレンド';
         var ntTimeStr = fmtTime(nt.created_at);
         var ntPairs = nt.affected_pairs || '全銘柄';
-        var ntAction = isEmg ? '再判定' : '調整';
         var ntScore100 = Math.round(nt.news_score * 10);
-        // Row2: ニュースタイトル（原因）
+        // ニュースタイトル（原因）
         var ntTitle = (nt.news_title || '').slice(0, 35);
         if ((nt.news_title || '').length > 35) ntTitle += '…';
+        // トリガー後15分以内の売買判定を集計して結果表示
+        var ntTime = new Date(nt.created_at).getTime();
+        var resultBuy = 0, resultSell = 0;
+        decItems.forEach(function(dec) {
+          var decTime = new Date(dec.created_at).getTime();
+          if (decTime >= ntTime && decTime <= ntTime + 15 * 60 * 1000) {
+            if (dec.decision === 'BUY') resultBuy++;
+            else if (dec.decision === 'SELL') resultSell++;
+          }
+        });
+        var resultParts = [];
+        if (resultBuy > 0) resultParts.push(resultBuy + '買');
+        if (resultSell > 0) resultParts.push(resultSell + '売');
+        var ntResult = resultParts.length > 0 ? '→' + resultParts.join('/') : '';
+        var ntAction = isEmg ? '再判定' : '調整';
         return '<div class="feed-item">'
           + '<div class="feed-row1">'
             + '<span class="feed-tag ' + ntTagCls + '">' + ntTagTxt + '</span>'
             + '<span class="feed-pair" style="font-size:12px">' + escHtml(ntPairs) + '</span>'
-            + '<span class="feed-act" style="font-size:11px">' + escHtml(ntAction) + ' ' + ntScore100 + '/100</span>'
+            + '<span class="feed-act" style="font-size:11px">' + escHtml(ntAction) + ' ' + ntScore100 + '/100 ' + ntResult + '</span>'
           + '</div>'
           + '<div class="feed-row2">'
             + '<span class="feed-time">' + escHtml(ntTimeStr) + '</span>'
