@@ -416,8 +416,20 @@ export const JS = `
     var roiEl = el('m-roi');
     if (roiEl) roiEl.textContent = fmtPct(roiPct);
 
+    var avgRrEl = el('m-avgrr');
+    if (avgRrEl) {
+      var st = data.statistics;
+      var ar = st && st.avgRR;
+      avgRrEl.textContent = ar != null ? ar.toFixed(2) : '—';
+      if (ar != null) avgRrEl.style.color = ar >= 1.0 ? 'var(--green)' : 'var(--red)';
+    }
+
     var wrEl = el('m-winrate');
-    if (wrEl) wrEl.textContent = (perf.winRate != null ? perf.winRate.toFixed(1) + '%' : '—');
+    if (wrEl) {
+      wrEl.textContent = (perf.winRate != null ? perf.winRate.toFixed(1) + '%' : '—');
+      // RR≥1.0基準: 勝率35%でもavgRR≥2.0ならEV正 → 35%を緑閾値に
+      if (perf.winRate != null) wrEl.style.color = perf.winRate >= 35 ? 'var(--green)' : 'var(--red)';
+    }
 
     var pfEl = el('m-pf');
     if (pfEl) {
@@ -655,7 +667,13 @@ export const JS = `
           : (pos.entry_rate - cr) * instr.multiplier * (pos.lot || 1);
       }
       var pnlF = fmtPnl(unrealized, instr ? instr.unit : '');
-      var winLose = unrealized >= 0 ? 'win' : 'lose';
+      // RRベースでwin/lose判定（含みRR≥1.0ならwin glow付与）
+      var cardRR = 0;
+      if (pos.sl_rate != null && pos.entry_rate && cr != null) {
+        var cardSlDist = Math.abs(pos.entry_rate - pos.sl_rate);
+        if (cardSlDist > 0) cardRR = pos.direction === 'BUY' ? (cr - pos.entry_rate) / cardSlDist : (pos.entry_rate - cr) / cardSlDist;
+      }
+      var winLose = cardRR >= 1.0 ? 'win rr-high' : unrealized >= 0 ? 'win' : 'lose';
       var pnlCls = unrealized > 0 ? 'pos' : unrealized < 0 ? 'neg' : '';
       var dirCls = pos.direction === 'BUY' ? 'b' : 's';
       var dirLetter = pos.direction === 'BUY' ? 'B' : 'S';
@@ -683,15 +701,35 @@ export const JS = `
       var sparkColor = unrealized >= 0 ? '#30D158' : '#FF453A';
       var sparkSvg = drawSparkline(sparkPts, sparkColor, 48, 16);
 
+      // RRバッジ色: RR≥2.0=緑、RR≥1.0=blue、RR<1.0=赤
+      var rrBadge = '';
+      if (rrText) {
+        var rrVal = pos.tp_rate != null && pos.sl_rate != null && pos.entry_rate ? Math.abs(pos.tp_rate - pos.entry_rate) / Math.abs(pos.sl_rate - pos.entry_rate) : 0;
+        var rrBg = rrVal >= 2.0 ? 'rgba(48,209,88,0.15)' : rrVal >= 1.0 ? 'rgba(10,132,255,0.15)' : 'rgba(255,69,58,0.15)';
+        var rrColor = rrVal >= 2.0 ? 'var(--green)' : rrVal >= 1.0 ? 'var(--blue)' : 'var(--red)';
+        rrBadge = '<span class="pos-rr-badge" style="background:' + rrBg + ';color:' + rrColor + '">' + rrText + '</span>';
+      }
+
+      // 現在の含みRR（リアルタイム）
+      var currentRR = '';
+      if (pos.sl_rate != null && pos.entry_rate && cr != null) {
+        var slDist2 = Math.abs(pos.entry_rate - pos.sl_rate);
+        if (slDist2 > 0) {
+          var rawRR = pos.direction === 'BUY' ? (cr - pos.entry_rate) / slDist2 : (pos.entry_rate - cr) / slDist2;
+          var rrDispColor = rawRR >= 1.0 ? 'var(--green)' : rawRR >= 0 ? 'var(--tertiary)' : 'var(--red)';
+          currentRR = '<span style="font-size:11px;color:' + rrDispColor + ';font-weight:600">含RR ' + rawRR.toFixed(1) + '</span>';
+        }
+      }
+
       return '<div class="pos ' + winLose + '" onclick="openSheet(\\'' + escHtml(pos.pair) + '\\')">' +
         '<div class="pos-dir ' + dirCls + '">' + dirLetter + '</div>' +
         '<div class="pos-body">' +
           '<div class="pos-top"><span class="pos-pair">' + escHtml(instr ? instr.label : pos.pair) + '</span>' +
-          '<span class="pos-pnl ' + pnlCls + '">' + pnlF.text + '</span></div>' +
+          '<span style="display:flex;align-items:center;gap:6px">' + rrBadge + '<span class="pos-pnl ' + pnlCls + '">' + pnlF.text + '</span></span></div>' +
           '<div class="pos-bot"><span class="pos-meta">' +
             fmtPrice(pos.pair, pos.entry_rate) + '\\u2192' + fmtPrice(pos.pair, cr) +
             ' · <span class="' + timeWarnCls.trim() + '">' + holdTime + '</span>' +
-            (rrText ? ' · ' + rrText : '') +
+            (currentRR ? ' · ' + currentRR : '') +
           '</span>' + sparkSvg + '</div>' +
         '</div>' +
       '</div>';
@@ -965,6 +1003,24 @@ export const JS = `
       // RR≥1.0基準: 勝率35%でもavgRR≥2.0ならEV正 → 35%を緑閾値に
       if (perf.winRate != null) skWr.style.color = perf.winRate >= 35 ? 'var(--green)' : 'var(--red)';
     }
+    // EV指標を勝率KPIの下に補足表示
+    var skWrParent = skWr && skWr.parentElement;
+    if (skWrParent && perf.winRate != null && st && st.avgRR != null) {
+      var evExisting = skWrParent.querySelector('.ev-hint');
+      var evVal = (perf.winRate / 100) * st.avgRR - (1 - perf.winRate / 100);
+      var evText = 'EV ' + (evVal >= 0 ? '+' : '') + evVal.toFixed(2);
+      var evColor = evVal >= 0 ? 'var(--green)' : 'var(--red)';
+      if (!evExisting) {
+        var evSpan = document.createElement('div');
+        evSpan.className = 'ev-hint';
+        evSpan.style.cssText = 'font-size:10px;font-weight:600;margin-top:2px;color:' + evColor;
+        evSpan.textContent = evText;
+        skWrParent.appendChild(evSpan);
+      } else {
+        evExisting.textContent = evText;
+        evExisting.style.color = evColor;
+      }
+    }
     var skPf = el('sk-pf'); if (skPf) skPf.textContent = st && st.profitFactor != null ? st.profitFactor.toFixed(2) : '—';
     var skSh = el('sk-sharpe'); if (skSh) skSh.textContent = st && st.sharpe != null ? st.sharpe.toFixed(2) : '—';
     var skDd = el('sk-maxdd');
@@ -976,6 +1032,7 @@ export const JS = `
     if (skRr) {
       var avgRR = st && st.avgRR;
       skRr.textContent = avgRR != null ? avgRR.toFixed(2) : '—';
+      if (avgRR != null) skRr.style.color = avgRR >= 2.0 ? 'var(--green)' : avgRR >= 1.0 ? 'var(--blue)' : 'var(--red)';
     }
     var skTotal = el('sk-total'); if (skTotal) skTotal.textContent = perf.totalClosed != null ? String(perf.totalClosed) : '—';
 
@@ -1104,11 +1161,11 @@ export const JS = `
     slPatterns.forEach(function(p) {
       var bucket = p.vixBucket === 'low' ? '低VIX' : p.vixBucket === 'mid' ? '中VIX' : p.vixBucket === 'high' ? '高VIX' : null;
       if (!bucket) return;
-      var wins = (p.totalCount || 0) - (p.slCount || 0);
+      var nonSlCount = (p.totalCount || 0) - (p.slCount || 0);
       // pairCategory が tier に対応する場合のみ集計
       var tier = p.pairCategory === 'A' ? 'A' : p.pairCategory === 'B' ? 'B' : 'C';
       var key = tier + '|' + bucket;
-      tierVix[key].wins += wins;
+      tierVix[key].wins += nonSlCount;
       tierVix[key].total += p.totalCount || 0;
     });
     // slPatterns がなければ performanceByPair から tier × overall を埋める
@@ -1130,7 +1187,7 @@ export const JS = `
       if (!d || d.total === 0) return '<div class="matrix-c" style="color:var(--tertiary);font-size:10px">蓄積中</div>';
       var wr = d.wins / d.total;
       var pct = (wr * 100).toFixed(0);
-      // SL非発生率: 50%以上=緑濃、40%以上=緑薄、それ以下=赤
+      // SL回避率: 50%以上=緑濃、40%以上=緑薄、それ以下=赤
       var bg = wr >= 0.50 ? 'rgba(48,209,88,0.25)' : wr >= 0.40 ? 'rgba(48,209,88,0.15)' : 'rgba(255,69,58,0.2)';
       return '<div class="matrix-c" style="background:' + bg + '">' + (wr >= 0.40 ? '+' : '') + pct + '%</div>';
     }
@@ -1177,11 +1234,12 @@ export const JS = `
       var pairChanges = ph.filter(function(h) { return h.pair === instr.pair; });
       var pairId = instr.pair.replace(/[\\/\\s]/g, '-').toLowerCase();
 
-      // verdict
+      // verdict — RRベースで判定（平均RR≥1.0=改善中、<1.0=悪化）
       var verdictCls = 'unchanged';
       var verdictText = '検証中';
-      if (p.totalPnl > 0) { verdictCls = 'worked'; verdictText = '改善中'; }
-      else if (p.totalPnl < 0) { verdictCls = 'didnt'; verdictText = '悪化'; }
+      var pairAvgRR = p.total > 0 && p.avgRR != null ? p.avgRR : null;
+      if (pairAvgRR != null && pairAvgRR >= 1.0) { verdictCls = 'worked'; verdictText = 'RR' + pairAvgRR.toFixed(1) + ' 改善中'; }
+      else if (pairAvgRR != null && pairAvgRR < 1.0 && p.total >= 3) { verdictCls = 'didnt'; verdictText = 'RR' + pairAvgRR.toFixed(1) + ' 要改善'; }
 
       // mini sparkline from sparklines data
       var chartHtml = '';
@@ -1196,7 +1254,7 @@ export const JS = `
           var y = (48 - ((r - mn) / rng) * 44).toFixed(1);
           return x + ',' + y;
         }).join(' ');
-        var sColor = p.totalPnl >= 0 ? '#30D158' : '#FF453A';
+        var sColor = (pairAvgRR != null && pairAvgRR >= 1.0) ? '#30D158' : (p.totalPnl >= 0 ? '#30D158' : '#FF453A');
         // v2マーカー: pairChangesの最初の変更をsparkline上に縦線で表示
         var evoMarkerHtml = '';
         if (pairChanges.length > 0 && sp.length > 2) {
@@ -1989,7 +2047,38 @@ export const JS = `
     var fresh = data.recentCloses.filter(function(p) { return !prevSet[p.id]; });
     lastRecentCloseIds = newIds;
     if (fresh.length === 0) return;
-    // TODO: TP/SL バナー表示（v7 HTMLに対応するバナー要素があれば実装）
+    // TP/SL バナー表示（Peak-End Rule: ピーク体験を強調）
+    var best = fresh[0];
+    for (var bi = 1; bi < fresh.length; bi++) {
+      if ((fresh[bi].realized_rr || 0) > (best.realized_rr || 0)) best = fresh[bi];
+    }
+    var banner = el('tp-banner');
+    if (!banner) return;
+    var bIcon = el('tp-banner-icon');
+    var bTitle = el('tp-banner-title');
+    var bSub = el('tp-banner-sub');
+    if (!bIcon || !bTitle || !bSub) return;
+
+    var rr = best.realized_rr || 0;
+    var pnlVal = best.pnl || 0;
+    var reason = best.close_reason || '';
+    var isTP = reason === 'TP' || reason === 'TRAILING';
+    var isWin = rr >= 1.0;
+
+    if (isWin) {
+      banner.className = 'tp-banner';
+      bIcon.textContent = rr >= 2.0 ? '\\ud83c\\udf1f' : '\\u2705';
+      bTitle.textContent = (best.pair || '') + ' RR ' + rr.toFixed(1) + ' \\u2014 ' + (rr >= 2.0 ? '\\u5927\\u52dd\\u5229!' : '\\u52dd\\u5229!');
+      bSub.textContent = fmtYenCompact(pnlVal) + ' ' + (isTP ? 'TP\\u5230\\u9054' : reason);
+    } else {
+      banner.className = 'tp-banner sl-banner';
+      bIcon.textContent = '\\ud83d\\udee1\\ufe0f';
+      bTitle.textContent = (best.pair || '') + ' SL\\u767a\\u52d5 \\u2014 \\u30ea\\u30b9\\u30af\\u7ba1\\u7406\\u6210\\u529f';
+      bSub.textContent = fmtYenCompact(pnlVal) + ' · \\u6b21\\u306fRR\\u2265' + Math.max(1.0, rr + 0.5).toFixed(1) + '\\u3092\\u72d9\\u3046';
+    }
+
+    banner.classList.add('show');
+    setTimeout(function() { banner.classList.remove('show'); }, 5000);
   }
 
   // ══════════════════════════════════════════
@@ -2045,10 +2134,33 @@ export const JS = `
       var pnlF = fmtPnl(unrealized, instr ? instr.unit : '');
       var pnlColor = unrealized > 0 ? 'var(--green)' : unrealized < 0 ? 'var(--red)' : '';
 
+      // リアルタイムRR計算
+      var sheetRR = null;
+      var sheetTargetRR = null;
+      if (pos.sl_rate != null && pos.entry_rate && cr != null) {
+        var sheetSlDist = Math.abs(pos.entry_rate - pos.sl_rate);
+        if (sheetSlDist > 0) {
+          sheetRR = pos.direction === 'BUY' ? (cr - pos.entry_rate) / sheetSlDist : (pos.entry_rate - cr) / sheetSlDist;
+        }
+      }
+      if (pos.tp_rate != null && pos.sl_rate != null && pos.entry_rate) {
+        var sheetTpDist = Math.abs(pos.tp_rate - pos.entry_rate);
+        var sheetSlDist2 = Math.abs(pos.sl_rate - pos.entry_rate);
+        if (sheetSlDist2 > 0) sheetTargetRR = sheetTpDist / sheetSlDist2;
+      }
+
+      var rrHtml = '';
+      if (sheetRR != null) {
+        var rrC = sheetRR >= 1.0 ? 'var(--green)' : sheetRR >= 0 ? 'var(--orange)' : 'var(--red)';
+        rrHtml = row('含みRR', '<span style="color:' + rrC + ';font-weight:800;font-size:18px">' + sheetRR.toFixed(2) + '</span>' +
+          (sheetTargetRR != null ? '<span style="color:var(--tertiary);font-size:12px;margin-left:6px">/ 目標 ' + sheetTargetRR.toFixed(1) + '</span>' : ''));
+      }
+
       title.textContent = (instr ? instr.label : pair) + ' ポジション詳細';
       body.innerHTML =
         row('方向', '<span style="color:' + (pos.direction === 'BUY' ? 'var(--blue)' : 'var(--teal)') + ';font-weight:700">' + (pos.direction === 'BUY' ? '買い' : '空売り') + '</span>') +
         (cr != null ? row('現在値', fmtPrice(pair, cr)) : '') +
+        rrHtml +
         row('含み損益', '<span style="color:' + pnlColor + ';font-weight:700">' + pnlF.text + '</span>') +
         row('エントリー', fmtPrice(pair, pos.entry_rate)) +
         row('エントリー日時', fmtTime(pos.entry_at)) +

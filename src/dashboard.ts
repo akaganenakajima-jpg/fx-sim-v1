@@ -28,6 +28,17 @@ export function getDashboardHtml(): string {
 <!-- ═══ 緊急バナー ═══ -->
 <div class="emergency-bar" id="emergency-bar" style="display:none"></div>
 
+<!-- ═══ TP/SL 決済バナー（Peak-End Rule） ═══ -->
+<div class="tp-banner" id="tp-banner">
+  <div class="tp-banner-inner">
+    <div class="tp-banner-icon" id="tp-banner-icon"></div>
+    <div class="tp-banner-text">
+      <div class="tp-banner-title" id="tp-banner-title"></div>
+      <div class="tp-banner-sub" id="tp-banner-sub"></div>
+    </div>
+  </div>
+</div>
+
 <!-- ═══════════ TAB 1: 今 (tab-portfolio) ═══════════ -->
 <div class="tab-panel active" id="tab-portfolio">
 
@@ -41,6 +52,7 @@ export function getDashboardHtml(): string {
   <div class="metrics" id="metrics-strip">
     <div class="m"><div class="m-val" id="m-balance">--</div><div class="m-lbl">残高</div></div>
     <div class="m"><div class="m-val" id="m-roi">--</div><div class="m-lbl">ROI</div></div>
+    <div class="m"><div class="m-val" id="m-avgrr" style="color:var(--green)">--</div><div class="m-lbl">平均RR</div></div>
     <div class="m"><div class="m-val" id="m-winrate">--</div><div class="m-lbl">勝率(RR≥1.0)</div></div>
     <div class="m"><div class="m-val" id="m-pf">--</div><div class="m-lbl">PF</div></div>
     <div class="m"><div class="m-val" id="m-trades">--</div><div class="m-lbl">取引</div></div>
@@ -129,11 +141,11 @@ export function getDashboardHtml(): string {
   <!-- KPI 6つ -->
   <div class="sec">全体パフォーマンス</div>
   <div class="kpi-grid" id="stats-kpi">
+    <div class="kpi" style="border:1px solid rgba(48,209,88,0.2)"><div class="kpi-val" id="sk-rr" style="color:var(--green)">--</div><div class="kpi-lbl">平均RR</div></div>
     <div class="kpi"><div class="kpi-val" id="sk-winrate">--</div><div class="kpi-lbl">勝率(RR≥1.0)</div></div>
     <div class="kpi"><div class="kpi-val" id="sk-pf">--</div><div class="kpi-lbl">PF</div></div>
     <div class="kpi"><div class="kpi-val" id="sk-sharpe">--</div><div class="kpi-lbl">シャープ</div></div>
     <div class="kpi"><div class="kpi-val" id="sk-maxdd">--</div><div class="kpi-lbl">最大DD</div></div>
-    <div class="kpi"><div class="kpi-val" id="sk-rr">--</div><div class="kpi-lbl">平均RR</div></div>
     <div class="kpi"><div class="kpi-val" id="sk-total">--</div><div class="kpi-lbl">総取引</div></div>
   </div>
 
