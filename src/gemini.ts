@@ -32,6 +32,10 @@ export const PROMPT_VERSION = 'v15'; // v15: RR無効例に0.60追加・「RR<1.
 const GEMINI_ENDPOINT =
   'https://generativelanguage.googleapis.com/v1beta/models/gemini-3.1-pro-preview:generateContent';
 
+// B2専用: 高速モデル（8sタイムアウト内に収まる）
+const GEMINI_FLASH_ENDPOINT =
+  'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent';
+
 const AI_TIMEOUT_MS = 12_000; // AI API呼び出し12秒タイムアウト
 // const NEWS_ANALYSIS_TIMEOUT_MS = 12_000; // DEPRECATED_v2: analyzeNews系で使用していたが削除
 /* --- DELETED Path A helpers (HEDGE_DELAY_MS / buildSystemInstruction / buildUserMessage)
@@ -155,7 +159,7 @@ export async function getDecisionGPT(params: {
       'Authorization': `Bearer ${apiKey}`,
     },
     body: JSON.stringify({
-      model: 'gpt-4.1-mini',
+      model: 'gpt-4.1',
       messages: [
         { role: 'system', content: systemPrompt },
         { role: 'user', content: userMessage },
@@ -179,7 +183,7 @@ export async function getDecisionGPT(params: {
 
   // トークン使用量記録
   if (db && data.usage) {
-    void insertTokenUsage(db, 'gpt-4.1-mini', 'PATH_A_GPT',
+    void insertTokenUsage(db, 'gpt-4.1', 'PATH_A_GPT',
       data.usage.prompt_tokens ?? 0,
       data.usage.completion_tokens ?? 0,
       instrument.pair);
@@ -219,7 +223,7 @@ export async function getDecisionClaude(params: {
       'anthropic-version': '2023-06-01',
     },
     body: JSON.stringify({
-      model: 'claude-sonnet-4-20250514',
+      model: 'claude-sonnet-4-6',
       max_tokens: 256,
       system: systemPrompt,
       messages: [
@@ -242,7 +246,7 @@ export async function getDecisionClaude(params: {
 
   // トークン使用量記録
   if (db && data.usage) {
-    void insertTokenUsage(db, 'claude-sonnet-4-20250514', 'PATH_A_CLAUDE',
+    void insertTokenUsage(db, 'claude-sonnet-4-6', 'PATH_A_CLAUDE',
       data.usage.input_tokens ?? 0,
       data.usage.output_tokens ?? 0,
       instrument.pair);
@@ -560,12 +564,12 @@ export async function newsStage1(params: {
   ].join('\n');
 
   const systemPrompt =
-    'あなたは為替FXトレーダーのAIアシスタントです。\n' +
+    'あなたはFX・株式指数・コモディティのマルチアセットトレーダーのAIアシスタントです。\n' +
     '以下のニュース一覧（日本語翻訳済み）と市場状況を分析し、次の2つのことを返してください。\n' +
     '1. 各ニュースの注目度評価（news_analysis）\n' +
     '2. ニュースに基づいた売買シグナル（trade_signals）\n\n' +
     '必ず以下のJSON形式のみで返答してください:\n' +
-    '{"news_analysis":[{"index":0,"attention":true,"impact":"円安要因（50文字以内）","affected_pairs":["USD/JPY"]}],' +
+    '{"news_analysis":[{"index":0,"attention":true,"impact":"円安・株安要因（50文字以内）","affected_pairs":["USD/JPY","Nikkei225"]}],' +
     '"trade_signals":[{"pair":"USD/JPY","decision":"BUY","tp_rate":160.50,"sl_rate":158.00,"reasoning":"日本語100文字以内"}]}\n\n' +
     'TP/SL方向の絶対ルール（違反はシステムが自動拒否）:\n' +
     '- BUY: tp_rate は現在レートより【高い】価格 / sl_rate は現在レートより【低い】価格\n' +
@@ -573,6 +577,18 @@ export async function newsStage1(params: {
     '- 例(BUY, rate=5.29): tp_rate=5.55(上), sl_rate=5.15(下) ← SLは必ずentryより下\n' +
     '- 例(SELL, rate=1.33): tp_rate=1.30(下), sl_rate=1.36(上) ← SLは必ずentryより上\n' +
     '- 例(USD/JPY SELL, rate=158.37): tp_rate=156.00(下), sl_rate=160.50(上) ← 大きい値でもSELLのSLは必ずentry(158.37)より上\n' +
+    '- 例(Gold BUY, rate=4550): tp_rate=4650(上), sl_rate=4490(下) ← BUYのSLはentry(4550)より必ず下。Goldは現在4000-5000台(2000-3000台の旧価格は使用禁止。SL距離最低$15)\n' +
+    '- 例(Gold SELL, rate=4545): tp_rate=4500(下), sl_rate=4575(上) ← SELLのSLはentry(4545)より必ず上。4500<4545<4575の順序を数値で確認\n' +
+    '- 例(CrudeOil BUY, rate=89.00): tp_rate=90.40(上), sl_rate=88.40(下) ← BUYのSLはentry(89.00)より必ず下。88.40<89.00<90.40の順序を数値で確認\n' +
+    '- 例(CrudeOil SELL, rate=89.00): tp_rate=87.60(下), sl_rate=89.60(上) ← SELLのSLはentry(89.00)より必ず上。87.60<89.00<89.60の順序を数値で確認\n' +
+    '- 例(Silver BUY, rate=73): tp_rate=76(上), sl_rate=70(下) ← Silverは現在70-80台(20-40台の旧価格は使用禁止)\n' +
+    '- 例(GBP/USD BUY, rate=1.3376): tp_rate=1.3476(上), sl_rate=1.3226(下) ← GBP/USDは現在1.28-1.40台(1.20-1.27台の旧価格は使用禁止)\n' +
+    '- 例(GBP/USD SELL, rate=1.3386): tp_rate=1.3086(下), sl_rate=1.3586(上) ← SELLのSLはentry(1.3386)より必ず上。1.3086<1.3386<1.3586の順序を数値で確認\n' +
+    '- 例(EUR/USD BUY, rate=1.16): tp_rate=1.17(上), sl_rate=1.15(下) ← EUR/USDは現在1.10-1.20台(1.0-1.09台の旧価格は使用禁止)\n' +
+    '- 例(SOL/USD BUY, rate=92.00): tp_rate=96.00(上), sl_rate=88.00(下) ← SOL/USDは現在$85-105台($130-160台の旧価格は使用禁止。SL距離最低$2)\n' +
+    '- 例(SOL/USD SELL, rate=92.00): tp_rate=88.00(下), sl_rate=96.00(上) ← SELLのSLはentry(92.00)より必ず上。88.00<92.00<96.00の順序を数値で確認\n' +
+    '- 例(HK33 BUY, rate=25200): tp_rate=25500(上), sl_rate=25000(下) ← HK33は現在24000-27000台(18000-22000台の旧価格は使用禁止。SL距離最低80pt)\n' +
+    '- 例(HK33 SELL, rate=25200): tp_rate=24900(下), sl_rate=25400(上) ← SELLのSLはentry(25200)より必ず上。24900<25200<25400の順序を数値で確認\n' +
     '- tp_rate/sl_rateは各銘柄の現在レートを起点にした絶対価格で返す\n\n' +
     'その他ルール:\n' +
     '- trade_signalsはBUYまたはSELLのみ（HOLDは含めない）\n' +
@@ -582,7 +598,9 @@ export async function newsStage1(params: {
     '- 【SL距離の厳守・自動拒否回避】SL距離は必ずtpSlMin以上tpSlMax以下でなければならない（この範囲外は値の大小を問わず例外なく即自動拒否）。USD/JPYの場合: 0.2≤SL距離≤1.2が必須。下限違反例: 0.19, 0.16, 0.08（0.2未満）/ 上限違反例: 1.21, 1.25, 1.38, 1.50, 2.00, 2.38, 2.40（1.2超はどんな値でも拒否）。安全な推奨範囲: 0.30〜0.80（迷ったら必ずこの範囲で設定すること）\n' +
     '- 【方向最終チェック・送信前必須】BUY: sl_rate < entry_rate でなければ即自動拒否（sl_rate ≥ entry_rateは全て拒否。例: entry=158.337でsl=158.5はBUYとして拒否）。SELL: sl_rate > entry_rate でなければ即自動拒否（sl_rate ≤ entry_rateは全て拒否）。送信前に必ずsl_rateとentry_rateの大小を数値で確認すること\n' +
     '- 確信度が低いニュースはtrade_signalsに含めない\n' +
-    '- attention:falseのニュースはimpact/affected_pairsを空にする';
+    '- 【送信前絶対検証・省略禁止】各シグナルを送信する前に必ず: (1)BUYなら tp_rate > entry_rate を確認 / (2)SELLなら tp_rate < entry_rate を確認 / 条件を満たさないシグナルは送信せず削除する\n' +
+    '- attention:falseのニュースはimpact/affected_pairsを空にする\n' +
+    '- affected_pairs選定: 直接影響だけでなく間接影響も含める。地政学リスク・原油高・米金利急変はNikkei225/S&P500/NASDAQ/DAXにも影響する。為替と株式指数は同じニュースで同時に動くことが多い';
 
   const res = await fetchWithTimeout(`${GEMINI_ENDPOINT}?key=${apiKey}`, {
     method: 'POST',
@@ -665,7 +683,7 @@ export async function newsStage2(params: {
     '- REVERSE: 反対方向に変更推奨（既存ポジションがあれば決済）\n' +
     'B1シグナルの全pairに対してcorrectionsを返すこと。';
 
-  const res = await fetchWithTimeout(`${GEMINI_ENDPOINT}?key=${apiKey}`, {
+  const res = await fetchWithTimeout(`${GEMINI_FLASH_ENDPOINT}?key=${apiKey}`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
@@ -689,7 +707,7 @@ export async function newsStage2(params: {
 
   // トークン使用量記録
   if (db && data.usageMetadata) {
-    void insertTokenUsage(db, 'gemini-3.1-pro-preview', 'PATH_B2_GEMINI',
+    void insertTokenUsage(db, 'gemini-2.5-flash', 'PATH_B2_GEMINI',
       data.usageMetadata.promptTokenCount ?? 0,
       data.usageMetadata.candidatesTokenCount ?? 0);
   }
@@ -771,12 +789,12 @@ async function newsStage1GPT(params: {
   ].join('\n');
 
   const systemPrompt =
-    'あなたは為替FXトレーダーのAIアシスタントです。\n' +
+    'あなたはFX・株式指数・コモディティのマルチアセットトレーダーのAIアシスタントです。\n' +
     '以下のニュース一覧（日本語翻訳済み）と市場状況を分析し、次の2つのことを返してください。\n' +
     '1. 各ニュースの注目度評価（news_analysis）\n' +
     '2. ニュースに基づいた売買シグナル（trade_signals）\n\n' +
     '必ず以下のJSON形式のみで返答してください:\n' +
-    '{"news_analysis":[{"index":0,"attention":true,"impact":"円安要因（50文字以内）","affected_pairs":["USD/JPY"]}],' +
+    '{"news_analysis":[{"index":0,"attention":true,"impact":"円安・株安要因（50文字以内）","affected_pairs":["USD/JPY","Nikkei225"]}],' +
     '"trade_signals":[{"pair":"USD/JPY","decision":"BUY","tp_rate":160.50,"sl_rate":158.00,"reasoning":"日本語100文字以内"}]}\n\n' +
     'TP/SL方向の絶対ルール（違反はシステムが自動拒否）:\n' +
     '- BUY → tp_rate > 現在レート かつ sl_rate < 現在レート（上が利確・下が損切）\n' +
@@ -784,19 +802,32 @@ async function newsStage1GPT(params: {
     '- 例(BUY, rate=5.29): tp_rate=5.55(上), sl_rate=5.15(下) ← SLは必ずentryより下\n' +
     '- 例(SELL, rate=1.33): tp_rate=1.30(下), sl_rate=1.36(上) ← SLは必ずentryより上\n' +
     '- 例(USD/JPY SELL, rate=158.37): tp_rate=156.00(下), sl_rate=160.50(上) ← 大きい値でもSELLのSLは必ずentry(158.37)より上\n' +
+    '- 例(Gold BUY, rate=4550): tp_rate=4650(上), sl_rate=4490(下) ← BUYのSLはentry(4550)より必ず下。Goldは現在4000-5000台(2000-3000台の旧価格は使用禁止。SL距離最低$15)\n' +
+    '- 例(Gold SELL, rate=4545): tp_rate=4500(下), sl_rate=4575(上) ← SELLのSLはentry(4545)より必ず上。4500<4545<4575の順序を数値で確認\n' +
+    '- 例(CrudeOil BUY, rate=89.00): tp_rate=90.40(上), sl_rate=88.40(下) ← BUYのSLはentry(89.00)より必ず下。88.40<89.00<90.40の順序を数値で確認\n' +
+    '- 例(CrudeOil SELL, rate=89.00): tp_rate=87.60(下), sl_rate=89.60(上) ← SELLのSLはentry(89.00)より必ず上。87.60<89.00<89.60の順序を数値で確認\n' +
+    '- 例(Silver BUY, rate=73): tp_rate=76(上), sl_rate=70(下) ← Silverは現在70-80台(20-40台の旧価格は使用禁止)\n' +
+    '- 例(GBP/USD BUY, rate=1.3376): tp_rate=1.3476(上), sl_rate=1.3226(下) ← GBP/USDは現在1.28-1.40台(1.20-1.27台の旧価格は使用禁止)\n' +
+    '- 例(GBP/USD SELL, rate=1.3386): tp_rate=1.3086(下), sl_rate=1.3586(上) ← SELLのSLはentry(1.3386)より必ず上。1.3086<1.3386<1.3586の順序を数値で確認\n' +
+    '- 例(EUR/USD BUY, rate=1.16): tp_rate=1.17(上), sl_rate=1.15(下) ← EUR/USDは現在1.10-1.20台(1.0-1.09台の旧価格は使用禁止)\n' +
+    '- 例(SOL/USD BUY, rate=92.00): tp_rate=96.00(上), sl_rate=88.00(下) ← SOL/USDは現在$85-105台($130-160台の旧価格は使用禁止。SL距離最低$2)\n' +
+    '- 例(SOL/USD SELL, rate=92.00): tp_rate=88.00(下), sl_rate=96.00(上) ← SELLのSLはentry(92.00)より必ず上。88.00<92.00<96.00の順序を数値で確認\n' +
+    '- 例(HK33 BUY, rate=25200): tp_rate=25500(上), sl_rate=25000(下) ← HK33は現在24000-27000台(18000-22000台の旧価格は使用禁止。SL距離最低80pt)\n' +
+    '- 例(HK33 SELL, rate=25200): tp_rate=24900(下), sl_rate=25400(上) ← SELLのSLはentry(25200)より必ず上。24900<25200<25400の順序を数値で確認\n' +
     '- tp_rate/sl_rateは各銘柄の現在レートを起点にした絶対価格で返す\n\n' +
     'その他ルール:\n- trade_signalsはBUYまたはSELLのみ（HOLDは含めない）\n- [OP]マークの銘柄はtrade_signalsに含めない\n' +
     '- tp_rate/sl_rateは必ず数値で返す（nullは不可）\n' +
     '- 【RR比設定手順・必須・自動拒否回避】①SL距離を決める（最低tpSlMin以上必須・未満は即自動拒否。USD/JPYなら最低0.2円・推奨0.3〜0.8円）②RR比を計算・検証【送信前必須チェック】RR=TP距離÷SL距離を計算し1.5以上を確認してから送信（有効なRR例: 1.50✅, 1.67✅, 2.00✅ / 無効で即自動拒否: 0.60❌, 0.83❌, 0.88❌, 0.93❌, 0.99❌, 1.2❌, 1.4❌（RR<1.0はTPがSLより近い致命的エラー）。TP距離の計算: SL=0.4円→TP最低0.6円・SL=0.3円→TP最低0.45円・SL=0.5円→TP最低0.75円）③絶対価格に変換【entryレートは小数点以下を含めそのまま使う・絶対に丸めない（entry=158.396を158.4にするのは禁止）】（BUY: sl=entry-SL距離【sl<entry厳守。sl≥entryは即自動拒否・距離ゼロも拒否】, tp=entry+TP距離【tp>entry厳守】 / SELL: sl=entry+SL距離【sl>entry厳守。sl≤entryは即自動拒否・距離ゼロも拒否】, tp=entry-TP距離【tp<entry厳守】）。例BUY entry=158.396→sl=158.096(=158.396-0.3), tp=158.896(=158.396+0.5)(RR=1.67✅)。例SELL entry=158.396→sl=158.696(=158.396+0.3), tp=157.896(=158.396-0.5)(RR=1.67✅)\n' +
     '- 【SL距離の厳守・自動拒否回避】SL距離は必ずtpSlMin以上tpSlMax以下でなければならない（この範囲外は値の大小を問わず例外なく即自動拒否）。USD/JPYの場合: 0.2≤SL距離≤1.2が必須。下限違反例: 0.19, 0.16, 0.08（0.2未満）/ 上限違反例: 1.21, 1.25, 1.38, 1.50, 2.00, 2.38, 2.40（1.2超はどんな値でも拒否）。安全な推奨範囲: 0.30〜0.80（迷ったら必ずこの範囲で設定すること）\n' +
     '- 【方向最終チェック・送信前必須】BUY: sl_rate < entry_rate でなければ即自動拒否（sl_rate ≥ entry_rateは全て拒否。例: entry=158.337でsl=158.5はBUYとして拒否）。SELL: sl_rate > entry_rate でなければ即自動拒否（sl_rate ≤ entry_rateは全て拒否）。送信前に必ずsl_rateとentry_rateの大小を数値で確認すること\n' +
-    '- 確信度が低いニュースはtrade_signalsに含めない';
+    '- 確信度が低いニュースはtrade_signalsに含めない\n' +
+    '- affected_pairs選定: 直接影響だけでなく間接影響も含める。地政学リスク・原油高・米金利急変はNikkei225/S&P500/NASDAQ/DAXにも影響する。為替と株式指数は同じニュースで同時に動くことが多い';
 
   const res = await fetchWithTimeout('https://api.openai.com/v1/chat/completions', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` },
     body: JSON.stringify({
-      model: 'gpt-4.1-mini',
+      model: 'gpt-4.1',
       messages: [
         { role: 'system', content: systemPrompt },
         { role: 'user', content: userMessage },
@@ -820,7 +851,7 @@ async function newsStage1GPT(params: {
 
   // トークン使用量記録（newsStage1GPTはdbをparams経由で受け取る）
   if ((params as any).db && data.usage) {
-    void insertTokenUsage((params as any).db, 'gpt-4.1-mini', 'PATH_B1_GPT',
+    void insertTokenUsage((params as any).db, 'gpt-4.1', 'PATH_B1_GPT',
       data.usage.prompt_tokens ?? 0,
       data.usage.completion_tokens ?? 0);
   }
@@ -862,10 +893,10 @@ async function newsStage1Claude(params: {
   ].join('\n');
 
   const systemPrompt =
-    'あなたは為替FXトレーダーのAIアシスタントです。\n' +
+    'あなたはFX・株式指数・コモディティのマルチアセットトレーダーのAIアシスタントです。\n' +
     'ニュース一覧（日本語翻訳済み）と市場状況を分析し、news_analysisとtrade_signalsを返してください。\n' +
     '必ずJSON形式で返答:\n' +
-    '{"news_analysis":[{"index":0,"attention":true,"impact":"50文字以内","affected_pairs":["USD/JPY"]}],' +
+    '{"news_analysis":[{"index":0,"attention":true,"impact":"円安・株安要因（50文字以内）","affected_pairs":["USD/JPY","Nikkei225"]}],' +
     '"trade_signals":[{"pair":"USD/JPY","decision":"BUY","tp_rate":160.50,"sl_rate":158.00,"reasoning":"100文字以内"}]}\n\n' +
     'TP/SL方向の絶対ルール（違反はシステムが自動拒否）:\n' +
     '- BUY: tp_rate は現在レートより【高い】価格 / sl_rate は現在レートより【低い】価格\n' +
@@ -873,10 +904,23 @@ async function newsStage1Claude(params: {
     '- 例(BUY, rate=5.29): tp_rate=5.55(上), sl_rate=5.15(下) ← SLは必ずentryより下\n' +
     '- 例(SELL, rate=1.33): tp_rate=1.30(下), sl_rate=1.36(上) ← SLは必ずentryより上\n' +
     '- 例(USD/JPY SELL, rate=158.37): tp_rate=156.00(下), sl_rate=160.50(上) ← 大きい値でもSELLのSLは必ずentry(158.37)より上\n' +
+    '- 例(Gold BUY, rate=4550): tp_rate=4650(上), sl_rate=4490(下) ← BUYのSLはentry(4550)より必ず下。Goldは現在4000-5000台(2000-3000台の旧価格は使用禁止。SL距離最低$15)\n' +
+    '- 例(Gold SELL, rate=4545): tp_rate=4500(下), sl_rate=4575(上) ← SELLのSLはentry(4545)より必ず上。4500<4545<4575の順序を数値で確認\n' +
+    '- 例(CrudeOil BUY, rate=89.00): tp_rate=90.40(上), sl_rate=88.40(下) ← BUYのSLはentry(89.00)より必ず下。88.40<89.00<90.40の順序を数値で確認\n' +
+    '- 例(CrudeOil SELL, rate=89.00): tp_rate=87.60(下), sl_rate=89.60(上) ← SELLのSLはentry(89.00)より必ず上。87.60<89.00<89.60の順序を数値で確認\n' +
+    '- 例(Silver BUY, rate=73): tp_rate=76(上), sl_rate=70(下) ← Silverは現在70-80台(20-40台の旧価格は使用禁止)\n' +
+    '- 例(GBP/USD BUY, rate=1.3376): tp_rate=1.3476(上), sl_rate=1.3226(下) ← GBP/USDは現在1.28-1.40台(1.20-1.27台の旧価格は使用禁止)\n' +
+    '- 例(GBP/USD SELL, rate=1.3386): tp_rate=1.3086(下), sl_rate=1.3586(上) ← SELLのSLはentry(1.3386)より必ず上。1.3086<1.3386<1.3586の順序を数値で確認\n' +
+    '- 例(EUR/USD BUY, rate=1.16): tp_rate=1.17(上), sl_rate=1.15(下) ← EUR/USDは現在1.10-1.20台(1.0-1.09台の旧価格は使用禁止)\n' +
+    '- 例(SOL/USD BUY, rate=92.00): tp_rate=96.00(上), sl_rate=88.00(下) ← SOL/USDは現在$85-105台($130-160台の旧価格は使用禁止。SL距離最低$2)\n' +
+    '- 例(SOL/USD SELL, rate=92.00): tp_rate=88.00(下), sl_rate=96.00(上) ← SELLのSLはentry(92.00)より必ず上。88.00<92.00<96.00の順序を数値で確認\n' +
+    '- 例(HK33 BUY, rate=25200): tp_rate=25500(上), sl_rate=25000(下) ← HK33は現在24000-27000台(18000-22000台の旧価格は使用禁止。SL距離最低80pt)\n' +
+    '- 例(HK33 SELL, rate=25200): tp_rate=24900(下), sl_rate=25400(上) ← SELLのSLはentry(25200)より必ず上。24900<25200<25400の順序を数値で確認\n' +
     '- tp_rate/sl_rateは各銘柄の現在レートを起点にした絶対価格で返すこと\n' +
     '- 【RR比設定手順・必須・自動拒否回避】①SL距離を決める（最低tpSlMin以上必須・未満は即自動拒否。USD/JPYなら最低0.2円・推奨0.3〜0.8円）②RR比を計算・検証【送信前必須チェック】RR=TP距離÷SL距離を計算し1.5以上を確認してから送信（有効なRR例: 1.50✅, 1.67✅, 2.00✅ / 無効で即自動拒否: 0.60❌, 0.83❌, 0.88❌, 0.93❌, 0.99❌, 1.2❌, 1.4❌（RR<1.0はTPがSLより近い致命的エラー）。TP距離の計算: SL=0.4円→TP最低0.6円・SL=0.3円→TP最低0.45円・SL=0.5円→TP最低0.75円）③絶対価格に変換【entryレートは小数点以下を含めそのまま使う・絶対に丸めない（entry=158.396を158.4にするのは禁止）】（BUY: sl=entry-SL距離【sl<entry厳守。sl≥entryは即自動拒否・距離ゼロも拒否】, tp=entry+TP距離【tp>entry厳守】 / SELL: sl=entry+SL距離【sl>entry厳守。sl≤entryは即自動拒否・距離ゼロも拒否】, tp=entry-TP距離【tp<entry厳守】）。例BUY entry=158.396→sl=158.096(=158.396-0.3), tp=158.896(=158.396+0.5)(RR=1.67✅)。例SELL entry=158.396→sl=158.696(=158.396+0.3), tp=157.896(=158.396-0.5)(RR=1.67✅)\n' +
     '- 【SL距離の厳守・自動拒否回避】SL距離は必ずtpSlMin以上tpSlMax以下でなければならない（この範囲外は値の大小を問わず例外なく即自動拒否）。USD/JPYの場合: 0.2≤SL距離≤1.2が必須。下限違反例: 0.19, 0.16, 0.08（0.2未満）/ 上限違反例: 1.21, 1.25, 1.38, 1.50, 2.00, 2.38, 2.40（1.2超はどんな値でも拒否）。安全な推奨範囲: 0.30〜0.80（迷ったら必ずこの範囲で設定すること）\n' +
-    '- 【方向最終チェック・送信前必須】BUY: sl_rate < entry_rate でなければ即自動拒否（sl_rate ≥ entry_rateは全て拒否。例: entry=158.337でsl=158.5はBUYとして拒否）。SELL: sl_rate > entry_rate でなければ即自動拒否（sl_rate ≤ entry_rateは全て拒否）。送信前に必ずsl_rateとentry_rateの大小を数値で確認すること';
+    '- 【方向最終チェック・送信前必須】BUY: sl_rate < entry_rate でなければ即自動拒否（sl_rate ≥ entry_rateは全て拒否。例: entry=158.337でsl=158.5はBUYとして拒否）。SELL: sl_rate > entry_rate でなければ即自動拒否（sl_rate ≤ entry_rateは全て拒否）。送信前に必ずsl_rateとentry_rateの大小を数値で確認すること\n' +
+    '- affected_pairs選定: 直接影響だけでなく間接影響も含める。地政学リスク・原油高・米金利急変はNikkei225/S&P500/NASDAQ/DAXにも影響する。為替と株式指数は同じニュースで同時に動くことが多い';
 
   const res = await fetchWithTimeout('https://api.anthropic.com/v1/messages', {
     method: 'POST',
@@ -886,7 +930,7 @@ async function newsStage1Claude(params: {
       'anthropic-version': '2023-06-01',
     },
     body: JSON.stringify({
-      model: 'claude-sonnet-4-20250514',
+      model: 'claude-sonnet-4-6',
       max_tokens: 2048,
       system: systemPrompt,
       messages: [{ role: 'user', content: userMessage }],
@@ -907,7 +951,7 @@ async function newsStage1Claude(params: {
 
   // トークン使用量記録
   if (params.db && data.usage) {
-    void insertTokenUsage(params.db, 'claude-sonnet-4-20250514', 'PATH_B1_CLAUDE',
+    void insertTokenUsage(params.db, 'claude-sonnet-4-6', 'PATH_B1_CLAUDE',
       data.usage.input_tokens ?? 0,
       data.usage.output_tokens ?? 0);
   }

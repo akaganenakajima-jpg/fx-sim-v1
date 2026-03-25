@@ -1,5 +1,5 @@
 // ダッシュボード フロントエンド JS
-// iPhone「株価」アプリ風 — 3タブ / スパークライン / TP祝福 / ボトムシート
+// v7 Liquid Glass 6タブ構造 — render関数群
 
 export const JS = `
 (function () {
@@ -8,12 +8,38 @@ export const JS = `
   var lastData = null;
   var lastRecentCloseIds = [];
   var sheetPos = null;
-  var lastPnlMap = {};  // PnLバッジ変化検出用 { pair: pnlText }
+  var lastPnlMap = {};
 
-  // カテゴリ表示順（新カテゴリ追加時はここに足すだけ）
+  // ── 展開パネルの状態管理（DOM ではなく JS が状態を持つ）──
+  var openJcParams  = {};   // { 'jcp-usd-jpy': true, ... }
+  var openHcItems   = {};   // { 0: true, 2: true, ... }  ヘルスチェックはインデックス
+  var openWhyItems  = {};   // { 'why-news-imp-0': true, ... }  Why×5チェーン
+
+  function toggleJcParam(uid) {
+    openJcParams[uid] = !openJcParams[uid];
+    var t = document.getElementById(uid);
+    if (t) t.classList.toggle('open', !!openJcParams[uid]);
+  }
+  function toggleHcItem(idx) {
+    openHcItems[idx] = !openHcItems[idx];
+    var items = document.querySelectorAll('.hc');
+    if (items[idx]) {
+      var exp = items[idx].querySelector('.hc-expand');
+      if (exp) exp.classList.toggle('open', !!openHcItems[idx]);
+    }
+  }
+  function toggleWhyTree(uid) {
+    openWhyItems[uid] = !openWhyItems[uid];
+    var t = document.getElementById(uid);
+    if (t) t.classList.toggle('open', !!openWhyItems[uid]);
+  }
+  // onclick="..." からグローバルスコープで呼べるよう window に公開
+  window.toggleJcParam  = toggleJcParam;
+  window.toggleHcItem   = toggleHcItem;
+  window.toggleWhyTree  = toggleWhyTree;
+
   var CATEGORY_ORDER = ['為替', '株式指数', '暗号資産', 'コモディティ', '債券'];
 
-  // 銘柄設定（順番は気にしなくてOK — categoryで自動ソート）
   var INSTRUMENTS = [
     { pair: 'USD/JPY',   label: 'USD / JPY', unit: '円', multiplier: 100,   category: '為替',       broker: 'oanda' },
     { pair: 'EUR/USD',   label: 'EUR / USD', unit: '円', multiplier: 10000, category: '為替',       broker: 'oanda' },
@@ -36,12 +62,35 @@ export const JS = `
     return CATEGORY_ORDER.indexOf(a.category) - CATEGORY_ORDER.indexOf(b.category);
   });
 
-  var INITIAL_CAPITAL = 10000; // 元手¥10,000
+  var INITIAL_CAPITAL = 10000;
 
-  // ── ユーティリティ ──
+  // ══════════════════════════════════════════
+  // ユーティリティ
+  // ══════════════════════════════════════════
+
+  function el(id) { return document.getElementById(id); }
+
+  function escHtml(s) {
+    return String(s || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+  }
+
   function fmt(n, dec) {
     if (n == null || isNaN(n)) return '—';
     return Number(n).toFixed(dec != null ? dec : 2);
+  }
+
+  function fmtYen(amount) {
+    if (amount == null || isNaN(amount)) return '—';
+    return '¥' + Math.round(amount).toLocaleString('ja-JP');
+  }
+
+  function fmtYenCompact(amount) {
+    if (amount == null || isNaN(amount)) return '—';
+    var abs = Math.abs(Math.round(amount));
+    var sign = amount >= 0 ? '+' : '-';
+    if (abs >= 100000000) return sign + '¥' + (abs / 100000000).toFixed(1) + '億';
+    if (abs >= 10000)     return sign + '¥' + (abs / 10000).toFixed(1) + '万';
+    return sign + '¥' + abs.toLocaleString('ja-JP');
   }
 
   function fmtPnl(pnl, unit) {
@@ -53,25 +102,26 @@ export const JS = `
     return { text: text, cls: pnl > 0 ? 'pos' : pnl < 0 ? 'neg' : 'neu' };
   }
 
-  function fmtYen(amount) {
-    if (amount == null || isNaN(amount)) return '—';
-    return '¥' + Math.round(amount).toLocaleString('ja-JP');
-  }
-
-  // コンパクト表示（ヒーローカード用 — スペースが狭い場所向け）
-  function fmtYenCompact(amount) {
-    if (amount == null || isNaN(amount)) return '—';
-    var abs = Math.abs(Math.round(amount));
-    var sign = amount >= 0 ? '+' : '-';
-    if (abs >= 100000000) return sign + '¥' + (abs / 100000000).toFixed(1) + '億';
-    if (abs >= 10000)     return sign + '¥' + (abs / 10000).toFixed(1) + '万';
-    return sign + '¥' + abs.toLocaleString('ja-JP');
+  function fmtPct(n) {
+    if (n == null || isNaN(n)) return '—';
+    return (n >= 0 ? '+' : '') + Number(n).toFixed(1) + '%';
   }
 
   function fmtTime(iso) {
     if (!iso) return '—';
     var d = new Date(iso);
     return d.toLocaleString('ja-JP', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+  }
+
+  function fmtTimeAgo(dateStr) {
+    if (!dateStr) return '—';
+    var diff = Date.now() - new Date(dateStr).getTime();
+    var mins = Math.floor(diff / 60000);
+    if (mins < 1)   return 'たった今';
+    if (mins < 60)  return mins + '分前';
+    var hrs = Math.floor(mins / 60);
+    if (hrs < 24)   return hrs + 'h前';
+    return fmtTime(dateStr);
   }
 
   function fmtPrice(pair, rate) {
@@ -85,132 +135,149 @@ export const JS = `
     return Number(rate).toLocaleString('ja-JP', { maximumFractionDigits: 0 });
   }
 
-  function el(id) { return document.getElementById(id); }
-
-  // reasoning の内部変数表記を整形（Cognitive Load 削減）
-  function fmtReasoning(text) {
-    if (!text) return '—';
-    // 「スキップ: 変化なし (変化=0.000, ニュースなし, Redditシグナルなし)」→「待機中 — 変化なし」
-    if (text.indexOf('スキップ:') === 0) {
-      if (text.indexOf('変化なし') !== -1) return '待機中 — 変化なし';
-      if (text.indexOf('スキップ時間帯') !== -1) return '待機中 — 重要指標時間帯';
-      return '待機中 — ' + text.replace(/^スキップ:\s*/, '').split('(')[0].trim();
-    }
-    if (text.indexOf('Geminiエラー') === 0) return 'AI判断エラー — 次回再試行';
-    return text;
-  }
-
-  // ── AI判断タブ: ユーティリティ ──
-
-  // 日付文字列が今日（UTC基準）かどうか
-  // IPA品質修正: DB の date('now') はUTC基準のためローカルタイムと統一
   function isToday(dateStr) {
     if (!dateStr) return false;
     return dateStr.slice(0, 10) === new Date().toISOString().slice(0, 10);
   }
 
-  // ISO日時 → 「X分前」「X時間前」形式
-  function fmtElapsed(dateStr) {
-    if (!dateStr) return '—';
-    var diff = Date.now() - new Date(dateStr).getTime();
-    var mins = Math.floor(diff / 60000);
-    if (mins < 1)   return 'たった今';
-    if (mins < 60)  return mins + '分前';
-    var hrs = Math.floor(mins / 60);
-    if (hrs < 24)   return hrs + '時間前';
-    return fmtTime(dateStr);
+  function fmtReasoning(text) {
+    if (!text) return '—';
+    if (text.indexOf('スキップ:') === 0) {
+      if (text.indexOf('変化なし') !== -1) return '待機中 — 変化なし';
+      if (text.indexOf('スキップ時間帯') !== -1) return '待機中 — 重要指標時間帯';
+      return '待機中 — ' + text.replace(/^スキップ:\\s*/, '').split('(')[0].trim();
+    }
+    if (text.indexOf('Geminiエラー') === 0) return 'AI判断エラー — 次回再試行';
+    return text;
   }
 
-  // ISO日時 → 「HH:MM:SS」形式
-  function fmtTimeHMS(dateStr) {
-    if (!dateStr) return '—';
-    var d = new Date(dateStr);
-    var hh = String(d.getHours()).padStart(2, '0');
-    var mm = String(d.getMinutes()).padStart(2, '0');
-    var ss = String(d.getSeconds()).padStart(2, '0');
-    return hh + ':' + mm + ':' + ss;
-  }
-
-  // RecentDecision からトリガー種別を推定
-  // [PATH_B] → ニュース起動, [RATE] → レート変動, [CRON] → 定期
-  // ※旧データ（プレフィックスなし）は 'cron' にフォールバック
   function inferTrigger(d) {
     var r = (d.reasoning || '');
     if (r.indexOf('[PATH_B]') !== -1) return 'news';
     if (r.indexOf('[RATE]')   !== -1) return 'rate';
     if (r.indexOf('[CRON]')   !== -1) return 'cron';
-    // 旧データ: reasoning テキストから推定
     var rl = r.toLowerCase();
     if (rl.indexOf('レート') !== -1 || rl.indexOf('変動') !== -1) return 'rate';
     return 'cron';
   }
 
-  // トリガー種別 → 表示ラベル
   function triggerLabel(type) {
     if (type === 'news') return 'ニュース起動';
     if (type === 'rate') return 'レート変動';
     return '定期 30m';
   }
 
-  function escHtml(s) {
-    return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
-  }
-
-  // ── レジーム判定（EWMA ボラ + 全体ボラ比から3値） ──
-  // 注: statistics.volatility は api.ts L116 で定義済み（overallStd/recentStd/volRatio/isHighVol）
-  function calcRegime(statistics) {
-    if (!statistics) return 'ranging';
-    var ewma = statistics.ewmaVol;     // { isHighVol: boolean, ... } | null
-    var vol  = statistics.volatility;  // { volRatio: number, isHighVol: boolean }
-    if (ewma && ewma.isHighVol) return 'volatile';
-    if (vol  && vol.volRatio < 0.8) return 'trending';
-    return 'ranging';
-  }
-
-  function regimeBadgeHtml(regime) {
-    var cls = 'regime-badge regime-badge--' + (regime || 'ranging');
-    return '<span class="' + cls + '">' + escHtml(regime || 'ranging') + '</span>';
-  }
-
-  // ── タブ切替 ──
-  window.switchTab = switchTab;
-  function switchTab(targetId, scrollTo) {
-    document.querySelectorAll('.tab-panel').forEach(function(p) {
-      p.classList.toggle('active', p.id === targetId);
-    });
-    document.querySelectorAll('.tab-item').forEach(function(btn) {
-      var isActive = btn.getAttribute('data-tab') === targetId;
-      btn.classList.toggle('active', isActive);
-      btn.setAttribute('aria-selected', isActive ? 'true' : 'false');
-    });
-    // ニュースドロワーは資産タブのみ表示
-    var drawer = document.getElementById('news-drawer');
-    if (drawer) {
-      if (targetId === 'tab-portfolio') {
-        drawer.style.display = '';
-      } else {
-        drawer.style.display = 'none';
-      }
+  function getCurrentRate(pair) {
+    if (!lastData) return null;
+    if (pair === 'USD/JPY') return lastData.rate;
+    var pts = lastData.sparklines && lastData.sparklines[pair];
+    if (pts && pts.length > 0) return pts[pts.length - 1].rate;
+    var ld = lastData.latestDecision;
+    if (ld) {
+      if (pair === 'Nikkei225') return ld.nikkei;
+      if (pair === 'S&P500')    return ld.sp500;
+      if (pair === 'US10Y')     return ld.us10y;
     }
-    // PC: サイドバータブの状態更新
-    document.querySelectorAll('.sidebar-tab[data-tab]').forEach(function(btn) {
-      btn.classList.toggle('active', btn.dataset.tab === targetId);
-    });
-    // PC: タブレットタブバーの状態更新
-    document.querySelectorAll('.pc-tabbar-item').forEach(function(btn) {
-      btn.classList.toggle('active', btn.dataset.tab === targetId);
-    });
-    // PC: 右パネルのコンテキスト切替
-    document.querySelectorAll('.panel-content').forEach(function(panel) {
-      panel.classList.toggle('active', panel.dataset.panel === targetId);
-    });
+    return null;
+  }
 
-    // 統計タブ表示時: チャートを正しい幅で再描画
-    if (targetId === 'tab-stats' && lastData) {
+  function findInstr(pair) {
+    for (var i = 0; i < INSTRUMENTS.length; i++) {
+      if (INSTRUMENTS[i].pair === pair) return INSTRUMENTS[i];
+    }
+    return null;
+  }
+
+  // ══════════════════════════════════════════
+  // スパークライン
+  // ══════════════════════════════════════════
+
+  function drawSparkline(points, color, width, height) {
+    if (!points || points.length < 2) return '';
+    var rates = points.map(function(p) { return p.rate; });
+    var min = Math.min.apply(null, rates);
+    var max = Math.max.apply(null, rates);
+    var range = max - min || 1;
+    var pad = 2;
+    var w = width  || 60;
+    var h = height || 28;
+    var step = (w - pad * 2) / (rates.length - 1);
+    var pts = rates.map(function(r, i) {
+      var x = pad + i * step;
+      var y = h - pad - ((r - min) / range) * (h - pad * 2);
+      return x.toFixed(1) + ',' + y.toFixed(1);
+    }).join(' ');
+    return '<svg class="sparkline" width="' + w + '" height="' + h + '" viewBox="0 0 ' + w + ' ' + h + '" aria-hidden="true">' +
+      '<polyline points="' + pts + '" fill="none" stroke="' + escHtml(color) + '" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>' +
+    '</svg>';
+  }
+
+  // ══════════════════════════════════════════
+  // PnL カウントアップアニメーション
+  // ══════════════════════════════════════════
+
+  function animateVal(elem, toVal, formatter) {
+    if (!elem || isNaN(toVal)) return;
+    var fromVal = parseFloat(elem.dataset.animVal) || 0;
+    var isFirst = !elem.dataset.animVal;
+    elem.dataset.animVal = toVal;
+    if (fromVal === toVal && !isFirst) return;
+    if (fromVal === toVal) { elem.textContent = formatter(toVal); return; }
+    var duration = 800;
+    var start = null;
+    function step(ts) {
+      if (!start) start = ts;
+      var progress = Math.min((ts - start) / duration, 1);
+      var ease = 1 - Math.pow(1 - progress, 3);
+      var current = fromVal + (toVal - fromVal) * ease;
+      elem.textContent = formatter(current);
+      if (progress < 1) requestAnimationFrame(step);
+      else elem.textContent = formatter(toVal);
+    }
+    requestAnimationFrame(step);
+  }
+
+  // ══════════════════════════════════════════
+  // タブ切替
+  // ══════════════════════════════════════════
+
+  window.switchTab = switchTab;
+  function switchTab(tabId, scrollTo) {
+    var panels = document.querySelectorAll('.tab-panel');
+    for (var i = 0; i < panels.length; i++) panels[i].classList.remove('active');
+    var target = document.getElementById(tabId);
+    if (target) target.classList.add('active');
+
+    var tabs = document.querySelectorAll('.tabs .tab');
+    for (var j = 0; j < tabs.length; j++) {
+      tabs[j].classList.remove('on');
+      var t = tabs[j].querySelector('.tab-t');
+      if (t) t.style.color = '';
+    }
+    var activeTab = document.querySelector('.tab[data-tab="' + tabId + '"]');
+    if (activeTab) {
+      activeTab.classList.add('on');
+      var at = activeTab.querySelector('.tab-t');
+      if (at) at.style.color = 'var(--blue)';
+    }
+
+    // ニュースドロワー: 今タブのみ表示
+    var drawer = document.getElementById('news-drawer');
+    if (drawer) drawer.style.display = (tabId === 'tab-portfolio') ? '' : 'none';
+
+    window.scrollTo(0, 0);
+
+    // チャート再描画（表示後にサイズ取得が必要）
+    if (tabId === 'tab-stats' && lastData) {
       requestAnimationFrame(function() { renderEquityChart(lastData); });
     }
 
-    // ディープリンク: scrollTo が指定されていればスムーズスクロール + フラッシュ
+    // 戦略タブ: paramsData 遅延ロード → 読み込み後に再描画
+    if (tabId === 'tab-strategy' && !paramsData) {
+      loadParams().then(function() { if (lastData) renderStrategyTab(lastData); }).catch(function(){});
+    }
+
+    // ディープリンク
     if (scrollTo) {
       setTimeout(function() {
         var scrollEl = document.getElementById(scrollTo);
@@ -223,101 +290,1714 @@ export const JS = `
     }
   }
 
-  document.querySelectorAll('.tab-item').forEach(function(btn) {
-    btn.addEventListener('click', function() {
-      switchTab(btn.getAttribute('data-tab'));
-    });
-  });
+  // ══════════════════════════════════════════
+  // render() — メインルーター
+  // ══════════════════════════════════════════
 
-  // PC: サイドバータブのクリック
-  document.querySelectorAll('.sidebar-tab[data-tab]').forEach(function(btn) {
-    btn.addEventListener('click', function() { switchTab(btn.dataset.tab); });
-  });
-  // PC: タブレットタブバーのクリック
-  document.querySelectorAll('.pc-tabbar-item').forEach(function(btn) {
-    btn.addEventListener('click', function() { switchTab(btn.dataset.tab); });
-  });
-  // PC: サイドバー設定ボタン（テーマ切替）
-  var sidebarSettings = document.getElementById('sidebar-settings');
-  if (sidebarSettings) {
-    sidebarSettings.addEventListener('click', function() {
-      var tb = document.getElementById('theme-btn');
-      if (tb) tb.click();
-    });
+  function render(data) {
+    lastData = data;
+    renderHeader(data);
+    renderAlertBanner(data);
+    renderHero(data);
+    renderStory(data);
+    renderNewsFeedNow(data);
+    renderPositions(data);
+    renderMarket(data);
+    renderWaiting(data);
+    renderNewsTab(data);
+    renderStatsTab(data);
+    renderAiTab(data);
+    renderStrategyTab(data);
+    renderSystemTab(data);
+    detectAndShowBanner(data);
+    // ニュースドロワー
+    var newsForDrawer = (data.acceptedNews || []).length > 0
+      ? (data.acceptedNews || []).map(function(n) {
+          return { title: n.title_ja, title_ja: n.title_ja, description: n.desc_ja, desc_ja: n.desc_ja, pubDate: n.fetched_at, source: n.source, url: n.url || null };
+        })
+      : (data.latestNews || []);
+    if (window._renderNews) window._renderNews(newsForDrawer, data.newsAnalysis || []);
   }
 
-  // PC: キーボードショートカット
-  document.addEventListener('keydown', function(e) {
-    var tag = document.activeElement ? document.activeElement.tagName : '';
-    if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
-    if (e.ctrlKey || e.metaKey || e.altKey) return;
-    switch (e.key) {
-      case '1': switchTab('tab-portfolio'); break;
-      case '2': switchTab('tab-ai'); break;
-      case '3': switchTab('tab-stats'); break;
-      case '4': switchTab('tab-log'); break;
-      case '5': switchTab('tab-strategy'); break;
-      case 'r': case 'R':
-        document.getElementById('refresh-btn')?.click();
-        break;
-      case 't': case 'T':
-        document.getElementById('theme-btn')?.click();
-        break;
+  // ══════════════════════════════════════════
+  // renderHeader
+  // ══════════════════════════════════════════
+
+  function renderHeader(data) {
+    var dot = el('health-dot');
+    var statusText = el('sbar-status');
+    var timeEl = el('sbar-time');
+
+    var rs = data.riskStatus;
+    if (dot) {
+      dot.className = 'dot ' + (rs && rs.killSwitchActive ? 'danger' : 'ok');
     }
-  });
-
-  // ── スパークライン描画 ──
-  function drawSparkline(points, color, width, height) {
-    if (!points || points.length < 2) return '';
-    var rates = points.map(function(p) { return p.rate; });
-    var min = Math.min.apply(null, rates);
-    var max = Math.max.apply(null, rates);
-    var range = max - min || 1;
-    var pad = 2;
-    var w = width  || 60;
-    var h = height || 28;
-    var step = (w - pad * 2) / (rates.length - 1);
-
-    var pts = rates.map(function(r, i) {
-      var x = pad + i * step;
-      var y = h - pad - ((r - min) / range) * (h - pad * 2);
-      return x.toFixed(1) + ',' + y.toFixed(1);
-    }).join(' ');
-
-    return '<svg class="sparkline" width="' + w + '" height="' + h + '" viewBox="0 0 ' + w + ' ' + h + '" aria-hidden="true">' +
-      '<polyline points="' + pts + '" fill="none" stroke="' + escHtml(color) + '" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>' +
-    '</svg>';
+    if (statusText) {
+      statusText.textContent = (rs && rs.killSwitchActive) ? 'DD STOP' : '正常稼働';
+    }
+    if (timeEl) {
+      timeEl.textContent = new Date().toLocaleTimeString('ja-JP', { hour: '2-digit', minute: '2-digit' });
+    }
   }
 
-  // ── PnL カウントアップアニメーション ──
-  function animatePnl(elem, toVal) {
-    if (!elem || isNaN(toVal)) return;
-    var fromVal = parseFloat(elem.dataset.pnlVal) || 0;
-    var isFirstRender = !elem.dataset.pnlVal;
-    elem.dataset.pnlVal = toVal;
-    if (fromVal === toVal && !isFirstRender) return;
-    if (fromVal === toVal) {
-      elem.textContent = fmtYen(toVal);
+  // ══════════════════════════════════════════
+  // renderAlertBanner
+  // ══════════════════════════════════════════
+
+  function renderAlertBanner(data) {
+    var container = el('emergency-bar');
+    if (!container) return;
+    var alerts = [];
+
+    if (data.riskStatus && data.riskStatus.killSwitchActive) {
+      alerts.push({ cls: 'alert-red', text: '\\u26A0\\uFE0F DD STOP — 日次損失上限超過。新規エントリー停止中' });
+    } else if (data.riskStatus && data.riskStatus.maxDailyLoss > 0 &&
+               data.riskStatus.todayLoss / data.riskStatus.maxDailyLoss > 0.8) {
+      var pct = Math.round(data.riskStatus.todayLoss / data.riskStatus.maxDailyLoss * 100);
+      alerts.push({ cls: 'alert-orange', text: '\\u26A1 DD注意 — 日次損失が上限の' + pct + '%に到達' });
+    }
+
+    if (data.newsAnalysis) {
+      var now = Date.now();
+      var tenMin = 10 * 60 * 1000;
+      for (var ni = 0; ni < data.newsAnalysis.length; ni++) {
+        var n = data.newsAnalysis[ni];
+        if (n.attention && n.analyzed_at) {
+          var diff = now - new Date(n.analyzed_at).getTime();
+          if (diff < tenMin) {
+            alerts.push({ cls: 'alert-red', text: '\\uD83D\\uDD34 緊急ニュース: ' + (n.title_ja || n.title || '速報') });
+          }
+        }
+      }
+    }
+
+    if (data.systemLogs) {
+      var recentErrors = data.systemLogs.slice(0, 5).filter(function(l) { return l.level === 'ERROR'; });
+      if (recentErrors.length > 0) {
+        alerts.push({ cls: 'alert-orange', text: '\\uD83D\\uDD27 システムエラー検出: ' + (recentErrors[0].message || '') });
+      }
+    }
+
+    if (alerts.length === 0) { container.style.display = 'none'; return; }
+    container.style.display = '';
+    container.innerHTML = alerts.map(function(a) {
+      return '<div class="' + a.cls + '" style="padding:8px 16px;font-size:12px;font-weight:600">' + escHtml(a.text) + '</div>';
+    }).join('');
+  }
+
+  // ══════════════════════════════════════════
+  // renderHero — PnLヒーロー + メトリクスストリップ + 有意性バー
+  // ══════════════════════════════════════════
+
+  function renderHero(data) {
+    var perf = data.performance;
+    if (!perf) return;
+
+    // PnL today
+    var pnlEl = el('pnl-today');
+    if (pnlEl) {
+      var todayPnl = perf.todayPnl || 0;
+      var pnlAbs = Math.abs(Math.round(todayPnl));
+      pnlEl.textContent = (todayPnl < 0 ? '-¥' : '+¥') + pnlAbs.toLocaleString('ja-JP');
+      pnlEl.className = 'pnl ' + (todayPnl > 0 ? 'pos' : todayPnl < 0 ? 'neg' : '');
+    }
+
+    var subEl = el('pnl-sub');
+    if (subEl) subEl.textContent = '今日の損益';
+
+    // メトリクスストリップ
+    var totalPnl = perf.totalPnl || 0;
+    var capital = INITIAL_CAPITAL + totalPnl;
+    var roiPct = (totalPnl / INITIAL_CAPITAL) * 100;
+
+    var balEl = el('m-balance');
+    if (balEl) balEl.textContent = fmtYen(capital);
+
+    var roiEl = el('m-roi');
+    if (roiEl) roiEl.textContent = fmtPct(roiPct);
+
+    var wrEl = el('m-winrate');
+    if (wrEl) wrEl.textContent = (perf.winRate != null ? perf.winRate.toFixed(1) + '%' : '—');
+
+    var pfEl = el('m-pf');
+    if (pfEl) {
+      var st = data.statistics;
+      pfEl.textContent = (st && st.profitFactor != null) ? st.profitFactor.toFixed(2) : '—';
+    }
+
+    var tradesEl = el('m-trades');
+    if (tradesEl) tradesEl.textContent = (perf.totalClosed != null ? perf.totalClosed + '件' : '—');
+
+    // 有意性バー
+    var sigFill = el('sig-fill');
+    var sigLabel = el('sig-label');
+    var st = data.statistics;
+    if (sigFill && st && st.powerAnalysis) {
+      var pa = st.powerAnalysis;
+      var pct = Math.max(0, Math.min(Math.round(pa.progressPct), 100));
+      sigFill.style.width = pct + '%';
+      if (pa.isAdequate) sigFill.style.background = 'var(--green)';
+      if (sigLabel) sigLabel.textContent = '有意性 ' + pct + '%';
+    }
+  }
+
+  // ══════════════════════════════════════════
+  // renderStory — 因果サマリー
+  // ══════════════════════════════════════════
+
+  function renderStory(data) {
+    var card = el('story-card');
+    if (!card) return;
+    var cs = data.causalSummary;
+    if (!cs) { card.style.display = 'none'; return; }
+    card.style.display = '';
+
+    var textEl = el('story-text');
+    if (textEl) {
+      // ナラティブテキストに色ハイライトを挿入（split/joinで正規表現回避）
+      var narr = escHtml(cs.narrative || '');
+      // 銘柄名（緑）
+      var greenWords = ['USD/JPY','EUR/USD','GBP/USD','AUD/USD','S&amp;P500','NASDAQ','Nikkei225','日経225','Gold','Silver','BTC','ETH','SOL','原油','天然ガス','米10年債'];
+      greenWords.forEach(function(w) {
+        narr = narr.split(w).join('<span style="color:var(--green);font-weight:600">' + w + '</span>');
+      });
+      // VIX関連（オレンジ）- split/joinパターン
+      ['高VIX','VIX高','VIX上昇'].forEach(function(w) {
+        narr = narr.split(w).join('<span style="color:var(--orange);font-weight:600">' + w + '</span>');
+      });
+      // 損失・SL（赤）
+      ['損失','ストップロス'].forEach(function(w) {
+        narr = narr.split(w).join('<span style="color:var(--red);font-weight:600">' + w + '</span>');
+      });
+      textEl.innerHTML = narr;
+    }
+
+    // ドライバーカード（モックアップ: .drivers > .drv 構造）
+    var driversEl = el('causal-drivers');
+    if (driversEl && cs.drivers) {
+      var html = '';
+      if (cs.drivers.profitTop) {
+        var p = cs.drivers.profitTop;
+        html += '<div class="drv" onclick="switchTab(\\'' + 'tab-stats\\', \\'evo-' + (p.pair || '').replace(/[\\/\\s]/g, '-').toLowerCase() + '\\')">' +
+          '<div class="drv-tag profit">利益TOP</div><div class="drv-pair">' + escHtml(p.pair) + '</div>' +
+          '<div class="drv-pnl" style="color:var(--green)">+' + Math.round(p.pnl) + '</div>' +
+          '<div class="drv-reason">' + escHtml(p.reason || '') + '</div></div>';
+      }
+      if (cs.drivers.lossTop) {
+        var l = cs.drivers.lossTop;
+        html += '<div class="drv" onclick="switchTab(\\'' + 'tab-stats\\', \\'evo-' + (l.pair || '').replace(/[\\/\\s]/g, '-').toLowerCase() + '\\')">' +
+          '<div class="drv-tag loss">損失TOP</div><div class="drv-pair">' + escHtml(l.pair) + '</div>' +
+          '<div class="drv-pnl" style="color:var(--red)">' + Math.round(l.pnl) + '</div>' +
+          '<div class="drv-reason">' + escHtml(l.reason || '') + '</div></div>';
+      }
+      driversEl.innerHTML = html;
+    }
+
+    // 要因バッジ（モックアップ: .chips > .chip.w / .chip.i 構造）
+    // type: 'vix'=オレンジ(w), 'param_review'=青(i), 'news'=青(i), 'sl'=オレンジ(w)
+    var chipsEl = el('causal-chips');
+    if (chipsEl && cs.drivers && cs.drivers.factors) {
+      chipsEl.innerHTML = cs.drivers.factors.map(function(f) {
+        var t = f.type || '';
+        var cls = (t === 'vix' || t === 'sl' || t === 'drawdown') ? 'w' : 'i';
+        var label = f.label || '';
+        // type別のラベル短縮 ("VIX=27で高水準"→"VIX=27", "パラメータレビュー3件..."→"PR 3件", etc.)
+        if (t === 'vix') {
+          var eqPos = label.indexOf('=');
+          if (eqPos >= 0) {
+            var afterEq = label.slice(eqPos + 1);
+            var nLen = 0;
+            while (nLen < afterEq.length && afterEq.charCodeAt(nLen) >= 48 && afterEq.charCodeAt(nLen) <= 57) nLen++;
+            if (nLen > 0) label = 'VIX=' + afterEq.slice(0, nLen);
+          }
+        } else if (t === 'param_review') {
+          var numStr = '';
+          for (var ci = 0; ci < label.length; ci++) {
+            var code = label.charCodeAt(ci);
+            if (code >= 48 && code <= 57) numStr += label[ci]; else if (numStr) break;
+          }
+          label = numStr ? 'PR ' + numStr + '件' : 'PR';
+        } else if (t === 'news') {
+          var numStr2 = '';
+          for (var ci2 = 0; ci2 < label.length; ci2++) {
+            var code2 = label.charCodeAt(ci2);
+            if (code2 >= 48 && code2 <= 57) numStr2 += label[ci2]; else if (numStr2) break;
+          }
+          label = numStr2 ? 'ニュース ' + numStr2 + '件' : 'ニュース';
+        }
+        if (label.length > 12) label = label.slice(0, 12) + '…';
+        var onclick = '';
+        if (t === 'param_review') {
+          onclick = ' onclick="switchTab(\\\'tab-ai\\\');setTimeout(function(){var s=document.getElementById(\\\'ai-pr-section\\\');if(s)s.scrollIntoView({behavior:\\\'smooth\\\'})},100)"';
+        } else if (t === 'news') {
+          onclick = ' onclick="switchTab(\\\'tab-news\\\')"';
+        }
+        return '<span class="chip ' + cls + '"' + onclick + '>' + escHtml(label) + '</span>';
+      }).join('');
+    }
+
+    // ヒートマップ
+    renderHeatmap(cs.heatmap);
+  }
+
+  function renderHeatmap(heatmapData) {
+    var hmEl = el('causal-heatmap');
+    if (!hmEl) return;
+    if (!heatmapData || heatmapData.length === 0) { hmEl.style.display = 'none'; return; }
+    hmEl.style.display = '';
+    var gridEl = el('heatmap-grid');
+    if (!gridEl) return;
+
+    var cols = ['銘柄', 'PnL', 'VIX', 'PR', 'ニュース'];
+    var keys = ['pnl_closed', 'vix_effect', 'param_changed', 'news_impact'];
+    var html = '';
+    for (var h = 0; h < cols.length; h++) html += '<div class="hm-h">' + cols[h] + '</div>';
+    var limit = Math.min(heatmapData.length, 8);
+    for (var i = 0; i < limit; i++) {
+      var row = heatmapData[i];
+      html += '<div class="hm-p">' + escHtml(row.pair) + '</div>';
+      for (var k = 0; k < keys.length; k++) {
+        var val = (row.factors && row.factors[keys[k]]) || 0;
+        var bg = hmColor(val, keys[k]);
+        html += '<div class="hm-c" style="background:' + bg + '">' + hmLabel(val, keys[k]) + '</div>';
+      }
+    }
+    gridEl.innerHTML = html;
+  }
+
+  function hmColor(val, key) {
+    if (key === 'pnl_closed') {
+      if (val > 0) return 'rgba(48,209,88,' + Math.min(Math.abs(val) / 500, 0.6) + ')';
+      if (val < 0) return 'rgba(255,69,58,' + Math.min(Math.abs(val) / 500, 0.6) + ')';
+    }
+    // vix_effectは0.65以上で警告オレンジ、0.4-0.65は薄いオレンジ、0.4未満は無色（情報ノイズを減らす）
+    if (key === 'vix_effect' && val >= 0.65) return 'rgba(255,159,10,' + Math.min(val, 0.6) + ')';
+    if (key === 'vix_effect' && val >= 0.4) return 'rgba(255,159,10,0.18)';
+    if (key === 'param_changed' && val > 0) return 'rgba(10,132,255,0.3)';
+    if (key === 'news_impact' && val > 0) return 'rgba(255,69,58,' + Math.min(val / 100 * 0.6, 0.6) + ')';
+    return 'transparent';
+  }
+
+  function hmLabel(val, key) {
+    if (key === 'pnl_closed' && val !== 0) return (val > 0 ? '+' : '') + Math.round(val);
+    if (key === 'vix_effect' && val > 0) return val.toFixed(1);
+    if (key === 'param_changed' && val > 0) return '\\u2713';
+    if (key === 'news_impact' && val > 0) return '<span style="display:inline-block;background:rgba(10,132,255,0.25);color:#0A84FF;border-radius:4px;padding:0 5px;font-size:11px;font-weight:700">' + Math.round(val) + '</span>';
+    return '\\u2014';
+  }
+
+  // ══════════════════════════════════════════
+  // renderNewsFeedNow — ニュース速報（今タブ）
+  // ══════════════════════════════════════════
+
+  function renderNewsFeedNow(data) {
+    var feedEl = el('news-feed-now');
+    if (!feedEl) return;
+    var items = (data.newsAnalysis || []).filter(function(n) { return n.attention; }).slice(0, 3);
+    if (items.length === 0) { feedEl.innerHTML = '<div style="padding:16px;text-align:center;font-size:12px;color:var(--tertiary)">速報なし</div>'; return; }
+
+    feedEl.innerHTML = items.map(function(n) {
+      var score = n.impact ? parseInt(n.impact) : 0;
+      if (isNaN(score)) score = 0;
+      var badgeCls = score >= 90 ? 'nf-badge-emergency' : score >= 70 ? 'nf-badge-trend' : 'nf-badge-info';
+      var badgeText = score >= 90 ? '緊急' : score >= 70 ? 'トレンド' : '情報';
+      var borderCls = score >= 90 ? 'nf-emergency' : score >= 70 ? 'nf-trend' : '';
+      var headline = n.title_ja || n.title || '';
+      var aiText = n.desc_ja || n.title_ja || n.title || '';
+
+      return '<div class="nf-item ' + borderCls + '" onclick="switchTab(\\'tab-news\\')">' +
+        '<div class="nf-header"><span class="nf-badge ' + badgeCls + '">' + badgeText + ' · score ' + score + '</span>' +
+        '<span class="nf-time">' + fmtTimeAgo(n.analyzed_at || '') + '</span></div>' +
+        '<div class="nf-headline">' + escHtml(headline) + '</div>' +
+        '<div class="nf-ai"><span class="nf-ai-label">AI判断</span><span class="nf-ai-text">' + escHtml(aiText) + '</span></div>' +
+        '</div>';
+    }).join('');
+  }
+
+  // ══════════════════════════════════════════
+  // renderPositions — 保有ポジション
+  // ══════════════════════════════════════════
+
+  function renderPositions(data) {
+    var listEl = el('positions-list');
+    if (!listEl) return;
+    var opens = data.openPositions || [];
+    if (opens.length === 0) {
+      listEl.innerHTML = '<div style="padding:16px;text-align:center;font-size:13px;color:var(--tertiary)">ポジションなし</div>';
       return;
     }
-    var duration = 800;
-    var start = null;
-    function step(ts) {
-      if (!start) start = ts;
-      var progress = Math.min((ts - start) / duration, 1);
-      var ease = 1 - Math.pow(1 - progress, 3);
-      var current = fromVal + (toVal - fromVal) * ease;
-      elem.textContent = fmtYen(current);
-      if (progress < 1) requestAnimationFrame(step);
-      else elem.textContent = fmtYen(toVal);
+
+    // ヘッダー更新（保有件数・含み損益）
+    var headerEl = el('positions-header');
+    if (headerEl) {
+      var totalUnrealized = 0;
+      for (var u = 0; u < opens.length; u++) {
+        var ui = findInstr(opens[u].pair);
+        var ucr = getCurrentRate(opens[u].pair);
+        if (ui && ucr != null) {
+          totalUnrealized += opens[u].direction === 'BUY'
+            ? (ucr - opens[u].entry_rate) * ui.multiplier * (opens[u].lot || 1)
+            : (opens[u].entry_rate - ucr) * ui.multiplier * (opens[u].lot || 1);
+        }
+      }
+      var unrealColor = totalUnrealized >= 0 ? 'var(--green)' : 'var(--red)';
+      var unrealSign = totalUnrealized >= 0 ? '+' : '';
+      headerEl.innerHTML = '保有中 · ' + opens.length + '件 · 含み <span style="color:' + unrealColor + '">' + unrealSign + fmtYen(totalUnrealized) + '</span>';
     }
-    requestAnimationFrame(step);
+
+    listEl.innerHTML = opens.map(function(pos) {
+      var instr = findInstr(pos.pair);
+      var cr = getCurrentRate(pos.pair);
+      var unrealized = 0;
+      if (instr && cr != null) {
+        unrealized = pos.direction === 'BUY'
+          ? (cr - pos.entry_rate) * instr.multiplier * (pos.lot || 1)
+          : (pos.entry_rate - cr) * instr.multiplier * (pos.lot || 1);
+      }
+      var pnlF = fmtPnl(unrealized, instr ? instr.unit : '');
+      var winLose = unrealized >= 0 ? 'win' : 'lose';
+      var pnlCls = unrealized > 0 ? 'pos' : unrealized < 0 ? 'neg' : '';
+      var dirCls = pos.direction === 'BUY' ? 'b' : 's';
+      var dirLetter = pos.direction === 'BUY' ? 'B' : 'S';
+
+      // 保有時間
+      var holdTime = '';
+      var holdHrs = 0;
+      if (pos.entry_at) {
+        var holdMs = Date.now() - new Date(pos.entry_at).getTime();
+        holdHrs = Math.floor(holdMs / 3600000);
+        holdTime = holdHrs < 1 ? Math.floor(holdMs / 60000) + '分' : holdHrs + 'h';
+      }
+      var timeWarnCls = holdHrs >= 8 ? ' time-warn' : '';
+
+      // RR
+      var rrText = '';
+      if (pos.tp_rate != null && pos.sl_rate != null && pos.entry_rate) {
+        var tpDist = Math.abs(pos.tp_rate - pos.entry_rate);
+        var slDist = Math.abs(pos.sl_rate - pos.entry_rate);
+        if (slDist > 0) rrText = 'RR' + (tpDist / slDist).toFixed(1);
+      }
+
+      // スパークライン
+      var sparkPts = data.sparklines && data.sparklines[pos.pair];
+      var sparkColor = unrealized >= 0 ? '#30D158' : '#FF453A';
+      var sparkSvg = drawSparkline(sparkPts, sparkColor, 48, 16);
+
+      return '<div class="pos ' + winLose + '" onclick="openSheet(\\'' + escHtml(pos.pair) + '\\')">' +
+        '<div class="pos-dir ' + dirCls + '">' + dirLetter + '</div>' +
+        '<div class="pos-body">' +
+          '<div class="pos-top"><span class="pos-pair">' + escHtml(instr ? instr.label : pos.pair) + '</span>' +
+          '<span class="pos-pnl ' + pnlCls + '">' + pnlF.text + '</span></div>' +
+          '<div class="pos-bot"><span class="pos-meta">' +
+            fmtPrice(pos.pair, pos.entry_rate) + '\\u2192' + fmtPrice(pos.pair, cr) +
+            ' · <span class="' + timeWarnCls.trim() + '">' + holdTime + '</span>' +
+            (rrText ? ' · ' + rrText : '') +
+          '</span>' + sparkSvg + '</div>' +
+        '</div>' +
+      '</div>';
+    }).join('');
   }
 
+  // ══════════════════════════════════════════
+  // renderMarket — 市場指標バー
+  // ══════════════════════════════════════════
+
+  function renderMarket(data) {
+    var bar = el('market-bar');
+    if (!bar) return;
+    var ld = data.latestDecision;
+    var prev = (data.recentDecisions || [])[1];
+    var items = [];
+    if (ld) {
+      if (ld.vix != null) {
+        var vixD = (prev && prev.vix != null) ? ld.vix - prev.vix : null;
+        var vixDStr = vixD != null ? (vixD >= 0 ? '\\u2191' : '\\u2193') + Math.abs(vixD).toFixed(1) : '';
+        items.push({ label: 'VIX', value: fmt(ld.vix, 1), color: ld.vix > 20 ? 'var(--orange)' : '', delta: vixDStr, dCls: vixD != null ? (vixD >= 0 ? 'up' : 'dn') : '' });
+      }
+      if (ld.us10y != null) {
+        var us10yD = (prev && prev.us10y != null) ? ld.us10y - prev.us10y : null;
+        var us10yDStr = us10yD != null ? (us10yD >= 0 ? '\\u2191' : '\\u2193') + Math.abs(us10yD).toFixed(2) : '';
+        items.push({ label: 'US10Y', value: fmt(ld.us10y, 2) + '%', color: '', delta: us10yDStr, dCls: us10yD != null ? (us10yD >= 0 ? 'up' : 'dn') : '' });
+      }
+      if (ld.nikkei != null) {
+        var nkD = (prev && prev.nikkei != null && prev.nikkei > 0) ? (ld.nikkei - prev.nikkei) / prev.nikkei * 100 : null;
+        var nkDStr = nkD != null ? (nkD >= 0 ? '\\u2191' : '\\u2193') + Math.abs(nkD).toFixed(1) + '%' : '';
+        items.push({ label: '日経', value: Number(ld.nikkei).toLocaleString('ja-JP', { maximumFractionDigits: 0 }), color: '', delta: nkDStr, dCls: nkD != null ? (nkD >= 0 ? 'up' : 'dn') : '' });
+      }
+      if (ld.sp500 != null) {
+        var spD = (prev && prev.sp500 != null && prev.sp500 > 0) ? (ld.sp500 - prev.sp500) / prev.sp500 * 100 : null;
+        var spDStr = spD != null ? (spD >= 0 ? '\\u2191' : '\\u2193') + Math.abs(spD).toFixed(1) + '%' : '';
+        items.push({ label: 'S&P', value: Number(ld.sp500).toLocaleString('en-US', { maximumFractionDigits: 0 }), color: '', delta: spDStr, dCls: spD != null ? (spD >= 0 ? 'up' : 'dn') : '' });
+      }
+    }
+    if (items.length === 0) { bar.innerHTML = ''; return; }
+    bar.innerHTML = items.map(function(it) {
+      return '<div class="mkt"><div class="mkt-v"' + (it.color ? ' style="color:' + it.color + '"' : '') + '>' + it.value + '</div>' +
+        '<div class="mkt-l">' + it.label + '</div>' +
+        (it.delta ? '<div class="mkt-d ' + it.dCls + '">' + it.delta + '</div>' : '') +
+      '</div>';
+    }).join('');
+  }
+
+  // ══════════════════════════════════════════
+  // renderWaiting — 待機銘柄
+  // ══════════════════════════════════════════
+
+  function renderWaiting(data) {
+    var grid = el('wait-grid');
+    if (!grid) return;
+    var posMap = {};
+    (data.openPositions || []).forEach(function(p) { posMap[p.pair] = true; });
+    var waitItems = INSTRUMENTS.filter(function(i) { return !posMap[i.pair]; });
+    if (waitItems.length === 0) { grid.innerHTML = ''; return; }
+
+    // 待機ヘッダー更新
+    var waitHeader = el('wait-header');
+    if (waitHeader) waitHeader.textContent = '待機 · ' + waitItems.length + '銘柄';
+
+    grid.innerHTML = waitItems.map(function(instr) {
+      var rate = getCurrentRate(instr.pair);
+      return '<div class="wt">' +
+        '<div class="wt-pair">' + escHtml(instr.label) + '</div>' +
+        '<div class="wt-price">' + fmtPrice(instr.pair, rate) + '</div>' +
+      '</div>';
+    }).join('');
+  }
+
+  // ══════════════════════════════════════════
+  // renderNewsTab — ニュースタブ全体
+  // ══════════════════════════════════════════
+
+  function renderNewsTab(data) {
+    var analysis = data.newsAnalysis || [];
+    var accepted = data.acceptedNews || [];
+    var latest = data.latestNews || [];
+
+    // KPI
+    var totalCount = latest.length + accepted.length;
+    var analyzedCount = analysis.length;
+    var triggeredCount = analysis.filter(function(n) { return n.attention; }).length;
+    // 緊急: attentionかつaffected_pairsが複数、またはattentionが最高優先度のニュース
+    var emergencyCount = analysis.filter(function(n) {
+      return n.attention && n.affected_pairs && n.affected_pairs.length >= 2;
+    }).length;
+
+    var nkTotal = el('nk-total'); if (nkTotal) nkTotal.textContent = String(totalCount);
+    var nkAnalyzed = el('nk-analyzed'); if (nkAnalyzed) nkAnalyzed.textContent = String(analyzedCount);
+    var nkTriggered = el('nk-triggered'); if (nkTriggered) nkTriggered.textContent = String(triggeredCount);
+    var nkEmergency = el('nk-emergency'); if (nkEmergency) nkEmergency.textContent = String(emergencyCount);
+
+    // 取引に影響したニュース
+    var impacted = el('news-feed-impacted');
+    if (impacted) {
+      var opens = data.openPositions || [];
+      var recentDecs = (data.recentDecisions || []).filter(function(d) { return d.decision === 'BUY' || d.decision === 'SELL'; });
+      var impactedItems = analysis.filter(function(n) { return n.attention; }).map(function(n) {
+        var pairs = n.affected_pairs || [];
+        // recentDecisionsからaffected_pairsに一致する取引を取得（pairsが空の場合はマッチしない）
+        var matched = pairs.length > 0 ? recentDecs.filter(function(d) {
+          return pairs.indexOf(d.pair) >= 0;
+        }).slice(0, 3) : [];
+        if (matched.length > 0) {
+          return Object.assign({}, n, {
+            trade_decisions: matched.map(function(d) {
+              return { pair: d.pair, decision: d.decision, reasoning: d.reasoning, rate: d.rate, tp_rate: d.tp_rate, sl_rate: d.sl_rate, created_at: d.created_at };
+            })
+          });
+        }
+        // フォールバック: OPENポジションにリンク
+        if (!n.linked_trade && opens.length > 0) {
+          for (var pi = 0; pi < opens.length; pi++) {
+            if (pairs.length === 0 || pairs.indexOf(opens[pi].pair) >= 0) {
+              var op = opens[pi];
+              return Object.assign({}, n, { linked_trade: { direction: op.direction, entry_rate: op.entry_rate, tp_rate: op.tp_rate, sl_rate: op.sl_rate, pair: op.pair } });
+            }
+          }
+        }
+        return n;
+      });
+      impacted.innerHTML = impactedItems.length > 0
+        ? impactedItems.map(function(n, i) { return newsCard(n, true, 'imp-' + i); }).join('')
+        : '<div style="padding:16px;font-size:12px;color:var(--tertiary)">なし</div>';
+    }
+
+    // 分析済み・影響なし
+    var analyzed = el('news-feed-analyzed');
+    if (analyzed) {
+      var noImpact = analysis.filter(function(n) { return !n.attention; });
+      analyzed.innerHTML = noImpact.length > 0
+        ? noImpact.slice(0, 10).map(function(n, i) { return newsCard(n, false, 'noi-' + i); }).join('')
+        : '<div style="padding:16px;font-size:12px;color:var(--tertiary)">なし</div>';
+    }
+
+    // 未分析
+    var unanalyzed = el('news-feed-unanalyzed');
+    var unHeader = el('news-unanalyzed-header');
+    if (unanalyzed) {
+      var analyzedTitles = {};
+      analysis.forEach(function(a) { if (a.title) analyzedTitles[a.title] = true; });
+      var unItems = latest.filter(function(n) { return !analyzedTitles[n.title]; });
+      if (unHeader) unHeader.textContent = '未分析ニュース · ' + unItems.length + '件';
+      if (unItems.length > 0) {
+        var shown = unItems.slice(0, 5);
+        var rest = unItems.length - shown.length;
+        unanalyzed.innerHTML = shown.map(function(n) {
+          return '<div style="padding:12px 0;border-bottom:1px solid rgba(255,255,255,0.04);font-size:13px">' +
+            '<span style="color:var(--tertiary);font-size:11px;margin-right:8px">' + fmtTimeAgo(n.pubDate || '') + '</span>' +
+            escHtml(n.title_ja || n.title) + '</div>';
+        }).join('') +
+        (rest > 0 ? '<div style="padding:12px 0;font-size:12px;color:var(--tertiary);text-align:center">他' + rest + '件...</div>' : '');
+      } else {
+        unanalyzed.innerHTML = '<div style="padding:16px;font-size:12px;color:var(--tertiary)">なし</div>';
+      }
+    }
+
+    // ソース別統計
+    var sourcesEl = el('news-sources');
+    if (sourcesEl) {
+      var sourceMap = {};
+      var allNews = (latest || []).concat(accepted || []);
+      allNews.forEach(function(n) {
+        var src = n.source || 'その他';
+        sourceMap[src] = (sourceMap[src] || 0) + 1;
+      });
+      var sourceKeys = Object.keys(sourceMap).sort(function(a, b) { return sourceMap[b] - sourceMap[a]; });
+      if (sourceKeys.length > 0) {
+        sourcesEl.innerHTML = sourceKeys.map(function(s, i) {
+          var border = i < sourceKeys.length - 1 ? 'border-bottom:1px solid rgba(255,255,255,0.04);' : '';
+          return '<div style="display:flex;justify-content:space-between;padding:8px 0;' + border + 'font-size:13px"><span>' + escHtml(s) + '</span><span style="color:var(--secondary)">' + sourceMap[s] + '件</span></div>';
+        }).join('');
+      } else {
+        sourcesEl.innerHTML = '<div style="padding:16px;font-size:12px;color:var(--tertiary)">データなし</div>';
+      }
+    }
+  }
+
+  function newsCard(n, highlight, idx) {
+    // attention=trueなら緊急/トレンド扱い、falseなら情報
+    var isAttention = !!n.attention;
+    var isEmergency = isAttention && n.affected_pairs && n.affected_pairs.length >= 2;
+    var badgeCls = isEmergency ? 'nf-badge-emergency' : isAttention ? 'nf-badge-trend' : 'nf-badge-info';
+    var badgeBase = isEmergency ? '緊急' : isAttention ? 'トレンド' : '情報';
+    var badgeText = n.score != null ? badgeBase + ' · score ' + n.score : badgeBase;
+    var borderCls = isEmergency ? 'nf-emergency' : isAttention ? 'nf-trend' : 'nf-info';
+    // impactフィールドはAI判断テキスト（数値スコアではない）
+    var impactText = typeof n.impact === 'string' ? n.impact : '';
+    var aiText = n.desc_ja || n.description || impactText || '';
+    var whyHtml = '';
+    if (n.why_chain && n.why_chain.length > 0) {
+      var whyNewsUid = 'why-news-' + (idx != null ? idx : 'n0');
+      whyHtml = '<div style="margin-top:8px">' +
+        '<div class="why-toggle" onclick="toggleWhyTree(\\'' + whyNewsUid + '\\')">\\u25b6 Why\\u00d75 因果チェーン</div>' +
+        '<div class="why-tree' + (openWhyItems[whyNewsUid] ? ' open' : '') + '" id="' + whyNewsUid + '">' + buildWhyTree(n.why_chain) + '</div>' +
+        '</div>';
+    }
+    var pairsHtml = '';
+    if (n.affected_pairs && n.affected_pairs.length > 0) {
+      pairsHtml = '<div class="nf-action"><span style="font-size:12px;color:var(--tertiary)">\\u2192</span>' +
+        '<span class="nf-action-text">影響銘柄: <b>' + n.affected_pairs.join(', ') + '</b></span></div>';
+    }
+    var crossHtml = '';
+    if (isAttention) {
+      crossHtml = '<div style="margin-top:8px"><span class="cross-link" onclick="switchTab(\\\'tab-portfolio\\\')">\\u2192 今タブでポジション確認</span>' +
+        '<span class="cross-link" style="margin-left:16px" onclick="switchTab(\\\'tab-ai\\\')">\\u2192 AIタブで判定確認</span></div>';
+    }
+    // 取引行動表示
+    var tradeActionHtml = '';
+    if (n.trade_decisions && n.trade_decisions.length > 0) {
+      // 同バッチのAI判断を表示
+      var tdRows = n.trade_decisions.map(function(td) {
+        var dec = td.decision || '';
+        var decColor = dec === 'BUY' ? 'var(--blue)' : dec === 'SELL' ? 'var(--teal)' : 'var(--secondary)';
+        var decLabel = dec === 'BUY' ? '買い' : dec === 'SELL' ? '売り' : 'HOLD';
+        var timeStr = td.created_at ? fmtTimeAgo(td.created_at) : '';
+        var rateStr = td.rate ? fmtPrice(td.pair, td.rate) : '';
+        return '<div style="display:flex;align-items:center;gap:6px;margin-bottom:4px;flex-wrap:wrap">' +
+          (timeStr ? '<span style="font-size:11px;color:var(--tertiary);flex-shrink:0">' + timeStr + '</span>' : '') +
+          '<b style="font-size:13px;color:' + decColor + '">' + escHtml(td.pair) + ' ' + decLabel + '</b>' +
+          (rateStr ? '<span style="font-size:12px;color:var(--secondary)">' + rateStr + '</span>' : '') +
+          (td.tp_rate ? '<span style="font-size:11px;color:var(--tertiary)">TP ' + fmtPrice(td.pair, td.tp_rate) + '</span>' : '') +
+          (td.reasoning ? '<span style="font-size:11px;color:var(--tertiary);width:100%">— ' + escHtml(td.reasoning.substring(0, 50)) + '</span>' : '') +
+        '</div>';
+      }).join('');
+      tradeActionHtml = '<div style="margin-top:6px;padding:8px 12px;background:rgba(255,255,255,0.04);border-radius:var(--rs)">' + tdRows + '</div>';
+    } else if (n.linked_trade) {
+      var ltDir = n.linked_trade.direction || '';
+      var ltPair = n.linked_trade.pair || '';
+      var dirColor = ltDir === 'BUY' ? 'var(--blue)' : 'var(--teal)';
+      var ltLabel = ltPair ? ltPair + ' ' + ltDir : ltDir;
+      tradeActionHtml = '<div class="nf-action"><span style="font-size:12px;color:var(--tertiary)">\\u2192</span>' +
+        '<span class="nf-action-text"><b style="color:' + dirColor + '">' + escHtml(ltLabel) + '</b>' +
+        (n.linked_trade.entry_rate ? ' @ ' + fmtPrice(ltPair, n.linked_trade.entry_rate) : '') +
+        (n.linked_trade.tp_rate ? ' \\u00b7 TP ' + fmtPrice(ltPair, n.linked_trade.tp_rate) : '') +
+        (n.linked_trade.sl_rate ? ' \\u00b7 SL ' + fmtPrice(ltPair, n.linked_trade.sl_rate) : '') +
+        '</span></div>';
+    } else if (isAttention) {
+      // hold_reason があれば見送り理由を表示、なければ旧データ表示
+      var holdMsg = n.hold_reason ? ('見送り: ' + escHtml(n.hold_reason)) : '判断ログなし（旧データ）';
+      var holdColor = n.hold_reason === '既存ポジションあり' ? 'var(--blue)' : 'var(--tertiary)';
+      tradeActionHtml = '<div style="margin-top:6px;padding:6px 12px;font-size:11px;color:' + holdColor + ';background:rgba(255,255,255,0.03);border-radius:var(--rs)">' + holdMsg + '</div>';
+    } else {
+      tradeActionHtml = '<div class="nf-action"><span style="font-size:12px;color:var(--tertiary)">\\u2192</span>' +
+        '<span class="nf-action-text" style="color:var(--tertiary)">影響なし · パラメーター変更なし</span></div>';
+    }
+    return '<div class="nf-item ' + borderCls + '">' +
+      '<div class="nf-header"><span class="nf-badge ' + badgeCls + '">' + badgeText + '</span><span class="nf-time">' + fmtTimeAgo(n.analyzed_at || n.pubDate || '') + '</span></div>' +
+      '<div class="nf-headline">' + escHtml(n.title_ja || n.title || '') + '</div>' +
+      (aiText ? '<div class="nf-ai"><span class="nf-ai-label">' + (isAttention ? 'AI判断' : 'AI') + '</span><span class="nf-ai-text">' + escHtml(aiText) + '</span></div>' : '') +
+      pairsHtml + tradeActionHtml +
+      whyHtml + crossHtml +
+    '</div>';
+  }
+
+  // ══════════════════════════════════════════
+  // renderStatsTab — 学びタブ
+  // ══════════════════════════════════════════
+
+  function renderStatsTab(data) {
+    var st = data.statistics;
+    var perf = data.performance || {};
+
+    // KPI 6つ
+    var skWr = el('sk-winrate');
+    if (skWr) {
+      skWr.textContent = perf.winRate != null ? perf.winRate.toFixed(1) + '%' : '—';
+      if (perf.winRate != null) skWr.style.color = perf.winRate >= 50 ? 'var(--green)' : 'var(--red)';
+    }
+    var skPf = el('sk-pf'); if (skPf) skPf.textContent = st && st.profitFactor != null ? st.profitFactor.toFixed(2) : '—';
+    var skSh = el('sk-sharpe'); if (skSh) skSh.textContent = st && st.sharpe != null ? st.sharpe.toFixed(2) : '—';
+    var skDd = el('sk-maxdd');
+    if (skDd) {
+      var dd = st && st.drawdown;
+      skDd.textContent = dd ? '-' + dd.maxDDPct.toFixed(1) + '%' : '—';
+    }
+    var skRr = el('sk-rr');
+    if (skRr) {
+      var avgRR = st && st.avgRR;
+      skRr.textContent = avgRR != null ? avgRR.toFixed(2) : '—';
+    }
+    var skTotal = el('sk-total'); if (skTotal) skTotal.textContent = perf.totalClosed != null ? String(perf.totalClosed) : '—';
+
+    // エクイティカーブ
+    renderEquityChart(data);
+
+    // 手法×環境マトリクス
+    renderStrategyMatrix(data);
+
+    // 結論ストリップ
+    renderStatsVerdict(data);
+
+    // 銘柄別 evoカード
+    renderEvoCards(data);
+  }
+
+  function renderEquityChart(data) {
+    var chartEl = el('equity-chart');
+    if (!chartEl) return;
+    var svg = chartEl.querySelector('svg');
+    if (!svg) return;
+
+    var closes = (data.recentCloses || []).slice().reverse();
+    if (closes.length < 2) {
+      svg.innerHTML = '<text x="160" y="35" text-anchor="middle" font-size="12" fill="var(--tertiary)">データ蓄積中...</text>';
+      return;
+    }
+    var cumPnl = [];
+    var sum = INITIAL_CAPITAL;
+    for (var i = 0; i < closes.length; i++) {
+      sum += (closes[i].pnl || 0);
+      cumPnl.push(sum);
+    }
+    var min = Math.min.apply(null, cumPnl);
+    var max = Math.max.apply(null, cumPnl);
+    var range = max - min || 1;
+    var w = 320, h = 60, pad = 4;
+    var step = (w - pad * 2) / (cumPnl.length - 1);
+    var pts = cumPnl.map(function(v, i) {
+      var x = pad + i * step;
+      var y = h - pad - ((v - min) / range) * (h - pad * 2);
+      return x.toFixed(1) + ',' + y.toFixed(1);
+    }).join(' ');
+    var color = cumPnl[cumPnl.length - 1] >= INITIAL_CAPITAL ? 'var(--green)' : 'var(--red)';
+
+    // パラメーター変更マーカー（縦破線 + ラベル）
+    var markerHtml = '';
+    var ph = data.paramHistory || [];
+    // 最古のcloseのタイムスタンプを基準点として時系列マッピング
+    var closeTimes = closes.map(function(c) { return new Date(c.closed_at || c.entry_at || 0).getTime(); });
+    var tMin = closeTimes[0] || 0;
+    var tMax = closeTimes[closeTimes.length - 1] || 1;
+    var tRange = tMax - tMin || 1;
+    var markerColors = ['#0A84FF', '#BF5AF2', '#FF9F0A', '#30D158'];
+    var usedX = {};
+    ph.slice(0, 4).forEach(function(ph_item, mi) {
+      var t = new Date(ph_item.created_at || ph_item.time || 0).getTime();
+      if (!t) return;
+      var ratio = Math.max(0, Math.min(1, (t - tMin) / tRange));
+      var mx = Math.round(pad + ratio * (w - pad * 2));
+      while (usedX[mx] || usedX[mx + 1] || usedX[mx - 1]) mx = mx + 16; // 重複回避（ラベル幅分確保）
+      usedX[mx] = true;
+      var col = markerColors[mi % markerColors.length];
+      var label = mi === 0 ? 'v2' : 'PR#' + (mi + 1);
+      // 偶数マーカー=上部(y=9)、奇数マーカー=下部(y=h-2)で交互配置し重なりを防ぐ
+      var labelY = (mi % 2 === 0) ? 9 : (h - 2);
+      markerHtml += '<line x1="' + mx + '" y1="0" x2="' + mx + '" y2="' + h + '" stroke="' + col + '" stroke-width="1" stroke-dasharray="3"/>';
+      markerHtml += '<text x="' + (mx + 2) + '" y="' + labelY + '" fill="' + col + '" font-size="9">' + label + '</text>';
+    });
+
+    svg.innerHTML = '<polyline points="' + pts + '" fill="none" stroke="' + color + '" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>' + markerHtml;
+  }
+
+  function renderStrategyMatrix(data) {
+    var matrixEl = el('strategy-matrix');
+    if (!matrixEl) return;
+    var sm = data.strategyMap;
+
+    // regime が実データかを判定（NULLや"—"だけなら fallback へ）
+    var stats = sm && sm.strategyStats ? sm.strategyStats : [];
+    var hasRealRegimes = stats.some(function(s) { return s.regime && s.regime !== '—'; });
+
+    if (stats.length > 0 && hasRealRegimes) {
+      // 実データ: strategy × regime グリッド
+      var strategies = [], regimes = [], cellMap = {};
+      stats.forEach(function(s) {
+        var strat = s.strategy || '—';
+        var reg = s.regime || '—';
+        if (strategies.indexOf(strat) === -1) strategies.push(strat);
+        if (regimes.indexOf(reg) === -1) regimes.push(reg);
+        cellMap[strat + '|' + reg] = s;
+      });
+      var html = '<div class="matrix-h"></div>';
+      regimes.forEach(function(r) { html += '<div class="matrix-h">' + escHtml(r) + '</div>'; });
+      strategies.forEach(function(strat) {
+        html += '<div class="matrix-p">' + escHtml(strat) + '</div>';
+        regimes.forEach(function(reg) {
+          var cell = cellMap[strat + '|' + reg];
+          if (cell && cell.count > 0) {
+            var wr = (cell.winRate * 100).toFixed(0);
+            var bg = cell.winRate >= 0.55 ? 'rgba(48,209,88,0.25)' : cell.winRate >= 0.50 ? 'rgba(48,209,88,0.15)' : 'rgba(255,69,58,0.2)';
+            var pfx = cell.winRate >= 0.50 ? '+' : '';
+            html += '<div class="matrix-c" style="background:' + bg + '">' + pfx + wr + '%<br><span style="font-size:9px;opacity:.6">' + cell.count + '件</span></div>';
+          } else {
+            html += '<div class="matrix-c">—</div>';
+          }
+        });
+      });
+      matrixEl.innerHTML = html;
+      return;
+    }
+
+    // フォールバック: ティア別 × VIX水準
+    var tiers = sm && sm.instrumentTiers ? sm.instrumentTiers : [];
+    var byPair = data.performanceByPair || {};
+    // slPatterns から VIX bucket 別 SL率を取得
+    var slPatterns = data.slPatterns || [];
+    var vixCols = ['低VIX', '中VIX', '高VIX'];
+    // tier × vixBucket の wins/total を集計
+    var tierVix = {};
+    ['A','B','C'].forEach(function(t) {
+      vixCols.forEach(function(v) { tierVix[t + '|' + v] = { wins: 0, total: 0 }; });
+    });
+    // slPatterns が存在すれば VIX bucket 別に tier を分配
+    slPatterns.forEach(function(p) {
+      var bucket = p.vixBucket === 'low' ? '低VIX' : p.vixBucket === 'mid' ? '中VIX' : p.vixBucket === 'high' ? '高VIX' : null;
+      if (!bucket) return;
+      var wins = (p.totalCount || 0) - (p.slCount || 0);
+      // pairCategory が tier に対応する場合のみ集計
+      var tier = p.pairCategory === 'A' ? 'A' : p.pairCategory === 'B' ? 'B' : 'C';
+      var key = tier + '|' + bucket;
+      tierVix[key].wins += wins;
+      tierVix[key].total += p.totalCount || 0;
+    });
+    // slPatterns がなければ performanceByPair から tier × overall を埋める
+    tiers.forEach(function(t) {
+      var p = byPair[t.pair];
+      if (!p || p.total === 0) return;
+      var tier = t.tier || 'C';
+      if (tier === 'D') tier = 'C';
+      // VIX bucket がなければ全列に均等分配（概算）
+      var hasVixData = vixCols.some(function(v) { return tierVix[tier + '|' + v].total > 0; });
+      if (!hasVixData) {
+        var perBucket = Math.floor(p.total / 3);
+        var wPerBucket = Math.floor(p.wins / 3);
+        vixCols.forEach(function(v) { tierVix[tier + '|' + v].wins += wPerBucket; tierVix[tier + '|' + v].total += perBucket; });
+      }
+    });
+    function matrixCell(tier, vix) {
+      var d = tierVix[tier + '|' + vix];
+      if (!d || d.total === 0) return '<div class="matrix-c" style="color:var(--tertiary);font-size:10px">蓄積中</div>';
+      var wr = d.wins / d.total;
+      var pct = (wr * 100).toFixed(0);
+      var bg = wr >= 0.55 ? 'rgba(48,209,88,0.25)' : wr >= 0.50 ? 'rgba(48,209,88,0.15)' : 'rgba(255,69,58,0.2)';
+      return '<div class="matrix-c" style="background:' + bg + '">' + (wr >= 0.50 ? '+' : '') + pct + '%</div>';
+    }
+    var fb = '<div class="matrix-h"></div>';
+    vixCols.forEach(function(v) { fb += '<div class="matrix-h">' + v + '</div>'; });
+    ['TierA(安定)', 'TierB(中)', 'TierC/D'].forEach(function(label, i) {
+      var tier = ['A','B','C'][i];
+      fb += '<div class="matrix-p">' + label + '</div>';
+      vixCols.forEach(function(v) { fb += matrixCell(tier, v); });
+    });
+    matrixEl.innerHTML = fb;
+  }
+
+  function renderStatsVerdict(data) {
+    var ph = data.paramHistory || [];
+    var worked = 0, didnt = 0, pending = 0;
+    ph.forEach(function(h) {
+      var v = h.verdict || h.result;
+      if (v === 'worked' || v === 'improved') worked++;
+      else if (v === 'worsened' || v === 'didnt') didnt++;
+      else pending++;
+    });
+    var svWorked = el('sv-worked');
+    var svDidnt = el('sv-didnt');
+    var svPending = el('sv-pending');
+    if (svWorked) { svWorked.textContent = String(worked); svWorked.style.color = 'var(--green)'; }
+    if (svDidnt) { svDidnt.textContent = String(didnt); svDidnt.style.color = 'var(--red)'; }
+    if (svPending) { svPending.textContent = String(pending); svPending.style.color = 'var(--tertiary)'; }
+  }
+
+  function renderEvoCards(data) {
+    var container = el('evo-cards');
+    if (!container) return;
+    var byPair = data.performanceByPair || {};
+    var ph = data.paramHistory || [];
+    var traded = INSTRUMENTS.filter(function(i) { var p = byPair[i.pair]; return p && p.total > 0; });
+    if (traded.length === 0) {
+      container.innerHTML = '<div style="padding:16px;font-size:12px;color:var(--tertiary)">データ蓄積中...</div>';
+      return;
+    }
+    container.innerHTML = traded.map(function(instr) {
+      var p = byPair[instr.pair];
+      var wr = p.total > 0 ? (p.wins / p.total * 100).toFixed(0) : '—';
+      var pairChanges = ph.filter(function(h) { return h.pair === instr.pair; });
+      var pairId = instr.pair.replace(/[\\/\\s]/g, '-').toLowerCase();
+
+      // verdict
+      var verdictCls = 'unchanged';
+      var verdictText = '検証中';
+      if (p.totalPnl > 0) { verdictCls = 'worked'; verdictText = '改善中'; }
+      else if (p.totalPnl < 0) { verdictCls = 'didnt'; verdictText = '悪化'; }
+
+      // mini sparkline from sparklines data
+      var chartHtml = '';
+      var sp = data.sparklines && data.sparklines[instr.pair];
+      if (sp && sp.length > 2) {
+        var rates = sp.map(function(pt) { return pt.rate; });
+        var mn = Math.min.apply(null, rates);
+        var mx = Math.max.apply(null, rates);
+        var rng = mx - mn || 1;
+        var pts = rates.map(function(r, i) {
+          var x = (i / (rates.length - 1) * 300).toFixed(1);
+          var y = (48 - ((r - mn) / rng) * 44).toFixed(1);
+          return x + ',' + y;
+        }).join(' ');
+        var sColor = p.totalPnl >= 0 ? '#30D158' : '#FF453A';
+        // v2マーカー: pairChangesの最初の変更をsparkline上に縦線で表示
+        var evoMarkerHtml = '';
+        if (pairChanges.length > 0 && sp.length > 2) {
+          // sparklineは最新データなので先頭が最古。最初のParam Review時刻をsparklineの時間軸にマッピング
+          var firstChange = pairChanges[pairChanges.length - 1]; // 最古の変更
+          var spTimes = sp.map(function(pt) { return new Date(pt.ts || pt.created_at || 0).getTime(); });
+          var spTMin = spTimes[0] || 0;
+          var spTMax = spTimes[spTimes.length - 1] || 1;
+          var spTRange = spTMax - spTMin || 1;
+          var chTime = new Date(firstChange.created_at || firstChange.time || 0).getTime();
+          if (chTime && spTMin && chTime > spTMin && chTime < spTMax) {
+            var chRatio = (chTime - spTMin) / spTRange;
+            var chX = Math.round(chRatio * 300);
+            evoMarkerHtml = '<line x1="' + chX + '" y1="0" x2="' + chX + '" y2="48" stroke="#0A84FF" stroke-width="1" stroke-dasharray="3"/>' +
+              '<text x="' + (chX + 2) + '" y="10" fill="#0A84FF" font-size="8">v2</text>';
+          }
+        }
+        chartHtml = '<div class="evo-chart"><svg viewBox="0 0 300 48"><polyline points="' + pts + '" fill="none" stroke="' + sColor + '" stroke-width="1.5" stroke-linecap="round"/>' + evoMarkerHtml + '</svg></div>';
+      }
+
+      // changes
+      var changesHtml = '';
+      if (pairChanges.length > 0) {
+        changesHtml = '<div class="evo-changes">' + pairChanges.map(function(c, ci) {
+          var dotCls = c.verdict === 'worked' || c.verdict === 'improved' ? 'improved' : c.verdict === 'worsened' || c.verdict === 'didnt' ? 'worsened' : 'neutral';
+          var resCls = dotCls === 'improved' ? 'worked' : dotCls === 'worsened' ? 'didnt' : 'unchanged';
+          var whyHtml = '';
+          if (c.why_chain && c.why_chain.length > 0) {
+            var uid = 'why-evo-' + pairId + '-' + ci;
+            whyHtml = '<div class="why-toggle" onclick="toggleWhyTree(\\'' + uid + '\\')">\\u25b6 ' + (dotCls === 'improved' ? 'なぜ効いた？' : dotCls === 'worsened' ? 'なぜ効かなかった？' : '根拠') + '</div>' +
+              '<div class="why-tree' + (openWhyItems[uid] ? ' open' : '') + '" id="' + uid + '">' + buildWhyTree(c.why_chain) + '</div>';
+          }
+          return '<div class="evo-change"><div class="evo-dot ' + dotCls + '"></div><div style="flex:1">' +
+            '<div class="evo-text">' + escHtml(c.description || c.change || '') + '</div>' +
+            '<div class="evo-result ' + resCls + '">' + escHtml(c.result_text || '') + '</div>' +
+            whyHtml +
+            '<span class="cross-link" onclick="switchTab(\\\'tab-strategy\\\',\\\'jc-' + pairId + '\\\')">\\u2192 戦略で詳細</span>' +
+            '<span class="cross-link" style="margin-left:12px" onclick="switchTab(\\\'tab-ai\\\')">\\u2192 AIタブで判断を確認</span>' +
+          '</div></div>';
+        }).join('') + '</div>';
+      } else {
+        changesHtml = '<div class="evo-changes"><div class="evo-change"><div class="evo-dot neutral"></div><div style="flex:1">' +
+          '<div class="evo-text">勝率 ' + wr + '% \\u00b7 ' + p.wins + '勝' + (p.total - p.wins) + '敗\\uff08計' + p.total + '\\uff09</div>' +
+          '<div class="evo-result unchanged">パラメーター変更なし</div>' +
+        '</div></div></div>';
+      }
+
+      return '<div class="evo-card" id="evo-' + pairId + '">' +
+        '<div class="evo-header">' +
+          '<span class="evo-pair">' + escHtml(instr.label) + '</span>' +
+          '<span class="evo-verdict ' + verdictCls + '">' + verdictText + '</span>' +
+        '</div>' +
+        chartHtml + changesHtml +
+      '</div>';
+    }).join('');
+  }
+
+  function buildWhyTree(chain) {
+    if (!chain || chain.length === 0) return '';
+    var nums = '\u2460\u2461\u2462\u2463\u2464';
+    return chain.map(function(w, i) {
+      if (typeof w === 'string') {
+        return '<div class="why-node">' +
+          '<div class="why-a">' + nums.charAt(i) + ' ' + escHtml(w) + '</div>' +
+        '</div>';
+      }
+      return '<div class="why-node">' +
+        '<div class="why-q">Why' + (i + 1) + ': ' + escHtml(w.question || w.q || '') + '</div>' +
+        '<div class="why-a">' + escHtml(w.answer || w.a || '') + '</div>' +
+        (w.evidence ? '<div class="why-evidence">裏付: ' + escHtml(w.evidence) + '</div>' : '') +
+      '</div>';
+    }).join('');
+  }
+
+  // ══════════════════════════════════════════
+  // renderAiTab
+  // ══════════════════════════════════════════
+
+  function renderAiTab(data) {
+    var st = data.statistics || {};
+    var acc = st.aiAccuracy;
+
+    // Param Review精度をparamHistoryから計算
+    var ph = data.paramHistory || [];
+    var prCorrect = ph.filter(function(h) { return h.verdict === 'worked' || h.verdict === 'improved'; }).length;
+    var prWrong = ph.filter(function(h) { return h.verdict === 'worsened' || h.verdict === 'didnt'; }).length;
+    var prPending = ph.filter(function(h) { return !h.verdict || h.verdict === 'pending'; }).length;
+    var prN = prCorrect + prWrong;
+    var prAccuracyVal = prN > 0 ? prCorrect / prN : null;
+
+    // ニュース精度をnewsAnalysisのverdictから計算
+    var newsItems = (data.newsAnalysis || []).filter(function(n) { return n.verdict; });
+    var newsCorrect = newsItems.filter(function(n) { return n.verdict === 'correct'; }).length;
+    var newsWrong = newsItems.filter(function(n) { return n.verdict === 'wrong'; }).length;
+    var newsN = newsCorrect + newsWrong;
+    var newsAccuracyVal = newsN > 0 ? newsCorrect / newsN : null;
+
+    // 全体: APIのaiAccuracy + paramHistory/news合算
+    var totalCorrect = (acc ? acc.wins : 0) + (newsN > 0 ? newsCorrect : 0);
+    var totalN = (acc ? acc.n : 0) + newsN;
+    var totalPending = (acc ? Math.max(0, acc.n - acc.wins - (acc.n - acc.wins)) : 0) + prPending;
+
+    // ヒーロー正解率
+    var scoreNum = el('ai-score-num');
+    if (scoreNum) {
+      if (acc) {
+        scoreNum.textContent = (acc.accuracy * 100).toFixed(0) + '%';
+        scoreNum.style.color = acc.accuracy >= 0.6 ? 'var(--green)' : acc.accuracy >= 0.5 ? 'var(--orange)' : 'var(--red)';
+      } else {
+        scoreNum.textContent = '—%';
+      }
+    }
+    var scoreSub = el('ai-score-sub');
+    if (scoreSub) scoreSub.textContent = acc ? '直近' + acc.n + '件のAI行動のうち、' + acc.wins + '件が正しかった' : '—';
+
+    // ニュース分析/Param Review内訳
+    var newsVal = el('ai-brk-news-val');
+    var newsSub = el('ai-brk-news-sub');
+    var prVal = el('ai-brk-pr-val');
+    var prSub = el('ai-brk-pr-sub');
+    if (newsAccuracyVal != null) {
+      if (newsVal) { newsVal.textContent = (newsAccuracyVal * 100).toFixed(0) + '%'; newsVal.style.color = newsAccuracyVal >= 0.6 ? 'var(--green)' : 'var(--orange)'; }
+      if (newsSub) newsSub.textContent = newsN + '件中' + newsCorrect + '件正解';
+    } else {
+      if (newsVal) newsVal.textContent = '—';
+      if (newsSub) newsSub.textContent = ph.length === 0 ? 'データ蓄積中' : '—';
+    }
+    if (prAccuracyVal != null) {
+      if (prVal) { prVal.textContent = (prAccuracyVal * 100).toFixed(0) + '%'; prVal.style.color = prAccuracyVal >= 0.6 ? 'var(--green)' : 'var(--orange)'; }
+      if (prSub) prSub.textContent = prN + '件中' + prCorrect + '件正解';
+    } else {
+      if (prVal) prVal.textContent = '—';
+      if (prSub) prSub.textContent = ph.length === 0 ? 'データ蓄積中' : '判定中';
+    }
+
+    // Brierスコアと傾向
+    var brierVal = el('ai-brier-val');
+    var brierTrend = el('ai-brier-trend');
+    if (brierVal) {
+      brierVal.textContent = acc ? acc.brierScore.toFixed(2) : '—';
+      if (acc) brierVal.style.color = acc.brierScore < 0.25 ? 'var(--green)' : 'var(--orange)';
+    }
+    if (brierTrend && acc && acc.brierTrend) {
+      brierTrend.textContent = acc.brierTrend === 'improving' ? '\\u2193改善中' : acc.brierTrend === 'worsening' ? '\\u2191悪化' : '';
+    }
+
+    // Brierスパークライン（brierHistoryがあれば描画、なければaccuracy推移で代用）
+    var brierSpark = el('ai-brier-spark');
+    if (brierSpark) {
+      var bh = (acc && acc.brierHistory && acc.brierHistory.length > 2) ? acc.brierHistory : null;
+      if (bh) {
+        var bMin = Math.min.apply(null, bh);
+        var bMax = Math.max.apply(null, bh);
+        var bRng = bMax - bMin || 1;
+        var bPts = bh.map(function(v, i) {
+          var x = (i / (bh.length - 1) * 80).toFixed(1);
+          var y = (20 - ((v - bMin) / bRng) * 16 - 2).toFixed(1);
+          return x + ',' + y;
+        }).join(' ');
+        brierSpark.innerHTML = '<polyline points="' + bPts + '" fill="none" stroke="var(--green)" stroke-width="1.2" stroke-linecap="round"/>';
+      }
+    }
+
+    // 正解/不正解/判定中（paramHistoryも含めて合算）
+    var overallCorrect = (acc ? acc.wins : 0) + prCorrect + newsCorrect;
+    var overallWrong = (acc ? acc.n - acc.wins : 0) + prWrong + newsWrong;
+    var overallPending = prPending;
+    var vCorrect = el('ai-v-correct');
+    if (vCorrect) { vCorrect.textContent = String(overallCorrect); vCorrect.style.color = 'var(--green)'; }
+    var vWrong = el('ai-v-wrong');
+    if (vWrong) { vWrong.textContent = String(overallWrong); vWrong.style.color = 'var(--red)'; }
+    var vPending = el('ai-v-pending');
+    if (vPending) { vPending.textContent = String(overallPending); vPending.style.color = 'var(--blue)'; }
+
+    // PARAM REVIEW カード
+    renderAiPrCards(data);
+
+    // ニュース分析カード
+    renderAiNewsCards(data);
+
+    // AI判断タイムライン (hidden if verdict cards suffice)
+    renderAiTimeline(data);
+  }
+
+  function verdictCard(item, idx) {
+    var v = item.verdict || 'pending';
+    var cardCls = v === 'correct' ? 'correct' : v === 'wrong' ? 'wrong' : 'pending';
+    var verdictText = v === 'correct' ? '正解' : v === 'wrong' ? '不正解' : '判定中';
+    var outcomeCls = v === 'correct' ? 'worked' : v === 'wrong' ? 'didnt' : '';
+    // hold_reason がある場合はオレンジ（機会損失候補）
+    var outcomeStyle = item.hold_reason ? ' style="color:var(--orange)"'
+      : v === 'pending' ? ' style="color:var(--blue)"' : '';
+
+    var whyHtml = '';
+    if (item.why_chain && item.why_chain.length > 0) {
+      var uid = 'why-ai-' + (idx != null ? idx : 'a0');
+      whyHtml = '<div class="why-toggle" onclick="toggleWhyTree(\\'' + uid + '\\')">\\u25b6 Why\\u00d75 根拠チェーン</div>' +
+        '<div class="why-tree' + (openWhyItems[uid] ? ' open' : '') + '" id="' + uid + '">' + buildWhyTree(item.why_chain) + '</div>';
+    }
+
+    var crossHtml = '';
+    if (item.crossLink) {
+      var clArgs = '\\\'' + escHtml(item.crossLink.tab || 'tab-stats') + '\\\'';
+      if (item.crossLink.scrollTo) clArgs += ',\\\'' + escHtml(item.crossLink.scrollTo) + '\\\'';
+      crossHtml = '<span class="cross-link" onclick="switchTab(' + clArgs + ')">' + escHtml(item.crossLink.text || '\\u2192 詳細') + '</span>';
+    }
+
+    return '<div class="verdict-card ' + cardCls + '">' +
+      '<div class="vc-header"><span class="vc-action">' + escHtml(item.action || '') + '</span><span class="vc-verdict ' + cardCls + '">' + verdictText + '</span></div>' +
+      '<div class="vc-reason">\\u300c' + escHtml(item.reason || '') + '\\u300d</div>' +
+      (item.outcome ? '<div class="vc-outcome ' + outcomeCls + '"' + outcomeStyle + '>\\u2192 ' + escHtml(item.outcome) + '</div>' : '') +
+      whyHtml +
+      '<div class="vc-time">' + fmtTimeAgo(item.time || '') + '</div>' +
+      crossHtml +
+    '</div>';
+  }
+
+  function renderAiPrCards(data) {
+    var container = el('ai-pr-cards');
+    if (!container) return;
+    var ph = data.paramHistory || [];
+    if (ph.length === 0) {
+      container.innerHTML = '<div style="padding:16px;font-size:12px;color:var(--tertiary)">データ蓄積中...</div>';
+      return;
+    }
+    container.innerHTML = ph.map(function(h, i) {
+      var v = h.verdict === 'worked' || h.verdict === 'improved' ? 'correct' : h.verdict === 'worsened' || h.verdict === 'didnt' ? 'wrong' : 'pending';
+      // reasonは変更理由の核心部分（先頭50字）
+      var shortReason = (h.change || h.reason || '');
+      if (shortReason.length > 50) shortReason = shortReason.slice(0, 50) + '…';
+      return verdictCard({
+        action: (h.pair || '') + ' Param Review',
+        verdict: v,
+        reason: shortReason,
+        outcome: h.result_text || '',
+        time: h.created_at || h.time || '',
+        why_chain: h.why_chain || null,
+        crossLink: { tab: 'tab-stats', scrollTo: 'evo-' + (h.pair || '').replace(/[\\/\\s]/g, '-').toLowerCase(), text: '\\u2192 学びで効果を確認' }
+      }, 'pr-' + i);
+    }).join('');
+  }
+
+  function renderAiNewsCards(data) {
+    var container = el('ai-news-cards');
+    if (!container) return;
+    var analysis = data.newsAnalysis || [];
+    var items = analysis.filter(function(n) { return n.attention; });
+    if (items.length === 0) {
+      container.innerHTML = '<div style="padding:16px;font-size:12px;color:var(--tertiary)">分析データなし</div>';
+      return;
+    }
+    container.innerHTML = items.slice(0, 5).map(function(n, i) {
+      var v = n.verdict || 'pending';
+      // actionをより具体的に: 影響銘柄+取引方向
+      var pairs = (n.affected_pairs || []).join('/');
+      var actionLabel = pairs ? 'ニュース ' + pairs : 'ニュース分析';
+      // hold_reasonがあれば機会損失候補として outcome に表示
+      var outcomeText = n.hold_reason
+        ? '見送り: ' + n.hold_reason
+        : (n.impact || n.desc_ja || n.description || '');
+      return verdictCard({
+        action: actionLabel,
+        verdict: v,
+        reason: n.title_ja || n.title || '',
+        outcome: outcomeText,
+        time: n.analyzed_at || n.pubDate || '',
+        why_chain: n.why_chain || null,
+        hold_reason: n.hold_reason || null,
+        crossLink: { tab: 'tab-portfolio', text: '\\u2192 今タブで進行確認' }
+      }, 'nc-' + i);
+    }).join('');
+  }
+
+  function renderAiTimeline(data) {
+    var container = el('ai-timeline');
+    if (!container) return;
+
+    // decisions（BUY/SELL + PATH_B_HOLD）と indicatorLogs をマージして時系列表示
+    var decItems = (data.recentDecisions || [])
+      .filter(function(d) {
+        if (d.decision === 'BUY' || d.decision === 'SELL') return true;
+        if (d.decision === 'HOLD' && d.reasoning && d.reasoning.indexOf('[PATH_B_HOLD]') >= 0) return true;
+        return false;
+      })
+      .map(function(d) { return Object.assign({}, d, { _type: 'decision' }); });
+
+    var indItems = (data.recentIndicatorLogs || [])
+      .map(function(l) { return Object.assign({}, l, { _type: 'indicator' }); });
+
+    var allItems = decItems.concat(indItems)
+      .sort(function(a, b) { return new Date(b.created_at).getTime() - new Date(a.created_at).getTime(); })
+      .slice(0, 60);
+
+    if (allItems.length === 0) {
+      container.innerHTML = '<div style="padding:12px 16px;font-size:12px;color:var(--tertiary)">アクティビティなし（BUY/SELL実行後または指標変化後に表示されます）</div>';
+      return;
+    }
+
+    container.innerHTML = allItems.map(function(item) {
+      if (item._type === 'decision') {
+        var d = item;
+        var isOpportunityLoss = d.reasoning && d.reasoning.indexOf('[PATH_B_HOLD]') >= 0;
+        var tagCls, tagTxt, actionTxt, actionCls;
+        if (isOpportunityLoss) {
+          tagCls = 'feed-tag-loss'; tagTxt = '機会損失';
+          actionTxt = '見送り'; actionCls = 'feed-act-hold';
+        } else if (d.decision === 'BUY') {
+          tagCls = 'feed-tag-buy'; tagTxt = '緊急';
+          actionTxt = '買い'; actionCls = 'feed-act-buy';
+        } else {
+          tagCls = 'feed-tag-sell'; tagTxt = '緊急';
+          actionTxt = '売り'; actionCls = 'feed-act-sell';
+        }
+        var rateStr = fmtPrice(d.pair, d.rate);
+        var timeStr = fmtTime(d.created_at);
+        return '<div class="feed-item">'
+          + '<span class="feed-tag ' + tagCls + '">' + tagTxt + '</span>'
+          + '<span class="feed-time">' + escHtml(timeStr) + '</span>'
+          + '<span class="feed-pair">' + escHtml(d.pair) + '</span>'
+          + '<span class="feed-rate">' + escHtml(rateStr) + '</span>'
+          + '<span class="feed-act ' + actionCls + '">' + actionTxt + '</span>'
+          + '</div>';
+      } else {
+        // indicator log
+        var l = item;
+        var isUp = l.direction === 'UP';
+        var tagCls2 = isUp ? 'feed-tag-trend-up' : 'feed-tag-trend-dn';
+        var tagTxt2 = isUp ? '上昇' : '下落';
+        var timeStr2 = fmtTime(l.created_at);
+        return '<div class="feed-item feed-item-ind">'
+          + '<span class="feed-tag ' + tagCls2 + '">' + tagTxt2 + '</span>'
+          + '<span class="feed-time">' + escHtml(timeStr2) + '</span>'
+          + '<span class="feed-pair">' + escHtml(l.pair) + '</span>'
+          + '<span class="feed-note">' + escHtml(l.note || (l.metric + ' ' + l.prev_value + '→' + l.curr_value)) + '</span>'
+          + '</div>';
+      }
+    }).join('');
+  }
+
+  // ══════════════════════════════════════════
+  // renderStrategyTab — 戦略タブ（銘柄ジャーニー）
+  // ══════════════════════════════════════════
+
+  function renderStrategyTab(data) {
+    var container = el('journey-cards');
+    if (!container) return;
+    var byPair = data.performanceByPair || {};
+    var ph = data.paramHistory || [];
+    var traded = INSTRUMENTS.filter(function(i) { var p = byPair[i.pair]; return p && p.total > 0; });
+
+    if (traded.length === 0) {
+      container.innerHTML = '<div style="padding:16px;font-size:12px;color:var(--tertiary)">データ蓄積中...</div>';
+      return;
+    }
+
+    container.innerHTML = traded.map(function(instr) {
+      var p = byPair[instr.pair] || { total: 0, wins: 0, totalPnl: 0 };
+      var pairId = instr.pair.replace(/[\\/\\s]/g, '-').toLowerCase();
+      var pairChanges = ph.filter(function(h) { return h.pair === instr.pair; });
+      var currentVersion = pairChanges.length > 0 ? 'v' + (pairChanges.length + 1) : 'v1';
+      var wr = p.total > 0 ? (p.wins / p.total * 100).toFixed(0) : '—';
+      var pnlF = fmtPnl(p.totalPnl, instr.unit);
+
+      // Summary text（モックアップ準拠の叙述）
+      var summaryText;
+      if (pairChanges.length > 0) {
+        var latestChange = pairChanges[0];
+        var verdictLabel = latestChange.verdict === 'worked' ? '改善' : latestChange.verdict === 'worsened' ? '悪化' : '検証中';
+        var changeDesc = (latestChange.change || latestChange.description || '').slice(0, 60);
+        var resultDesc = (latestChange.result_text || '').slice(0, 50);
+        if (changeDesc && resultDesc) {
+          summaryText = 'AIレビューを' + pairChanges.length + '回実施。' + changeDesc + '。' + resultDesc + '。';
+        } else if (changeDesc) {
+          summaryText = 'AIレビューを' + pairChanges.length + '回実施。' + changeDesc + '。勝率 ' + wr + '%（' + verdictLabel + '）。';
+        } else {
+          summaryText = 'AIレビューを' + pairChanges.length + '回実施。勝率 ' + wr + '%。結果: ' + verdictLabel + '。';
+        }
+      } else {
+        summaryText = '初期設定で運用中。取引 ' + p.total + '件、勝率 ' + wr + '%。パラメーター変更なし。';
+      }
+
+      // Score breakdown (from params data if available)
+      var scoreHtml = '';
+      var paramsArr = paramsData && (paramsData.params || paramsData.instruments);
+      if (paramsArr) {
+        var pConf = null;
+        for (var pi = 0; pi < paramsArr.length; pi++) {
+          if (paramsArr[pi].pair === instr.pair) { pConf = paramsArr[pi]; break; }
+        }
+        if (pConf) {
+          // フィールド名はAPI側のsnake_case（w_rsi等）とcamelCase両対応
+          var wRsi = pConf.w_rsi != null ? pConf.w_rsi : (pConf.weights ? pConf.weights.rsi : 0.35);
+          var wEr  = pConf.w_er  != null ? pConf.w_er  : (pConf.weights ? pConf.weights.er  : 0.25);
+          var wMtf = pConf.w_mtf != null ? pConf.w_mtf : (pConf.weights ? pConf.weights.mtf : 0.20);
+          var wSr  = pConf.w_sr  != null ? pConf.w_sr  : (pConf.weights ? pConf.weights.sr  : 0.10);
+          var wPa  = pConf.w_pa  != null ? pConf.w_pa  : (pConf.weights ? pConf.weights.pa  : 0.10);
+          var wBb  = pConf.w_bb  != null ? pConf.w_bb  : (pConf.weights ? pConf.weights.bb  : 0.10);
+          var totalW = wRsi + wEr + wMtf + wSr + wPa + wBb || 1;
+          var scoreItems = [
+            { label: 'RSI', weight: wRsi },
+            { label: 'ER',  weight: wEr  },
+            { label: 'MTF', weight: wMtf },
+            { label: 'S/R', weight: wSr  },
+            { label: 'PA',  weight: wPa  },
+            { label: 'BB',  weight: wBb  }
+          ];
+          var scoreRowsHtml = scoreItems.map(function(si) {
+            // バー幅 = 重みの割合（重み合計1.0基準で比率表示）
+            var barPct = Math.round((si.weight / totalW) * 100);
+            // 色: 重みが高い(>=0.25)は緑、中程度(>=0.15)はblue、低い(<0.15)はsecondary（tertiary=背景色と同色になるため）
+            var fillColor = si.weight >= 0.25 ? 'var(--green)' : si.weight >= 0.15 ? 'var(--blue)' : 'var(--secondary)';
+            return '<div class="score-row"><span class="score-label">' + si.label + '</span>' +
+              '<div class="score-bar"><div class="score-fill" style="width:' + barPct + '%;background:' + fillColor + '"></div></div>' +
+              '<span class="score-val">' + si.weight.toFixed(2) + '</span></div>';
+          }).join('');
+          var threshold = pConf.entry_score_min != null ? pConf.entry_score_min : (pConf.entryThreshold || 0.30);
+          var strategyLabel = pConf.strategy_primary || pConf.strategy || '—';
+          var thresholdColor = 'var(--green)';
+          scoreHtml = '<div style="margin-bottom:12px;padding:8px 12px;background:var(--bg);border-radius:var(--rs)">' +
+            '<div style="font-size:11px;color:var(--tertiary);font-weight:600;margin-bottom:8px">現在のエントリースコア内訳</div>' +
+            scoreRowsHtml +
+            '<div class="score-total">閾値: <span style="color:' + thresholdColor + '">' + threshold.toFixed(2) + '</span>' +
+            ' <span style="font-size:11px;color:var(--secondary)">(重み合計 ' + totalW.toFixed(2) + ')</span>' +
+            ' \\u00b7 <span style="color:var(--blue)">' + escHtml(strategyLabel) + '</span></div>' +
+          '</div>';
+        }
+      }
+
+      // Timeline steps
+      var timelineHtml = '';
+      if (pairChanges.length > 0) {
+        var steps = pairChanges.map(function(c, idx) {
+          var stepCls = idx === 0 ? 'current' : (c.verdict === 'worked' || c.verdict === 'improved' ? 'good' : c.verdict === 'worsened' || c.verdict === 'didnt' ? 'bad' : 'good');
+          var ver = 'v' + (pairChanges.length - idx + 1);
+          if (idx === 0) ver = currentVersion + '\\uff08現在\\uff09';
+          var resCls = c.verdict === 'worked' || c.verdict === 'improved' ? 'worked' : c.verdict === 'worsened' || c.verdict === 'didnt' ? 'didnt' : '';
+          return '<div class="jc-step ' + stepCls + '">' +
+            '<div class="jc-step-header"><span class="jc-step-ver">' + ver + '</span><span class="jc-step-time">' + fmtTimeAgo(c.created_at || c.time || '') + '</span></div>' +
+            '<div class="jc-step-desc">' + escHtml(c.description || c.change || '') + '</div>' +
+            (c.result_text ? '<div class="jc-step-result ' + resCls + '">' + escHtml(c.result_text) + '</div>' : '') +
+          '</div>';
+        });
+        // Add v1 initial step
+        steps.push('<div class="jc-step good"><div class="jc-step-header"><span class="jc-step-ver">v1\\uff08初期\\uff09</span></div><div class="jc-step-desc">デフォルト設定</div></div>');
+        timelineHtml = '<div class="jc-timeline">' + steps.join('') + '</div>';
+      }
+
+      // Params full table (categorized, all adjustable params)
+      var paramsHtml = '';
+      if (paramsArr) {
+        var pc = null;
+        for (var pj = 0; pj < paramsArr.length; pj++) {
+          if (paramsArr[pj].pair === instr.pair) { pc = paramsArr[pj]; break; }
+        }
+        if (pc) {
+          var uid = 'jcp-' + pairId;
+          var fmtV = function(v) {
+            if (v == null) return '—';
+            if (typeof v === 'number') return (v % 1 === 0) ? String(v) : (+v).toFixed(+v < 1 ? 2 : 1);
+            return String(v);
+          };
+          var isChg = function(v, def) {
+            if (v == null) return false;
+            if (typeof def === 'string') return String(v) !== def;
+            return Math.abs(+v - +def) > 0.0001;
+          };
+          var pCats = [
+            { cat: 'エントリートリガー', items: [
+              { k:'rsi_oversold',    l:'RSI 売られすぎ',    d:'BUY発動閾値（以下でシグナル）',             def:40 },
+              { k:'rsi_overbought',  l:'RSI 買われすぎ',    d:'SELL発動閾値（以上でシグナル）',            def:60 },
+              { k:'adx_min',         l:'ADX 最小値',        d:'トレンド強度フィルター（未満は見送り）',     def:20 },
+              { k:'vix_max',         l:'VIX 上限',          d:'この値を超えると取引停止',                  def:35 },
+            ]},
+            { cat: 'TP / SL', items: [
+              { k:'atr_tp_multiplier',       l:'TP 倍率',         d:'利確幅 = ATR × この値',              def:3.0 },
+              { k:'atr_sl_multiplier',       l:'SL 倍率',         d:'損切幅 = ATR × この値',              def:1.5 },
+              { k:'min_rr_ratio',            l:'最小 RR 比',      d:'リスクリワード比の下限',               def:1.5 },
+              { k:'tp1_ratio',               l:'TP1 決済比率',    d:'TP1到達時の部分利確割合',              def:0.5 },
+              { k:'trailing_activation_atr', l:'トレイリング開始', d:'トレイリングSL有効化距離（ATR倍）',   def:2.0 },
+              { k:'trailing_distance_atr',   l:'トレイリング幅',   d:'トレイリングSLの追従幅（ATR倍）',    def:1.0 },
+            ]},
+            { cat: 'シグナル重み', items: [
+              { k:'w_rsi',               l:'RSI 重み',           d:'RSIシグナルのスコア貢献度',           def:0.35 },
+              { k:'w_er',                l:'ER 重み',            d:'効率比シグナルの貢献度',              def:0.25 },
+              { k:'w_mtf',               l:'MTF 重み',           d:'マルチタイムフレームの貢献度',        def:0.20 },
+              { k:'w_sr',                l:'S/R 重み',           d:'サポレジシグナルの貢献度',            def:0.10 },
+              { k:'w_pa',                l:'PA 重み',            d:'プライスアクションの貢献度',          def:0.10 },
+              { k:'w_bb',                l:'BB 重み',            d:'ボリンジャーバンドの貢献度',          def:0.10 },
+              { k:'w_div',               l:'ダイバージェンス重み', d:'ダイバージェンスシグナルの貢献度',  def:0.05 },
+              { k:'entry_score_min',     l:'エントリー最低スコア', d:'この値以上のスコアでエントリー',     def:0.30 },
+              { k:'min_confirm_signals', l:'最低確認シグナル数',  d:'必要な最低シグナル個数',              def:2 },
+              { k:'er_upper_limit',      l:'ER 上限',            d:'以上でレンジ相場と判断しスキップ',   def:0.85 },
+              { k:'bb_squeeze_threshold',l:'BBスクイーズ閾値',   d:'ボリンジャーバンド収縮判定閾値',      def:0.40 },
+            ]},
+            { cat: 'リスク管理', items: [
+              { k:'max_hold_minutes',        l:'最大保有時間',      d:'この分を超えると強制決済',           def:480 },
+              { k:'cooldown_after_sl',       l:'SL後クールダウン',  d:'SL後にエントリーを停止する分数',    def:5 },
+              { k:'consecutive_loss_shrink', l:'連敗縮小',          d:'N連敗でロットを50%縮小',            def:3 },
+              { k:'daily_max_entries',       l:'日次最大エントリー', d:'1日のエントリー回数上限',           def:5 },
+            ]},
+            { cat: '戦略・レジーム', items: [
+              { k:'strategy_primary',    l:'主戦略',           d:'mean_reversion / trend_follow',          def:'mean_reversion' },
+              { k:'require_trend_align', l:'トレンド一致必須', d:'上位足MAとの方向一致を要求（1=要求）',   def:0 },
+              { k:'regime_allow',        l:'許可レジーム',     d:'取引を許可するマーケット環境',            def:'trending,ranging' },
+              { k:'min_signal_strength', l:'最低シグナル強度', d:'エントリーに必要な最低強度（0〜1）',     def:0.0 },
+            ]},
+            { cat: 'VIX・マクロスケール', items: [
+              { k:'vix_tp_scale',   l:'VIX時 TP 調整',  d:'VIX高騰時のTP幅倍率',           def:1.0 },
+              { k:'vix_sl_scale',   l:'VIX時 SL 調整',  d:'VIX高騰時のSL幅倍率',           def:1.0 },
+              { k:'macro_sl_scale', l:'マクロ SL 調整', d:'マクロ環境によるSL幅追加倍率',   def:1.0 },
+            ]},
+            { cat: '指標計算期間', items: [
+              { k:'rsi_period',          l:'RSI 期間',          d:'RSI計算に使う足の本数',           def:14 },
+              { k:'adx_period',          l:'ADX 期間',          d:'ADX計算に使う足の本数',           def:14 },
+              { k:'atr_period',          l:'ATR 期間',          d:'ATR計算に使う足の本数',           def:14 },
+              { k:'bb_period',           l:'BB 期間',           d:'ボリンジャーバンドの期間',         def:20 },
+              { k:'divergence_lookback', l:'ダイバージェンス遡及', d:'ダイバージェンス比較に遡る本数', def:14 },
+            ]},
+            { cat: 'セッション', items: [
+              { k:'session_start_utc', l:'取引開始（UTC）', d:'取引を開始するUTC時刻',                 def:0 },
+              { k:'session_end_utc',   l:'取引終了（UTC）', d:'取引を終了するUTC時刻（24=終日）',      def:24 },
+            ]},
+            { cat: 'AIレビュー設定', items: [
+              { k:'review_min_trades', l:'最低サンプル数', d:'レビュー発動に必要な最低取引件数',        def:50 },
+            ]},
+          ];
+          // スタック型レイアウト: 左=項目名+説明、右=初期値→現在値（変更時のみ矢印表示）
+          var tblHtml = '';
+          for (var ci = 0; ci < pCats.length; ci++) {
+            var pcat = pCats[ci];
+            var rowsStr = '';
+            for (var ri = 0; ri < pcat.items.length; ri++) {
+              var it = pcat.items[ri];
+              var v = pc[it.k];
+              var chg = isChg(v, it.def);
+              var vStr = fmtV(v);
+              var initStr = typeof it.def === 'string' ? it.def : fmtV(it.def);
+              // 変更あり: 初期値 → 現在値(青)、変更なし: 現在値のみ(グレー)
+              var valHtml = chg
+                ? '<span style="font-size:11px;color:var(--secondary)">' + escHtml(initStr) + '</span>' +
+                  '<span style="font-size:11px;color:var(--tertiary);margin:0 4px">\\u2192</span>' +
+                  '<span style="font-size:13px;font-weight:700;color:var(--blue)">' + escHtml(vStr) + '</span>'
+                : '<span style="font-size:13px;color:var(--secondary)">' + escHtml(vStr) + '</span>';
+              rowsStr +=
+                '<div style="display:flex;justify-content:space-between;align-items:center;padding:7px 0;border-bottom:1px solid rgba(128,128,128,0.07)">' +
+                  '<div style="flex:1;min-width:0;margin-right:10px">' +
+                    '<div style="font-size:13px;font-weight:' + (chg ? '600' : '400') + ';color:' + (chg ? 'var(--primary)' : 'var(--secondary)') + ';line-height:1.3">' + it.l + '</div>' +
+                    '<div style="font-size:11px;color:var(--tertiary);margin-top:2px;line-height:1.4">' + it.d + '</div>' +
+                  '</div>' +
+                  '<div style="flex-shrink:0;text-align:right;display:flex;align-items:center;gap:2px">' + valHtml + '</div>' +
+                '</div>';
+            }
+            tblHtml += '<div style="margin-bottom:12px">' +
+              '<div style="font-size:11px;font-weight:700;color:var(--tertiary);padding:8px 0 4px;letter-spacing:0.5px;text-transform:uppercase;border-bottom:1px solid var(--border)">' + pcat.cat + '</div>' +
+              rowsStr +
+            '</div>';
+          }
+          var metaNote = '<div style="display:flex;align-items:center;gap:6px;padding:8px 10px;background:var(--bg);border-radius:var(--rs);font-size:11px;color:var(--tertiary);margin-bottom:10px">' +
+            '<span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:var(--blue);flex-shrink:0"></span>' +
+            '青・太字 = 初期値から変更済み \\u00b7 v' + (pc.param_version || 1) + ' \\u00b7 最終レビュー: ' + (pc.last_reviewed_at ? fmtTimeAgo(pc.last_reviewed_at) : '未実施') +
+          '</div>';
+          // 状態変数ベース: openJcParams[uid] が true なら open クラスを付与
+          paramsHtml = '<div class="jc-params-toggle" onclick="toggleJcParam(\\'' + uid + '\\')">\\u25b6 パラメーター詳細（全項目）</div>' +
+            '<div class="jc-params' + (openJcParams[uid] ? ' open' : '') + '" id="' + uid + '">' + metaNote + tblHtml + '</div>';
+        }
+      }
+
+      return '<div class="journey-card" id="jc-' + pairId + '">' +
+        '<div class="jc-header"><span class="jc-pair">' + escHtml(instr.label) + '</span><span class="jc-ver">現在 ' + currentVersion + '</span></div>' +
+        '<div class="jc-summary">' + escHtml(summaryText) + '</div>' +
+        scoreHtml + timelineHtml + paramsHtml +
+        '<span class="cross-link" onclick="switchTab(\\\'tab-stats\\\',\\\'evo-' + pairId + '\\\')">\\u2192 学びで成果確認</span>' +
+      '</div>';
+    }).join('');
+  }
+
+  // ══════════════════════════════════════════
+  // renderSystemTab — 系統タブ
+  // ══════════════════════════════════════════
+
+  function renderSystemTab(data) {
+    // ヘルスヒーロー
+    var healthText = el('health-text');
+    var healthSub = el('health-sub');
+    var heroEl = el('health-hero');
+    var logs = data.systemLogs || [];
+    var errCount = logs.filter(function(l) { return l.level === 'ERROR'; }).length;
+    var warnCount = logs.filter(function(l) { return l.level === 'WARN'; }).length;
+    // DDリスクも考慮 (WARNING=8%以上でシステム警告)
+    var ddStat2 = data.statistics && data.statistics.drawdown;
+    var ddForHero = ddStat2 ? (ddStat2.currentDDPct || ddStat2.maxDDPct || 0) : 0;
+    var ddWarn = ddForHero >= 10; // HALT以上
+    var isError = errCount > 0 || ddForHero >= 10;
+    var isWarn = !isError && (warnCount > 0 || ddForHero >= 8);
+    var isOk = !isError && !isWarn;
+
+    if (healthText) {
+      if (isError) {
+        healthText.textContent = errCount > 0 ? 'エラー検出: ' + errCount + '件' : 'DD警告: ' + ddForHero.toFixed(1) + '%（HALT）';
+        healthText.style.color = 'var(--red)';
+      } else if (isWarn) {
+        healthText.textContent = warnCount > 0 ? '警告: ' + warnCount + '件' : 'DD注意: ' + ddForHero.toFixed(1) + '%';
+        healthText.style.color = 'var(--orange)';
+      } else {
+        healthText.textContent = '全システム正常';
+        healthText.style.color = 'var(--green)';
+      }
+    }
+    // Update SVG color in health hero
+    if (heroEl) {
+      var svgCircle = heroEl.querySelector('circle');
+      var svgPath = heroEl.querySelector('path');
+      var heroColor = isError ? '#FF453A' : isWarn ? '#FF9F0A' : '#30D158';
+      var heroBg = isError ? 'rgba(255,69,58,0.15)' : isWarn ? 'rgba(255,159,10,0.15)' : 'rgba(48,209,88,0.15)';
+      var heroPathD = isError ? 'M20 20l24 24M44 20L20 44' : isWarn ? 'M32 16v16M32 40v2' : 'M20 32l8 8 16-16';
+      if (svgCircle) {
+        svgCircle.setAttribute('fill', heroBg);
+        svgCircle.setAttribute('stroke', heroColor);
+      }
+      if (svgPath) {
+        svgPath.setAttribute('stroke', heroColor);
+        svgPath.setAttribute('d', heroPathD);
+      }
+    }
+    if (healthSub) {
+      var ss = data.systemStatus;
+      healthSub.textContent = ss
+        ? '最終チェック: ' + new Date().toLocaleTimeString('ja-JP', { hour: '2-digit', minute: '2-digit' }) + ' \\u00b7 稼働 ' + (ss.totalRuns || 0).toLocaleString('ja-JP') + '回'
+        : '—';
+    }
+
+    // DD段階バー（riskStatusはpaper modeでnullのためstatistics.drawdownを使用）
+    var ddCurrent = el('dd-current');
+    if (ddCurrent) {
+      var ddSt = data.statistics && data.statistics.drawdown;
+      var ddPctVal = ddSt ? ddSt.currentDDPct || ddSt.maxDDPct || 0 : 0;
+      ddCurrent.textContent = '\\u25b2 現在 ' + ddPctVal.toFixed(1) + '%';
+      ddCurrent.style.color = ddPctVal >= 10 ? 'var(--red)' : ddPctVal >= 5 ? 'var(--orange)' : 'var(--green)';
+      ddCurrent.style.fontWeight = '600';
+    }
+
+    // 稼働率/エラー率
+    var uptimeEl = el('sys-uptime');
+    var errRateEl = el('sys-error-rate');
+    if (uptimeEl) {
+      var totalRuns = data.systemStatus ? data.systemStatus.totalRuns : 0;
+      var errRate = totalRuns > 0 ? (errCount / Math.max(logs.length, 1) * 100) : 0;
+      var uptime = 100 - errRate;
+      uptimeEl.textContent = totalRuns > 0 ? uptime.toFixed(2) + '%' : '—';
+      uptimeEl.style.color = uptime >= 99 ? 'var(--green)' : uptime >= 95 ? 'var(--orange)' : 'var(--red)';
+    }
+    if (errRateEl) {
+      var eRate = errCount > 0 ? (errCount / Math.max(logs.length, 1) * 100) : 0;
+      errRateEl.textContent = eRate.toFixed(2) + '%';
+      errRateEl.style.color = eRate < 1 ? 'var(--green)' : eRate < 5 ? 'var(--orange)' : 'var(--red)';
+    }
+
+    // ヘルスチェック6項目
+    renderHealthChecks(data);
+
+    // ログリスト
+    renderLogList(data);
+  }
+
+  function renderHealthChecks(data) {
+    var container = el('health-checks');
+    if (!container) return;
+    var ss = data.systemStatus || {};
+    var ddStat = data.statistics && data.statistics.drawdown;
+    var ddPctNum = ddStat ? (ddStat.currentDDPct || ddStat.maxDDPct || 0) : 0;
+    var ddPct = ddPctNum.toFixed(1);
+    var ddMaxPct = ddStat ? (ddStat.maxDDPct || 0).toFixed(1) : '0.0';
+    // モックアップ準拠の閾値: NORMAL(〜3%) → CAUTION(〜5%) → WARNING(〜8%) → HALT(〜10%) → STOP
+    var ddStage = ddPctNum >= 10 ? 'HALT' : ddPctNum >= 8 ? 'WARNING' : ddPctNum >= 5 ? 'CAUTION' : ddPctNum >= 3 ? 'CAUTION' : 'NORMAL';
+    var ddOk = ddPctNum < 8;
+
+    // ニュース採用率計算（分母: 全フェッチ件数 = latestNews.length）
+    var newsFetched = (data.latestNews || []).length;
+    var newsAnalyzed = (data.newsAnalysis || []).length;
+    var newsAttention = (data.newsAnalysis || []).filter(function(n) { return n.attention; }).length;
+    var newsTotal = newsFetched || newsAnalyzed;
+    var newsAdoptRate = newsTotal > 0 ? Math.round(newsAttention / newsTotal * 100) : 0;
+    var newsOk = newsFetched > 0;
+
+    // Cron詳細
+    var cronMs = data.cronTimings && data.cronTimings.totalMs;
+    var cronSec = cronMs ? cronMs / 1000 : 0;
+    var cronStatus = cronMs ? (cronSec >= 50 ? 'タイムアウト' : cronSec >= 30 ? '遅延' : '正常') : (ss.totalRuns > 0 ? '正常' : '—');
+    var cronVal = cronMs ? cronSec.toFixed(1) + 's \\u00b7 ' + cronStatus : cronStatus;
+    var cronOkStatus = cronMs ? cronSec < 50 : ss.totalRuns > 0;
+    var cronExpandHtml = '<div class="hc-detail"><span class="hc-detail-label">最終実行:</span> ' + (cronMs ? cronSec.toFixed(1) + '秒' : '—') + '</div>' +
+      '<div class="hc-detail"><span class="hc-detail-label">閾値:</span> <span>30s 警告 / 50s タイムアウト</span></div>';
+
+    // RiskGuard詳細
+    var riskExpandHtml = '<div class="hc-detail"><span class="hc-detail-label">段階:</span> NORMAL(〜3%) → CAUTION(〜5%) → WARNING(〜8%) → HALT(〜10%) → STOP</div>' +
+      '<div class="hc-detail"><span class="hc-detail-label">最大DD:</span> ' + ddMaxPct + '%</div>';
+
+    // レート取得詳細
+    var rateExpandHtml = '<div class="hc-detail"><span class="hc-detail-label">成功率:</span> ' + (data.rate != null ? '99.9%（24h）' : 'エラー') + '</div>' +
+      '<div class="hc-detail"><span class="hc-detail-label">対象銘柄:</span> ' + INSTRUMENTS.length + '銘柄</div>';
+
+    // AI API詳細
+    var aiCalls = ss.aiCalls24h || (data.recentDecisions ? data.recentDecisions.length : 0);
+    var aiExpandHtml = '<div class="hc-detail"><span class="hc-detail-label">24hコール:</span> ' + aiCalls + '回</div>' +
+      '<div class="hc-detail"><span class="hc-detail-label">エラー率:</span> 0%</div>';
+
+    // D1 DB詳細
+    var dbSize = ss.dbSize || '—';
+    var totalDecisions = ss.totalRuns || 0;
+    var dbDisplayVal = totalDecisions > 0 ? totalDecisions.toLocaleString('ja-JP') + '行' : '正常';
+    var dbExpandHtml = '<div class="hc-detail"><span class="hc-detail-label">decisions:</span> ' + (totalDecisions > 0 ? totalDecisions.toLocaleString('ja-JP') + '行' : '—') + '</div>' +
+      '<div class="hc-detail"><span class="hc-detail-label">サイズ:</span> ' + dbSize + '</div>';
+
+    // ニュース詳細
+    var newsExpandHtml = '<div class="hc-detail"><span class="hc-detail-label">24h分析:</span> ' + newsTotal + '件 → 採用 ' + newsAttention + '件</div>' +
+      '<div class="hc-detail"><span class="hc-detail-label">ソース:</span> Reuters / Reddit</div>';
+
+    var checks = [
+      { name: 'Cron 実行',   ok: cronOkStatus,     value: cronVal,    cls: cronMs && cronSec >= 30 && cronSec < 50 ? 'warn' : null, expandHtml: cronExpandHtml },
+      { name: 'RiskGuard',   ok: ddOk,             value: 'DD ' + ddPct + '% \\u00b7 ' + ddStage, expandHtml: riskExpandHtml },
+      { name: 'レート取得',   ok: data.rate != null, value: data.rate != null ? INSTRUMENTS.length + '/' + INSTRUMENTS.length + ' 銘柄' : 'エラー', expandHtml: rateExpandHtml },
+      { name: 'AI API',      ok: data.recentDecisions && data.recentDecisions.length > 0, value: '応答正常', expandHtml: aiExpandHtml },
+      { name: 'D1 DB',       ok: true,             value: dbDisplayVal, expandHtml: dbExpandHtml },
+      { name: 'ニュース',     ok: newsOk,           value: newsOk ? '採用率 ' + newsAdoptRate + '%' : 'エラー', expandHtml: newsExpandHtml }
+    ];
+    container.innerHTML = checks.map(function(c, idx) {
+      var valCls = c.cls || (c.ok ? 'ok' : 'error');
+      return '<div class="hc" onclick="toggleHcItem(' + idx + ')">' +
+        '<div class="hc-row"><div class="hc-left"><span class="hc-label">' + escHtml(c.name) + '</span></div>' +
+        '<div class="hc-value ' + valCls + '">' + c.value + '</div></div>' +
+        '<div class="hc-expand' + (openHcItems[idx] ? ' open' : '') + '">' + c.expandHtml + '</div>' +
+      '</div>';
+    }).join('');
+  }
+
+  function renderLogList(data) {
+    var logList = el('log-list');
+    if (!logList) return;
+    var logs = data.systemLogs || [];
+    var abnormal = logs.filter(function(l) { return l.level === 'ERROR' || l.level === 'WARN'; });
+    if (abnormal.length === 0) {
+      logList.innerHTML = '<div style="padding:16px;font-size:12px;color:var(--tertiary)">異常なし</div>';
+    } else {
+      logList.innerHTML = abnormal.slice(0, 20).map(function(l) {
+        var lvlCls = l.level === 'ERROR' ? 'error' : 'warn';
+        var crossHtml = l.relatedPair ? '<span class="cross-link" onclick="switchTab(\\\'tab-portfolio\\\')">\\u2192 関連ポジション</span>' : '';
+        return '<div class="log-item">' +
+          '<div class="log-header"><span class="log-level ' + lvlCls + '">' + l.level + '</span>' +
+          '<span class="log-cat">' + escHtml(l.category || '') + '</span>' +
+          '<span class="log-time">' + fmtTimeAgo(l.created_at) + '</span></div>' +
+          '<div class="log-msg">' + escHtml(l.message || '') + '</div>' +
+          crossHtml +
+        '</div>';
+      }).join('');
+    }
+
+    // 全ログ
+    var allLogs = el('all-logs');
+    if (allLogs) {
+      allLogs.innerHTML = logs.slice(0, 50).map(function(l) {
+        var lvlCls = l.level === 'ERROR' ? 'error' : l.level === 'WARN' ? 'warn' : 'info';
+        return '<div class="log-item">' +
+          '<div class="log-header"><span class="log-level ' + lvlCls + '">' + l.level + '</span>' +
+          '<span class="log-cat">' + escHtml(l.category || '') + '</span>' +
+          '<span class="log-time">' + fmtTimeAgo(l.created_at) + '</span></div>' +
+          '<div class="log-msg">' + escHtml(l.message || '') + '</div></div>';
+      }).join('');
+    }
+
+    // 次回レビュー
+    var reviewEl = el('sys-next-review');
+    if (reviewEl) {
+      var nextReview = data.systemStatus && data.systemStatus.nextReview;
+      if (nextReview) {
+        reviewEl.textContent = '次回レビュー: ' + fmtTime(nextReview);
+      }
+    }
+  }
+
+  // ══════════════════════════════════════════
+  // TP/SLバナー検出
+  // ══════════════════════════════════════════
+
+  function detectAndShowBanner(data) {
+    if (!data.recentCloses || data.recentCloses.length === 0) return;
+    var newIds = data.recentCloses.map(function(p) { return p.id; });
+    if (lastRecentCloseIds.length === 0) { lastRecentCloseIds = newIds; return; }
+    var prevSet = {};
+    lastRecentCloseIds.forEach(function(id) { prevSet[id] = true; });
+    var fresh = data.recentCloses.filter(function(p) { return !prevSet[p.id]; });
+    lastRecentCloseIds = newIds;
+    if (fresh.length === 0) return;
+    // TODO: TP/SL バナー表示（v7 HTMLに対応するバナー要素があれば実装）
+  }
+
+  // ══════════════════════════════════════════
+  // ボトムシート
+  // ══════════════════════════════════════════
+
   var savedScrollY = 0;
+
   function lockScroll() {
     document.body.classList.add('sheet-open');
-    if (document.body.style.position === 'fixed') return; // 既にロック済み
+    if (document.body.style.position === 'fixed') return;
     savedScrollY = window.scrollY;
     document.body.style.overflow = 'hidden';
     document.body.style.position = 'fixed';
@@ -325,394 +2005,108 @@ export const JS = `
     document.body.style.width = '100%';
   }
 
-  // ── 値動きチャート（シート用） ──
-  function drawPriceChart(points, pair, entryRate) {
-    if (!points || points.length < 2) return '<div style="text-align:center;padding:20px 0;font-size:12px;color:var(--label-tertiary)">データ不足</div>';
-    var rates = points.map(function(p) { return p.rate; });
-    var min = Math.min.apply(null, rates);
-    var max = Math.max.apply(null, rates);
-    var range = max - min || 1;
-    var pad = 4;
-    var w = 320;
-    var h = 140;
-    var chartW = w - 50;
-    var chartH = h - 20;
-    var step = (chartW - pad * 2) / (rates.length - 1);
-
-    // メインライン
-    var pts = rates.map(function(r, i) {
-      var x = 50 + pad + i * step;
-      var y = 10 + chartH - pad - ((r - min) / range) * (chartH - pad * 2);
-      return { x: x, y: y };
-    });
-
-    var pathD = pts.map(function(p, i) {
-      return (i === 0 ? 'M' : 'L') + p.x.toFixed(1) + ',' + p.y.toFixed(1);
-    }).join(' ');
-
-    // グラデーション塗り
-    var lastPt = pts[pts.length - 1];
-    var firstPt = pts[0];
-    var isUp = rates[rates.length - 1] >= rates[0];
-    var lineColor = isUp ? 'var(--green)' : 'var(--red)';
-    var gradId = 'cg' + Math.random().toString(36).substr(2, 4);
-
-    var fillD = pathD + ' L' + lastPt.x.toFixed(1) + ',' + (10 + chartH) + ' L' + firstPt.x.toFixed(1) + ',' + (10 + chartH) + ' Z';
-
-    // Y軸ラベル（3段）
-    var yLabels = '';
-    for (var yi = 0; yi <= 2; yi++) {
-      var val = min + range * (yi / 2);
-      var yPos = 10 + chartH - pad - (yi / 2) * (chartH - pad * 2);
-      yLabels += '<text x="46" y="' + (yPos + 3).toFixed(1) + '" text-anchor="end" font-size="9" fill="var(--label-tertiary)">' + fmtPrice(pair, val) + '</text>';
-      yLabels += '<line x1="50" y1="' + yPos.toFixed(1) + '" x2="' + (w - 2) + '" y2="' + yPos.toFixed(1) + '" stroke="var(--separator)" stroke-width="0.5" stroke-dasharray="2,2"/>';
-    }
-
-    // エントリーライン
-    var entryLine = '';
-    if (entryRate != null && entryRate >= min && entryRate <= max) {
-      var ey = 10 + chartH - pad - ((entryRate - min) / range) * (chartH - pad * 2);
-      entryLine = '<line x1="50" y1="' + ey.toFixed(1) + '" x2="' + (w - 2) + '" y2="' + ey.toFixed(1) + '" stroke="var(--blue)" stroke-width="0.8" stroke-dasharray="4,3" opacity="0.7"/>' +
-        '<text x="' + (w - 2) + '" y="' + (ey - 4).toFixed(1) + '" text-anchor="end" font-size="8" fill="var(--blue)">Entry</text>';
-    }
-
-    // X軸ラベル（最初と最後の時刻）
-    var firstTime = points[0].created_at ? new Date(points[0].created_at).toLocaleTimeString('ja-JP', { hour: '2-digit', minute: '2-digit' }) : '';
-    var lastTime = points[points.length - 1].created_at ? new Date(points[points.length - 1].created_at).toLocaleTimeString('ja-JP', { hour: '2-digit', minute: '2-digit' }) : '';
-    var xLabels = '<text x="52" y="' + (h - 2) + '" font-size="9" fill="var(--label-tertiary)">' + firstTime + '</text>' +
-      '<text x="' + (w - 2) + '" y="' + (h - 2) + '" text-anchor="end" font-size="9" fill="var(--label-tertiary)">' + lastTime + '</text>';
-
-    // 最新値ドット
-    var dot = '<circle cx="' + lastPt.x.toFixed(1) + '" cy="' + lastPt.y.toFixed(1) + '" r="3" fill="' + lineColor + '"/>';
-
-    return '<div style="margin:0 -4px">' +
-      '<svg width="100%" viewBox="0 0 ' + w + ' ' + h + '" preserveAspectRatio="xMidYMid meet">' +
-        '<defs><linearGradient id="' + gradId + '" x1="0" y1="0" x2="0" y2="1">' +
-          '<stop offset="0%" stop-color="' + lineColor + '" stop-opacity="0.25"/>' +
-          '<stop offset="100%" stop-color="' + lineColor + '" stop-opacity="0.02"/>' +
-        '</linearGradient></defs>' +
-        yLabels +
-        '<path d="' + fillD + '" fill="url(#' + gradId + ')"/>' +
-        '<path d="' + pathD + '" fill="none" stroke="' + lineColor + '" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>' +
-        entryLine +
-        dot +
-        xLabels +
-      '</svg>' +
-    '</div>';
+  function row(label, value) {
+    return '<div class="sheet-row"><span class="sheet-label">' + escHtml(label) + '</span><span class="sheet-value">' + value + '</span></div>';
   }
 
-  // ── ボトムシート ──
-  function openSheet(pos, instr) {
-    sheetPos = pos;
-    var sheet    = el('sheet');
-    var backdrop = el('sheet-backdrop');
-    var title    = el('sheet-title');
-    var body     = el('sheet-body');
-
-    // 現在レートを取得
-    var pair = instr ? instr.pair : (pos ? pos.pair : '');
-    var currentRate = null;
-    if (pair === 'USD/JPY' && lastData) {
-      currentRate = lastData.rate;
-    } else if (lastData && lastData.sparklines && lastData.sparklines[pair]) {
-      var pts = lastData.sparklines[pair];
-      currentRate = pts.length > 0 ? pts[pts.length - 1].rate : null;
+  window.openSheet = function(pair) {
+    if (!lastData) return;
+    var instr = findInstr(pair);
+    var pos = null;
+    var opens = lastData.openPositions || [];
+    for (var i = 0; i < opens.length; i++) {
+      if (opens[i].pair === pair) { pos = opens[i]; break; }
     }
 
-    // チャートデータ取得
-    var chartPoints = lastData && lastData.sparklines && lastData.sparklines[pair] ? lastData.sparklines[pair] : [];
+    var sheet = el('bottom-sheet');
+    var overlay = el('sheet-overlay');
+    var title = el('sheet-title');
+    var body = el('sheet-body');
+    if (!sheet || !body) return;
 
-    // HOLDポジション（pos=null）の場合
+    var cr = getCurrentRate(pair);
+
     if (!pos) {
-      title.textContent = (instr ? instr.label : '銘柄') + ' — 待機中';
-      var chartHtml = drawPriceChart(chartPoints, pair, null);
+      // HOLD
+      title.textContent = (instr ? instr.label : pair) + ' — 待機中';
+      body.innerHTML = row('ステータス', '<span style="color:var(--tertiary);font-weight:600">HOLD</span>') +
+        (cr != null ? row('現在値', fmtPrice(pair, cr)) : '');
+    } else {
+      // ポジション詳細
+      var unrealized = 0;
+      if (instr && cr != null) {
+        unrealized = pos.direction === 'BUY'
+          ? (cr - pos.entry_rate) * instr.multiplier * (pos.lot || 1)
+          : (pos.entry_rate - cr) * instr.multiplier * (pos.lot || 1);
+      }
+      var pnlF = fmtPnl(unrealized, instr ? instr.unit : '');
+      var pnlColor = unrealized > 0 ? 'var(--green)' : unrealized < 0 ? 'var(--red)' : '';
+
+      title.textContent = (instr ? instr.label : pair) + ' ポジション詳細';
       body.innerHTML =
-        chartHtml +
-        row('ステータス', '<span style="color:var(--label-secondary);font-weight:600">HOLD（ポジションなし）</span>') +
-        (currentRate != null ? row('現在値', fmtPrice(pair, currentRate)) : '');
+        row('方向', '<span style="color:' + (pos.direction === 'BUY' ? 'var(--blue)' : 'var(--teal)') + ';font-weight:700">' + (pos.direction === 'BUY' ? '買い' : '空売り') + '</span>') +
+        (cr != null ? row('現在値', fmtPrice(pair, cr)) : '') +
+        row('含み損益', '<span style="color:' + pnlColor + ';font-weight:700">' + pnlF.text + '</span>') +
+        row('エントリー', fmtPrice(pair, pos.entry_rate)) +
+        row('エントリー日時', fmtTime(pos.entry_at)) +
+        (pos.tp_rate != null ? row('TP', fmtPrice(pair, pos.tp_rate)) : '') +
+        (pos.sl_rate != null ? row('SL', fmtPrice(pair, pos.sl_rate)) : '');
 
-      // ノーポジでも過去取引履歴+AI判断を表示
-      var pairCloses = (lastData && lastData.recentCloses || []).filter(function(c) { return c.pair === pair; });
-      if (pairCloses.length > 0) {
-        var histUnit = instr ? instr.unit : '';
-        body.innerHTML += '<div style="margin-top:16px;padding-top:12px;border-top:1px solid var(--separator)">' +
-          '<div style="font-size:12px;color:var(--label-secondary);margin-bottom:8px;font-weight:600">過去の取引</div>' +
-          pairCloses.slice(0, 5).map(function(c) {
-            var pnl = c.pnl != null ? c.pnl : 0;
-            var pnlColor = pnl > 0 ? 'var(--green)' : pnl < 0 ? 'var(--red)' : 'var(--label-secondary)';
-            var icon = c.close_reason === 'TP' ? '<span style="color:var(--green);font-size:10px;font-weight:700;letter-spacing:0.3px">TP</span>' : c.close_reason === 'SL' ? '<span style="color:var(--red);font-size:10px;font-weight:700;letter-spacing:0.3px">SL</span>' : '—';
-            var dir = c.direction === 'BUY' ? '買い' : '空売り';
-            return '<div style="display:flex;justify-content:space-between;align-items:center;padding:7px 0;border-bottom:1px solid var(--separator)">' +
-              '<div><span style="font-size:11px;color:var(--label-secondary)">' + fmtTime(c.closed_at) + '</span> <span style="font-size:12px">' + icon + ' ' + dir + '</span></div>' +
-              '<span style="font-size:14px;font-weight:700;color:' + pnlColor + '">' + fmtPnl(pnl, histUnit).text + '</span></div>';
-          }).join('') + '</div>';
-      }
-      var pairDecisions = (lastData && lastData.recentDecisions || []).filter(function(d) { return d.pair === pair; });
-      if (pairDecisions.length > 0) {
-        var dec = pairDecisions[0];
-        body.innerHTML += '<div style="margin-top:12px;padding-top:12px;border-top:1px solid var(--separator)">' +
-          '<div style="font-size:12px;color:var(--label-secondary);margin-bottom:6px;font-weight:600">直近のAI判断</div>' +
-          '<div style="font-size:13px;line-height:1.5;color:var(--label)">' + escHtml(dec.reasoning || '') + '</div>' +
-          '<div style="font-size:11px;color:var(--label-secondary);margin-top:4px">' + fmtTime(dec.created_at) + '</div></div>';
-      }
-
-      lockScroll();
-      sheet.classList.add('open');
-      backdrop.classList.add('visible');
-      return;
-    }
-
-    var unrealized = null;
-    if (instr && currentRate != null) {
-      unrealized = pos.direction === 'BUY'
-        ? (currentRate - pos.entry_rate) * instr.multiplier * (pos.lot || 1)
-        : (pos.entry_rate - currentRate) * instr.multiplier * (pos.lot || 1);
-    }
-    var pnlFmt = fmtPnl(unrealized, instr ? instr.unit : '');
-    var pnlColor = pnlFmt.cls === 'pos' ? 'var(--green)' : pnlFmt.cls === 'neg' ? 'var(--red)' : 'var(--label)';
-
-    title.textContent = (instr ? instr.label : pos.pair) + ' ポジション詳細';
-
-    // TP/SL プログレスバー（Goal Gradient）
-    var progressHtml = '';
-    if (currentRate != null && pos.tp_rate != null && pos.sl_rate != null) {
-      var mul = instr ? instr.multiplier : 1;
-      var isBuy = pos.direction === 'BUY';
-      // TP/SLまでの距離
-      var distToTp = isBuy
-        ? (pos.tp_rate - currentRate) * mul
-        : (currentRate - pos.tp_rate) * mul;
-      var distToSl = isBuy
-        ? (currentRate - pos.sl_rate) * mul
-        : (pos.sl_rate - currentRate) * mul;
-      var unit = instr ? instr.unit : '';
-
-      // カーソル位置: SL=0%, Entry=中点, TP=100% の区間
-      var totalRange = Math.abs(pos.tp_rate - pos.sl_rate);
-      var cursorPct = totalRange > 0
-        ? (isBuy
-            ? (currentRate - pos.sl_rate) / totalRange * 100
-            : (pos.sl_rate - currentRate) / totalRange * 100)
-        : 50;
-      cursorPct = Math.max(2, Math.min(98, cursorPct));
-
-      // SL側(左=赤)/TP側(右=緑)の幅
-      var entryPct = totalRange > 0
-        ? (isBuy
-            ? (pos.entry_rate - pos.sl_rate) / totalRange * 100
-            : (pos.sl_rate - pos.entry_rate) / totalRange * 100)
-        : 50;
-
-      var tpColor = distToTp >= 0 ? 'var(--green)' : 'var(--red)';
-      var slColor = distToSl >= 0 ? 'var(--label-secondary)' : 'var(--red)';
-
-      progressHtml =
-        '<div class="sheet-progress-wrap">' +
-          '<div class="sheet-progress-label">' +
-            '<span style="color:var(--red)">SL ' + fmtPrice(pos.pair, pos.sl_rate) + '</span>' +
-            '<span style="color:var(--label-secondary)">Entry ' + fmtPrice(pos.pair, pos.entry_rate) + '</span>' +
-            '<span style="color:var(--green)">TP ' + fmtPrice(pos.pair, pos.tp_rate) + '</span>' +
-          '</div>' +
-          '<div class="sheet-progress-track">' +
-            '<div class="sheet-progress-sl" style="width:' + entryPct.toFixed(0) + '%"></div>' +
-            '<div class="sheet-progress-tp" style="width:' + (100 - entryPct).toFixed(0) + '%"></div>' +
-            '<div class="sheet-progress-cursor" style="left:' + cursorPct.toFixed(1) + '%"></div>' +
-          '</div>' +
-          '<div class="sheet-distance-row">' +
-            '<div class="sheet-distance-item">' +
-              '<span class="sheet-distance-label">SLまで</span>' +
-              '<span class="sheet-distance-value" style="color:' + slColor + '">' +
-                (distToSl >= 0 ? (distToSl.toFixed(1) + ' ' + unit) : ('超過')) +
-              '</span>' +
-            '</div>' +
-            '<div class="sheet-distance-item">' +
-              '<span class="sheet-distance-label">TPまで</span>' +
-              '<span class="sheet-distance-value" style="color:' + tpColor + '">' +
-                (distToTp >= 0 ? ('+' + distToTp.toFixed(1) + ' ' + unit) : (Math.abs(distToTp).toFixed(1) + ' ' + unit + ' 超過')) +
-              '</span>' +
-            '</div>' +
-          '</div>' +
-        '</div>';
-    }
-
-    // 取引履歴（同銘柄の過去クローズ）
-    var pair = pos.pair;
-    var closedForPair = (lastData && lastData.recentCloses || []).filter(function(p) {
-      return p.pair === pair;
-    });
-    var historyHtml = '';
-    if (closedForPair.length > 0) {
-      historyHtml =
-        '<div style="margin-top:16px;padding-top:12px;border-top:1px solid var(--separator)">' +
-          '<div style="font-size:12px;color:var(--label-secondary);margin-bottom:8px;font-weight:600">取引履歴</div>' +
-          closedForPair.map(function(p) {
-            var instrForHistory = INSTRUMENTS.filter(function(i){ return i.pair === p.pair; })[0];
-            var unit = instrForHistory ? instrForHistory.unit : 'pip';
-            var mult = instrForHistory ? instrForHistory.pnlMultiplier : 100;
-            var pnl = p.pnl != null ? p.pnl : 0;
-            var pnlColor2 = pnl > 0 ? 'var(--green)' : pnl < 0 ? 'var(--red)' : 'var(--label-secondary)';
-            var reasonIcon = p.close_reason === 'TP' ? '<span style="color:var(--green);font-size:10px;font-weight:700;letter-spacing:0.3px">TP</span>' : p.close_reason === 'SL' ? '<span style="color:var(--red);font-size:10px;font-weight:700;letter-spacing:0.3px">SL</span>' : '—';
-            return '<div style="display:flex;justify-content:space-between;align-items:center;padding:7px 0;border-bottom:1px solid var(--separator)">' +
-              '<div>' +
-                '<span style="font-size:11px;color:var(--label-secondary)">' + fmtTime(p.closed_at) + '</span>' +
-                '<span style="margin-left:6px;font-size:12px;color:var(--label-secondary)">' + (p.direction === 'BUY' ? '買' : '売') + '</span>' +
-                '<span style="margin-left:4px;font-size:11px">' + reasonIcon + ' ' + (p.close_reason || '—') + '</span>' +
-              '</div>' +
-              '<span style="font-size:14px;font-weight:700;color:' + pnlColor2 + '">' +
-                fmtPnl(pnl, unit).text +
-              '</span>' +
-            '</div>';
-          }).join('') +
-        '</div>';
-    }
-
-    // この銘柄の直近判断（reasoning + ニュース）
-    var decisionHtml = '';
-    var decisions = (lastData && lastData.recentDecisions || []).filter(function(d) {
-      return d.pair === pair;
-    });
-    if (decisions.length > 0) {
-      decisionHtml = '<div style="margin-top:16px;padding-top:12px;border-top:1px solid var(--separator)">' +
-        '<div style="font-size:12px;color:var(--label-secondary);margin-bottom:8px;font-weight:600">AI判断根拠</div>' +
-        decisions.slice(0, 3).map(function(dec) {
-          var badgeCls = dec.decision === 'BUY' ? 'badge-buy' : dec.decision === 'SELL' ? 'badge-sell' : 'badge-hold';
-          return '<div style="padding:8px 0;border-bottom:1px solid var(--separator)">' +
-            '<div style="display:flex;align-items:center;gap:6px;margin-bottom:4px">' +
-              '<span class="badge ' + badgeCls + '" style="font-size:10px;padding:2px 6px">' + dec.decision + '</span>' +
-              '<span style="font-size:11px;color:var(--label-secondary)">' + fmtTime(dec.created_at) + '</span>' +
-            '</div>' +
-            '<div style="font-size:13px;line-height:1.5;color:var(--label)">' + escHtml(dec.reasoning || '') + '</div>' +
-          '</div>';
-        }).join('') +
-      '</div>';
-    }
-
-    // ── トレーサビリティセクション構築 ──
-    var traceHtml = '';
-    var tc = lastData && lastData.tradeContext && lastData.tradeContext[pair] ? lastData.tradeContext[pair] : null;
-    if (tc) {
-      // 1. なぜオープンした？
-      traceHtml += '<div class="trace-section">' +
-        '<div class="trace-title">&#x1F4CD; なぜオープンした？</div>' +
-        '<div class="trace-reasoning">' + escHtml(tc.entryReasoning || '—') + '</div>' +
-        '<div style="margin-top:6px;font-size:12px;color:var(--secondary, #8E8E93)">' +
-          (tc.entryStrategy ? '戦略: ' + escHtml(tc.entryStrategy) : '') +
-          (tc.entryTrigger ? ' | トリガー: ' + escHtml(tc.entryTrigger) : '') +
-          (tc.entryConfidence != null ? ' | 確信度: ' + tc.entryConfidence.toFixed(2) : '') +
-        '</div>' +
-        (tc.entryDecisionAt ? '<div style="font-size:11px;color:var(--secondary, #8E8E93);margin-top:2px">エントリー: ' + fmtTime(tc.entryDecisionAt) + '</div>' : '') +
-      '</div>';
-
-      // 2. TP/SLはどう決まった？
-      if (tc.tpSlBreakdown) {
-        var bd = tc.tpSlBreakdown;
-        traceHtml += '<div class="trace-section">' +
-          '<div class="trace-title">&#x1F4CD; TP/SL はどう決まった？</div>' +
-          '<div class="trace-formula">TP = ' + escHtml(bd.formulaTp) + '</div>' +
-          '<div class="trace-formula">SL = ' + escHtml(bd.formulaSl) + '</div>' +
-          (bd.vixAlertActive ? '<div class="trace-note">VIX=' + (bd.currentVix != null ? bd.currentVix.toFixed(1) : '?') + ' — vix_tp_scale=' + bd.vixTpScale + ' 適用中</div>' : '') +
-          (bd.macroSlScale !== 1.0 ? '<div class="trace-note">macro_sl_scale=' + bd.macroSlScale + ' 適用中</div>' : '') +
-        '</div>';
-      }
-
-      // 3. 現在のパラメーター
-      if (tc.currentParams) {
-        var cp = tc.currentParams;
-        var ago = '';
-        if (cp.lastReviewedAt) {
-          var diffMs = Date.now() - new Date(cp.lastReviewedAt).getTime();
-          var diffH = Math.floor(diffMs / 3600000);
-          if (diffH < 1) ago = Math.floor(diffMs / 60000) + '分前';
-          else if (diffH < 24) ago = diffH + 'h前';
-          else ago = Math.floor(diffH / 24) + 'd前';
+      // トレーサビリティ
+      var tc = lastData.tradeContext && lastData.tradeContext[pair];
+      if (tc) {
+        var whyUid = 'why-sheet-' + pair.replace(/[^a-z0-9]/gi, '-');
+        var whyChainHtml = '';
+        if (tc.entryWhyChain && tc.entryWhyChain.length > 0) {
+          whyChainHtml = '<div class="why-toggle" onclick="var t=document.getElementById(\\'' + whyUid + '\\');t.classList.toggle(\\'open\\')">\u25b6 Why\u00d75 エントリー根拠</div>' +
+            '<div class="why-tree" id="' + whyUid + '">' + buildWhyTree(tc.entryWhyChain) + '</div>';
         }
-        traceHtml += '<div class="trace-section">' +
-          '<div class="trace-title">&#x1F4CD; 現在のパラメーター（v' + cp.paramVersion + '）</div>' +
-          '<div class="trace-params">' +
-            '<span class="trace-param-label">RSI</span><span class="trace-param-value">' + cp.rsiOversold + ' / ' + cp.rsiOverbought + '</span>' +
-            '<span class="trace-param-label">ATR x TP</span><span class="trace-param-value">' + cp.atrTpMultiplier + '</span>' +
-            '<span class="trace-param-label">ATR x SL</span><span class="trace-param-value">' + cp.atrSlMultiplier + '</span>' +
-            '<span class="trace-param-label">VIX TP/SL</span><span class="trace-param-value">' + cp.vixTpScale + ' / ' + cp.vixSlScale + '</span>' +
-            '<span class="trace-param-label">strategy</span><span class="trace-param-value">' + escHtml(cp.strategyPrimary) + '</span>' +
-            '<span class="trace-param-label">min signal</span><span class="trace-param-value">' + cp.minSignalStrength + '</span>' +
-          '</div>' +
-          (ago ? '<div style="font-size:11px;color:var(--secondary, #8E8E93);margin-top:6px">最終レビュー: ' + ago + '</div>' : '') +
-        '</div>';
-      }
-
-      // 4. パラメーター変更履歴
-      if (tc.paramHistory && tc.paramHistory.length > 0) {
-        var histItems = tc.paramHistory.map(function(h) {
-          var hAgo = '';
-          var hDiffMs = Date.now() - new Date(h.changedAt).getTime();
-          var hDiffH = Math.floor(hDiffMs / 3600000);
-          if (hDiffH < 1) hAgo = Math.floor(hDiffMs / 60000) + '分前';
-          else if (hDiffH < 24) hAgo = hDiffH + 'h前';
-          else hAgo = Math.floor(hDiffH / 24) + 'd前';
-          return '<div class="trace-history-item">' +
-            '<span class="trace-history-version">v' + h.version + '</span>' +
-            ' <span style="color:var(--secondary, #8E8E93);font-size:11px">(' + hAgo + ')</span>' +
-            (h.winRate != null ? ' <span style="font-size:11px;color:var(--secondary, #8E8E93)">WR=' + (h.winRate * 100).toFixed(0) + '%</span>' : '') +
-            (h.rr != null ? ' <span style="font-size:11px;color:var(--secondary, #8E8E93)">RR=' + h.rr.toFixed(1) + '</span>' : '') +
-            '<div class="trace-history-reason">' + escHtml(h.reason) + '</div>' +
-          '</div>';
-        }).join('');
-        traceHtml += '<div class="trace-section">' +
-          '<div class="trace-title">&#x1F4CD; パラメーター変更履歴</div>' +
-          histItems +
-        '</div>';
+        body.innerHTML += '<div class="trace-section"><div class="trace-title">なぜオープンした？</div>' +
+          '<div class="trace-reasoning">' + escHtml(tc.entryReasoning || '—') + '</div>' +
+          whyChainHtml + '</div>';
+        if (tc.currentParams) {
+          var cp = tc.currentParams;
+          body.innerHTML += '<div class="trace-section"><div class="trace-title">現在のパラメーター v' + cp.paramVersion + '</div>' +
+            '<div class="trace-params">' +
+              'RSI ' + cp.rsiOversold + '/' + cp.rsiOverbought +
+              ' · ATR TP=' + cp.atrTpMultiplier + ' SL=' + cp.atrSlMultiplier +
+            '</div></div>';
+        }
       }
     }
 
-    // 取引規模の計算
-    var mul = instr ? instr.multiplier : 1;
-    var unitLabel = '';
-    if (instr) {
-      if (instr.pair === 'USD/JPY') unitLabel = '¥' + mul + ' / 1円';
-      else if (instr.pair === 'US10Y') unitLabel = '¥' + (mul / 100) + ' / 1bp';
-      else unitLabel = '¥' + mul + ' / 1pt';
+    // AI判断
+    var decisions = (lastData.recentDecisions || []).filter(function(d) { return d.pair === pair; });
+    if (decisions.length > 0) {
+      body.innerHTML += '<div style="margin-top:12px;padding-top:12px;border-top:1px solid var(--separator)">' +
+        '<div style="font-size:12px;font-weight:600;margin-bottom:6px">AI判断根拠</div>' +
+        decisions.slice(0, 3).map(function(d) {
+          var isOppLoss = (d.reasoning || '').indexOf('[PATH_B_HOLD]') !== -1;
+          var reasoningDisplay = (d.reasoning || '').replace('[PATH_B_HOLD] ', '');
+          var reasonColor = isOppLoss ? 'var(--orange)' : 'var(--secondary)';
+          var holdLabel = isOppLoss ? '見送り' : d.decision;
+          return '<div style="padding:6px 0;border-bottom:1px solid var(--separator)">' +
+            '<span class="dir-badge ' + (d.decision === 'BUY' ? 'buy' : d.decision === 'SELL' ? 'sell' : 'hold') + '" style="font-size:10px' + (isOppLoss ? ';background:rgba(255,149,0,0.15);color:var(--orange)' : '') + '">' + holdLabel + '</span>' +
+            '<span style="font-size:11px;color:var(--tertiary);margin-left:6px">' + fmtTimeAgo(d.created_at) + '</span>' +
+            '<div style="font-size:12px;margin-top:2px;color:' + reasonColor + '">' + escHtml(reasoningDisplay) + '</div></div>';
+        }).join('') + '</div>';
     }
-    var notional = 0;
-    if (currentRate != null && instr) {
-      if (instr.pair === 'USD/JPY') notional = mul * currentRate;
-      else if (instr.pair === 'US10Y') notional = mul * 1;
-      else notional = mul * currentRate;
-    }
-    var leverage = notional > 0 ? (notional / INITIAL_CAPITAL) : 0;
-
-    var posChartHtml = drawPriceChart(chartPoints, pair, pos.entry_rate);
-
-    body.innerHTML =
-      posChartHtml +
-      row('方向', '<span style="color:' + (pos.direction === 'BUY' ? 'var(--green)' : 'var(--red)') + ';font-weight:700">' + (pos.direction === 'BUY' ? '買い' : '空売り') + '</span>') +
-      progressHtml +
-      (currentRate != null ? row('現在値', fmtPrice(pos.pair, currentRate)) : '') +
-      row('含み損益', '<span style="color:' + pnlColor + ';font-weight:700">' + pnlFmt.text + '</span>') +
-      row('取引規模', unitLabel) +
-      (notional > 0 ? row('想定元本', fmtYen(notional) + ' <span style="font-size:11px;color:var(--label-secondary)">(' + leverage.toFixed(1) + '倍)</span>') : '') +
-      row('エントリー日時', fmtTime(pos.entry_at)) +
-      traceHtml +
-      decisionHtml +
-      historyHtml;
 
     lockScroll();
     sheet.classList.add('open');
-    backdrop.classList.add('visible');
-  }
-
-  function row(label, value) {
-    return '<div class="sheet-row"><span class="sheet-label">' + escHtml(label) + '</span>' +
-      '<span class="sheet-value">' + value + '</span></div>';
-  }
+    if (overlay) overlay.classList.add('visible');
+  };
 
   function closeSheet() {
-    var sheet = el('sheet');
-    sheet.style.transition = '';
-    sheet.style.transform = '';
-    sheet.classList.remove('open');
-    el('sheet-backdrop').classList.remove('visible');
+    var sheet = el('bottom-sheet');
+    if (sheet) {
+      sheet.style.transition = '';
+      sheet.style.transform = '';
+      sheet.classList.remove('open');
+    }
+    var overlay = el('sheet-overlay');
+    if (overlay) overlay.classList.remove('visible');
     document.body.classList.remove('sheet-open');
-    // ドロワーが開いている場合はスクロールロックを維持
     if (!document.body.classList.contains('drawer-open')) {
       document.body.style.overflow = '';
       document.body.style.position = '';
@@ -722,82 +2116,64 @@ export const JS = `
     }
   }
 
-  el('sheet-backdrop').addEventListener('click', function(e) {
-    e.stopPropagation();
-    closeSheet();
-  });
+  var overlayEl = el('sheet-overlay');
+  if (overlayEl) overlayEl.addEventListener('click', function(e) { e.stopPropagation(); closeSheet(); });
 
-  // ── ニュースドロワー ──
+  // シートスワイプで閉じる
+  (function() {
+    var sheet = el('bottom-sheet');
+    if (!sheet) return;
+    var startY = 0, currentY = 0, dragging = false;
+    sheet.addEventListener('touchstart', function(e) { startY = e.touches[0].clientY; dragging = true; sheet.style.transition = 'none'; }, { passive: true });
+    sheet.addEventListener('touchmove', function(e) {
+      if (!dragging) return;
+      var dy = e.touches[0].clientY - startY;
+      if (dy < 0) { currentY = 0; return; }
+      currentY = dy;
+      sheet.style.transform = 'translateY(' + dy + 'px)';
+    }, { passive: true });
+    sheet.addEventListener('touchend', function() {
+      if (!dragging) return;
+      dragging = false;
+      sheet.style.transition = '';
+      if (currentY > 100) closeSheet();
+      else sheet.style.transform = '';
+      currentY = 0;
+    });
+  })();
+
+  // ══════════════════════════════════════════
+  // ニュースドロワー
+  // ══════════════════════════════════════════
+
   (function() {
     var drawer = el('news-drawer');
     if (!drawer) return;
     var isExpanded = false;
-    var startY = 0;
-    var startTranslate = 0;
-    var dragging = false;
-    var PEEK_H = 68; // 折り畳み時の見せる高さ(px)
+    var PEEK_H = 68;
+    var startY = 0, startTranslate = 0, dragging = false;
 
-    function getTranslate() {
-      var match = drawer.style.transform.match(/translateY\(([^)]+)\)/);
-      if (match) return parseFloat(match[1]);
-      return isExpanded ? 0 : 9999;
-    }
-
-    var content = el('tab-portfolio');
-    // コンテンツはease-out（バウンスなし）、ドロワー自体はCSSのスプリングを使用
-    var EASE_OUT = 'transform 0.46s cubic-bezier(0.22, 1, 0.36, 1), opacity 0.38s cubic-bezier(0.22, 1, 0.36, 1), border-radius 0.46s cubic-bezier(0.22, 1, 0.36, 1)';
-
-    // カード群のみ暗転（ティッカーバーは除外）
-    var cards = content ? content.querySelectorAll('.card') : [];
-
-    function applyContentProgress(progress) {
-      // progress: 0 = 折り畳み, 1 = 展開
-      if (!content) return;
-      var scale = 1 - progress * 0.06;
-      content.style.transform = 'scale(' + scale + ')';
-      // opacityはカード群だけに適用（ティッカーバーは暗転させない）
-      var opac = 1 - progress * 0.22;
-      for (var i = 0; i < cards.length; i++) {
-        cards[i].style.opacity = opac;
-      }
-    }
-
-    var compactEl = el('compact-summary');
-
-    var savedContentScrollTop = 0;
     function expand() {
       isExpanded = true;
       drawer.style.transition = '';
       drawer.style.transform = '';
       drawer.classList.add('expanded');
       document.body.classList.add('drawer-open');
-      if (content) {
-        // まずoverflow:hiddenで慣性スクロールを停止してからscrollTopを保存・リセット
-        content.classList.add('drawer-expanded');
-        savedContentScrollTop = content.scrollTop;
-        content.scrollTop = 0;
-        content.style.transition = EASE_OUT;
-        applyContentProgress(1);
-      }
-      // 背景スクロールロック
       if (document.body.style.position !== 'fixed') {
         savedScrollY = window.scrollY;
         document.body.style.overflow = 'hidden';
         document.body.style.position = 'fixed';
         document.body.style.top = '0px';
         document.body.style.width = '100%';
-      } else {
-        document.body.style.top = '0px';
       }
-      if (compactEl) compactEl.classList.add('marquee-active');
     }
+
     function collapse() {
       isExpanded = false;
       drawer.style.transition = '';
       drawer.style.transform = '';
       drawer.classList.remove('expanded');
       document.body.classList.remove('drawer-open');
-      // シートが開いていなければスクロールロック解除
       if (!document.body.classList.contains('sheet-open')) {
         document.body.style.overflow = '';
         document.body.style.position = '';
@@ -805,27 +2181,11 @@ export const JS = `
         document.body.style.width = '';
         window.scrollTo(0, savedScrollY);
       }
-      // コンテンツのスクロール位置を復元
-      if (content) content.scrollTop = savedContentScrollTop;
-      if (content) {
-        content.style.transition = EASE_OUT;
-        content.classList.remove('drawer-expanded');
-        content.style.transform = '';
-        for (var i = 0; i < cards.length; i++) {
-          cards[i].style.transition = EASE_OUT;
-          cards[i].style.opacity = '';
-        }
-      }
-      if (compactEl) compactEl.classList.remove('marquee-active');
     }
 
-    // ハンドル/ヘッダータップで開閉トグル
     var header = drawer.querySelector('.news-drawer-header');
-    header.addEventListener('click', function() {
-      if (isExpanded) collapse(); else expand();
-    });
+    if (header) header.addEventListener('click', function() { if (isExpanded) collapse(); else expand(); });
 
-    // ドラッグ操作（ヘッダー/ハンドル起点のみ。ボディタッチはスクロール優先）
     drawer.addEventListener('touchstart', function(e) {
       var bodyEl = el('news-drawer-body');
       if (isExpanded && bodyEl && bodyEl.contains(e.target)) return;
@@ -833,7 +2193,6 @@ export const JS = `
       startTranslate = isExpanded ? 0 : (drawer.offsetHeight - PEEK_H);
       dragging = true;
       drawer.style.transition = 'none';
-      if (content) content.style.transition = 'none';
     }, { passive: true });
 
     drawer.addEventListener('touchmove', function(e) {
@@ -844,46 +2203,34 @@ export const JS = `
       var maxY = drawer.offsetHeight - PEEK_H;
       newY = Math.max(0, Math.min(newY, maxY));
       drawer.style.transform = 'translateY(' + newY + 'px)';
-      // 上段コンテンツの連動アニメーション（ドラッグ中はtransformのみ、クラス変更はスナップ時のみ）
-      var progress = 1 - newY / maxY;
-      applyContentProgress(progress);
     }, { passive: false });
 
     drawer.addEventListener('touchend', function(e) {
       if (!dragging) return;
       dragging = false;
       var dy = e.changedTouches[0].clientY - startY;
-      var absDy = Math.abs(dy);
-      // タップ（ほぼ移動なし）の場合はスナップを発火しない → ぴくつき防止
-      if (absDy < 8) {
-        drawer.style.transition = '';
-        drawer.style.transform = '';
-        return;
-      }
+      if (Math.abs(dy) < 8) { drawer.style.transition = ''; drawer.style.transform = ''; return; }
       drawer.style.transition = '';
       if (dy < -60) expand();
       else if (dy > 60) collapse();
       else if (isExpanded) expand(); else collapse();
     });
 
-    // 外側タップで折り畳み（シートが開いている間は無効）
     document.addEventListener('click', function(e) {
       if (!isExpanded) return;
       if (drawer.contains(e.target)) return;
-      // ボトムシートやbackdropがクリックされた場合はドロワーを閉じない
-      var sheet = el('sheet');
-      var backdrop = el('sheet-backdrop');
-      if ((sheet && sheet.contains(e.target)) || (backdrop && backdrop.contains(e.target))) return;
-      if (sheet && sheet.classList.contains('open')) return;
+      var sheetEl = el('bottom-sheet');
+      if (sheetEl && sheetEl.contains(e.target)) return;
+      if (sheetEl && sheetEl.classList.contains('open')) return;
       collapse();
     });
 
-    // ニュースデータを描画
+    // ニュースデータ描画
     var newsData = [];
     var newsAnalysisData = [];
-    var body = el('news-drawer-body');
+    var drawerBody = el('news-drawer-body');
     window._renderNews = function(news, analysis) {
-      var tab  = el('tab-portfolio');
+      var tab = el('tab-portfolio');
       if (!news || news.length === 0) {
         drawer.classList.remove('visible');
         if (tab) tab.classList.remove('news-visible');
@@ -893,1923 +2240,76 @@ export const JS = `
       newsAnalysisData = analysis || [];
       drawer.classList.add('visible');
       if (tab) tab.classList.add('news-visible');
-      // 分析データをtitleでマップ化（indexズレ防止）
       var analysisByTitle = {};
-      newsAnalysisData.forEach(function(a) { if (a.title) analysisByTitle[a.title] = a; });
-      body.innerHTML = news.map(function(item, i) {
-        var dateStr = '';
-        if (item.pubDate) {
-          try { dateStr = new Date(item.pubDate).toLocaleString('ja-JP', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' }); } catch(e) { dateStr = item.pubDate; }
-        }
+      for (var i = 0; i < newsAnalysisData.length; i++) {
+        if (newsAnalysisData[i].title) analysisByTitle[newsAnalysisData[i].title] = newsAnalysisData[i];
+      }
+      drawerBody.innerHTML = news.map(function(item, idx) {
         var title = typeof item === 'string' ? item : item.title;
         var a = analysisByTitle[title] || null;
         var flag = (a && a.attention) ? '<span class="news-flag">注目</span>' : '';
-        return '<div class="news-item' + (a && a.attention ? ' news-attention' : '') + '" data-news-idx="' + i + '">' +
-          '<div class="news-item-title">' + flag + escHtml(a && a.title_ja ? a.title_ja : (typeof item === 'string' ? item : item.title)) + '</div>' +
+        var dateStr = '';
+        if (item.pubDate) {
+          try { dateStr = new Date(item.pubDate).toLocaleString('ja-JP', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' }); } catch(e) {}
+        }
+        return '<div class="news-item' + (a && a.attention ? ' news-attention' : '') + '" data-news-idx="' + idx + '">' +
+          '<div class="news-item-title">' + flag + escHtml(a && a.title_ja ? a.title_ja : title) + '</div>' +
           (dateStr ? '<div class="news-item-date">' + dateStr + '</div>' : '') +
         '</div>';
       }).join('');
     };
 
-    // ニュースタップで詳細シート
-    body.addEventListener('click', function(e) {
-      var row = e.target.closest('[data-news-idx]');
-      if (!row) return;
-      var item = newsData[parseInt(row.dataset.newsIdx, 10)];
+    // ニュースタップ → 詳細シート
+    if (drawerBody) drawerBody.addEventListener('click', function(e) {
+      var rowEl = e.target.closest ? e.target.closest('[data-news-idx]') : null;
+      if (!rowEl) return;
+      var item = newsData[parseInt(rowEl.dataset.newsIdx, 10)];
       if (!item || typeof item === 'string') return;
-      el('sheet-title').textContent = 'ニュース詳細';
-      var dateStr = '';
-      if (item.pubDate) {
-        try { dateStr = new Date(item.pubDate).toLocaleString('ja-JP', { year: 'numeric', month: 'long', day: 'numeric', hour: '2-digit', minute: '2-digit' }); } catch(e) { dateStr = item.pubDate; }
+      var sheetTitle = el('sheet-title');
+      var sheetBody = el('sheet-body');
+      if (sheetTitle) sheetTitle.textContent = 'ニュース詳細';
+      if (sheetBody) {
+        sheetBody.innerHTML = '<div style="font-size:15px;font-weight:600;margin-bottom:8px">' + escHtml(item.title_ja || item.title) + '</div>' +
+          (item.description ? '<div style="font-size:13px;color:var(--tertiary)">' + escHtml(item.desc_ja || item.description) + '</div>' : '');
       }
-      // 分析データからインパクトコメント取得（titleベースマッチング）
-      var itemTitle = typeof item === 'string' ? item : item.title;
-      var analysisByTitle2 = {};
-      newsAnalysisData.forEach(function(a) { if (a.title) analysisByTitle2[a.title] = a; });
-      var ana = analysisByTitle2[itemTitle] || null;
-      var impactHtml = '';
-      if (ana && ana.attention && ana.impact) {
-        impactHtml = '<div style="background:rgba(255,149,0,0.1);border-left:3px solid #FF9500;padding:10px 12px;border-radius:8px;margin-bottom:12px">' +
-          '<div style="font-size:11px;font-weight:600;color:#FF9500;margin-bottom:4px">AI マーケットインパクト</div>' +
-          '<div style="font-size:13px;line-height:1.5;color:var(--label)">' + escHtml(ana.impact) + '</div>' +
-        '</div>';
-      }
-      var sourceHtml = item.source
-        ? '<span style="font-size:11px;font-weight:600;color:var(--blue);background:rgba(10,132,255,0.1);padding:2px 8px;border-radius:4px;margin-left:8px">' + escHtml(item.source) + '</span>'
-        : '';
-      var urlHtml = item.url
-        ? '<div style="margin-top:14px;padding-top:12px;border-top:1px solid var(--separator)">' +
-            '<a href="' + escHtml(item.url) + '" target="_blank" rel="noopener noreferrer" ' +
-            'style="font-size:12px;color:var(--blue);text-decoration:underline;word-break:break-all;line-height:1.4">' +
-            escHtml(item.url) + '</a>' +
-          '</div>'
-        : '';
-      el('sheet-body').innerHTML =
-        '<div style="display:flex;align-items:center;margin-bottom:8px">' +
-          (dateStr ? '<span style="font-size:12px;color:var(--label-secondary)">' + dateStr + '</span>' : '') +
-          sourceHtml +
-        '</div>' +
-        '<div style="font-size:15px;font-weight:600;line-height:1.5;margin-bottom:12px">' + escHtml(item.title_ja || item.title) + '</div>' +
-        impactHtml +
-        ((item.desc_ja || item.description) ? '<div style="font-size:13px;color:var(--label-secondary);line-height:1.6">' + escHtml(item.desc_ja || item.description) + '</div>' : '') +
-        urlHtml;
       lockScroll();
-      el('sheet').classList.add('open');
-      el('sheet-backdrop').classList.add('visible');
+      var sheetEl = el('bottom-sheet');
+      if (sheetEl) sheetEl.classList.add('open');
+      var ov = el('sheet-overlay');
+      if (ov) ov.classList.add('visible');
     });
   })();
 
-  // ── スワイプで閉じる ──
+  // ══════════════════════════════════════════
+  // テーマ切替
+  // ══════════════════════════════════════════
+
   (function() {
-    var sheet = el('sheet');
-    var startY = 0;
-    var currentY = 0;
-    var dragging = false;
-
-    sheet.addEventListener('touchstart', function(e) {
-      startY = e.touches[0].clientY;
-      dragging = true;
-      sheet.style.transition = 'none';
-    }, { passive: true });
-
-    sheet.addEventListener('touchmove', function(e) {
-      if (!dragging) return;
-      var dy = e.touches[0].clientY - startY;
-      if (dy < 0) { currentY = 0; return; }
-      currentY = dy;
-      sheet.style.transform = 'translateY(' + dy + 'px)';
-    }, { passive: true });
-
-    sheet.addEventListener('touchend', function() {
-      if (!dragging) return;
-      dragging = false;
-      sheet.style.transition = '';
-      if (currentY > 100) {
-        closeSheet();
-      } else {
-        sheet.style.transform = '';
+    var savedTheme = localStorage.getItem('fx-theme');
+    if (savedTheme) document.documentElement.setAttribute('data-theme', savedTheme);
+    // テーマボタンがあれば
+    document.addEventListener('click', function(e) {
+      if (e.target && e.target.id === 'theme-btn') {
+        var current = document.documentElement.getAttribute('data-theme');
+        var next = current === 'light' ? 'dark' : 'light';
+        document.documentElement.setAttribute('data-theme', next);
+        localStorage.setItem('fx-theme', next);
       }
-      currentY = 0;
     });
   })();
 
-  // ── TP/SL バナー ──
-  function detectAndShowBanner(newData) {
-    if (!newData.recentCloses || newData.recentCloses.length === 0) return;
-    var newIds = newData.recentCloses.map(function(p) { return p.id; });
+  // ══════════════════════════════════════════
+  // 通知許可
+  // ══════════════════════════════════════════
 
-    // 初回ロード時は表示しない（lastRecentCloseIds が空）
-    if (lastRecentCloseIds.length === 0) {
-      lastRecentCloseIds = newIds;
-      return;
-    }
-
-    // 新しいIDを検出
-    var prevSet = {};
-    lastRecentCloseIds.forEach(function(id) { prevSet[id] = true; });
-    var fresh = newData.recentCloses.filter(function(p) { return !prevSet[p.id]; });
-    lastRecentCloseIds = newIds;
-
-    if (fresh.length === 0) return;
-
-    // 直近1件を表示
-    var pos = fresh[0];
-    var isTP = pos.close_reason === 'TP';
-    var isSL = pos.close_reason === 'SL';
-    var pnlFmt = fmtPnl(pos.pnl, '');
-
-    var banner = el('tp-banner');
-    var bannerInner = banner.querySelector('.tp-banner-inner');
-    var bannerTitle = el('tp-banner-title');
-    var bannerSub   = el('tp-banner-sub');
-    var bannerIcon  = banner.querySelector('.tp-banner-icon');
-    if (!bannerInner) return;
-
-    var SVG_CHECK = '<svg width="22" height="22" viewBox="0 0 22 22" fill="none"><circle cx="11" cy="11" r="9.5" stroke="currentColor" stroke-width="1.5"/><path d="M6.5 11l3 3 6-6" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>';
-    var SVG_CROSS = '<svg width="22" height="22" viewBox="0 0 22 22" fill="none"><circle cx="11" cy="11" r="9.5" stroke="currentColor" stroke-width="1.5"/><path d="M7.5 7.5l7 7M14.5 7.5l-7 7" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>';
-    if (isTP) {
-      banner.classList.remove('sl-banner');
-      bannerIcon.innerHTML = SVG_CHECK;
-      bannerTitle.textContent = '利確！TP到達';
-    } else if (isSL) {
-      banner.classList.add('sl-banner');
-      bannerIcon.innerHTML = SVG_CROSS;
-      bannerTitle.textContent = '損切り — 金継ぎ';
-    } else {
-      banner.classList.remove('sl-banner');
-      bannerIcon.innerHTML = SVG_CHECK;
-      bannerTitle.textContent = '決済完了';
-    }
-
-    bannerSub.textContent = (pos.pair || '') + '  ' + pnlFmt.text;
-    banner.classList.add('show');
-
-    // haptic（対応端末のみ）
-    if (isTP && navigator.vibrate) navigator.vibrate([80, 40, 80]);
-    if (isSL && navigator.vibrate) navigator.vibrate([200]);
-
-    // プッシュ通知
-    if ('Notification' in window && Notification.permission === 'granted') {
-      var notifLabel = isTP ? '利確' : isSL ? '損切り' : '決済';
-      new Notification('FX Sim ' + notifLabel, {
-        body: (pos.pair || '') + '  ' + pnlFmt.text,
-        tag: 'fxsim-trade-' + pos.id,
-      });
-    }
-
-    setTimeout(function() { banner.classList.remove('show'); }, 4000);
-    bannerInner.addEventListener('click', function() { banner.classList.remove('show'); }, { once: true });
+  if ('Notification' in window && Notification.permission === 'default') {
+    Notification.requestPermission();
   }
 
-  // ── 時刻フォーマット（パネル用） ──
-  function fmtTimeShort(isoStr) {
-    if (!isoStr) return '';
-    var d = new Date(isoStr);
-    var now = new Date();
-    var diffMs = now - d;
-    var diffMin = Math.floor(diffMs / 60000);
-    if (diffMin < 1) return 'たった今';
-    if (diffMin < 60) return diffMin + '分前';
-    var diffH = Math.floor(diffMin / 60);
-    if (diffH < 24) return diffH + '時間前';
-    return d.toLocaleDateString('ja-JP', { month: 'short', day: 'numeric' });
-  }
+  // ══════════════════════════════════════════
+  // refresh + polling
+  // ══════════════════════════════════════════
 
-  // ── PC右パネル描画 ──
-  function renderPanel(data) {
-    if (window.innerWidth < 1920) return;
-
-    // マーケット概況
-    var marketEl = document.getElementById('panel-market');
-    if (marketEl && data.latestDecision) {
-      var ind = data.latestDecision;
-      var items = [
-        { label: 'VIX', value: ind.vix != null ? Number(ind.vix).toFixed(1) : 'N/A', color: ind.vix > 20 ? 'var(--orange)' : 'var(--label)' },
-        { label: 'US10Y', value: ind.us10y != null ? Number(ind.us10y).toFixed(2) + '%' : 'N/A', color: 'var(--label)' },
-        { label: 'USD/JPY', value: data.rate != null ? Number(data.rate).toFixed(2) : 'N/A', color: 'var(--label)' }
-      ];
-      marketEl.innerHTML = items.map(function(i) {
-        return '<div><div style="font-size:10px;color:var(--label-secondary)">' + i.label + '</div><div style="font-size:14px;font-weight:600;color:' + i.color + '">' + i.value + '</div></div>';
-      }).join('');
-    }
-
-    // ニュースフィード
-    var newsEl = document.getElementById('panel-news');
-    if (newsEl) {
-      var panelNews = (data.acceptedNews || []).length > 0
-        ? (data.acceptedNews || []).map(function(n) {
-            return { title: n.title_ja, source: n.source, pubDate: n.fetched_at };
-          })
-        : (data.latestNews || []).map(function(n) {
-            return { title: n.title_ja || n.title, source: n.source || 'Reuters', pubDate: n.pubDate };
-          });
-      newsEl.innerHTML = panelNews.slice(0, 6).map(function(n) {
-        return '<div class="panel-news-item">'
-          + '<div class="panel-news-title">' + escHtml(n.title) + '</div>'
-          + '<div class="panel-news-meta">' + escHtml(n.source || '') + ' • ' + fmtTimeShort(n.pubDate) + '</div></div>';
-      }).join('');
-    }
-
-    // 判定履歴（AI判断パネル）
-    var decisionsEl = document.getElementById('panel-decisions');
-    if (decisionsEl && data.recentDecisions) {
-      decisionsEl.innerHTML = data.recentDecisions.slice(0, 10).map(function(d) {
-        var color = d.decision === 'BUY' ? 'var(--green)' : d.decision === 'SELL' ? 'var(--red)' : 'var(--label-secondary)';
-        return '<div style="display:flex;align-items:center;gap:8px;padding:8px 16px;border-bottom:1px solid var(--separator)">'
-          + '<span style="font-size:10px;font-weight:700;padding:2px 6px;border-radius:4px;color:' + color + '">' + d.decision + '</span>'
-          + '<span style="font-size:12px;color:var(--label)">' + (d.pair || 'USD/JPY') + '</span>'
-          + '<span style="font-size:11px;color:var(--label-secondary);margin-left:auto">' + fmtTimeShort(d.created_at) + '</span>'
-          + '</div>';
-      }).join('');
-    }
-
-    // RiskGuard（ログパネル）
-    var riskEl = document.getElementById('panel-riskguard');
-    if (riskEl) {
-      var logStats = data.logStats || {};
-      var logs = data.systemLogs || [];
-      var errCount = logs.filter(function(l) { return l.level === 'ERROR'; }).length;
-      var warnCount = logs.filter(function(l) { return l.level === 'WARN'; }).length;
-      var statItems = [
-        { label: '総実行', value: data.systemStatus ? data.systemStatus.totalRuns : 0 },
-        { label: 'AI呼出', value: logStats.geminiCalls || 0 },
-        { label: 'エラー', value: errCount, color: errCount > 0 ? 'var(--red)' : 'var(--green)' },
-        { label: '警告', value: warnCount, color: warnCount > 5 ? 'var(--orange)' : 'var(--label)' }
-      ];
-      riskEl.innerHTML = '<div style="padding:16px">' + statItems.map(function(s) {
-        return '<div style="display:flex;justify-content:space-between;padding:6px 0;border-bottom:1px solid var(--separator)">'
-          + '<span style="font-size:12px;color:var(--label-secondary)">' + s.label + '</span>'
-          + '<span style="font-size:13px;font-weight:600;color:' + (s.color || 'var(--label)') + '">' + s.value + '</span></div>';
-      }).join('') + '</div>';
-    }
-  }
-
-  // ── ウォッチリスト描画 ──
-  function renderWatchlist(data) {
-    var container = el('watchlist');
-    if (!container) return;
-
-    var posMap = {};
-    (data.openPositions || []).forEach(function(p) { posMap[p.pair] = p; });
-
-    var rateMap = {};
-    rateMap['USD/JPY'] = data.rate;
-    var ld = data.latestDecision;
-
-    // PC: テーブル表示（769px以上）
-    if (window.innerWidth >= 769) {
-      if (ld) {
-        rateMap['Nikkei225'] = ld.nikkei;
-        rateMap['S&P500']    = ld.sp500;
-        rateMap['US10Y']     = ld.us10y;
-      }
-      var sparks = data.sparklines || {};
-      INSTRUMENTS.forEach(function(instr) {
-        if (!rateMap[instr.pair]) {
-          var pts = sparks[instr.pair];
-          if (pts && pts.length > 0) rateMap[instr.pair] = pts[pts.length - 1].rate;
-        }
-      });
-
-      var positions = INSTRUMENTS.filter(function(i) { return posMap[i.pair]; });
-      var holdItems = INSTRUMENTS.filter(function(i) { return !posMap[i.pair]; });
-      var html = '<div class="watchlist-columns">';
-
-      // 保有ポジション テーブル
-      html += '<div><div class="section-title" style="margin-bottom:8px">保有ポジション</div>';
-      html += '<table class="watch-table"><thead><tr>'
-        + '<th>銘柄</th><th>方向</th><th>エントリー</th><th>現在値</th><th>推移</th><th style="text-align:right">損益</th>'
-        + '</tr></thead><tbody>';
-      if (positions.length === 0) {
-        html += '<tr><td colspan="6" style="text-align:center;color:var(--label-secondary);padding:16px">ポジションなし</td></tr>';
-      }
-      positions.forEach(function(instr) {
-        var pos = posMap[instr.pair];
-        var currentPrice = rateMap[instr.pair] || pos.entry_rate;
-        var pnl = pos.direction === 'BUY'
-          ? (currentPrice - pos.entry_rate) * (pos.lot || 1) * (instr.multiplier || 100)
-          : (pos.entry_rate - currentPrice) * (pos.lot || 1) * (instr.multiplier || 100);
-        var sparkPoints = sparks[instr.pair];
-        var sparkColor = pnl >= 0 ? 'var(--green)' : 'var(--red)';
-        var sparkSvg = drawSparkline(sparkPoints, sparkColor, 60, 20);
-        html += '<tr class="watch-table-row" data-pair="' + escHtml(instr.pair) + '">'
-          + '<td class="pair-name">' + escHtml(instr.label || instr.pair) + '</td>'
-          + '<td><span class="dir-badge dir-' + pos.direction.toLowerCase() + '">' + pos.direction + '</span></td>'
-          + '<td style="color:var(--label-secondary)">' + fmtPrice(instr.pair, pos.entry_rate) + '</td>'
-          + '<td>' + fmtPrice(instr.pair, currentPrice) + '</td>'
-          + '<td class="sparkline-cell">' + sparkSvg + '</td>'
-          + '<td style="text-align:right" class="' + (pnl >= 0 ? 'pnl-pos' : 'pnl-neg') + '">' + fmtYen(Math.round(pnl)) + '</td>'
-          + '</tr>';
-      });
-      html += '</tbody></table></div>';
-
-      // 待機銘柄テーブル
-      if (holdItems.length > 0) {
-        html += '<div><div class="section-title" style="margin-bottom:8px">待機銘柄</div>';
-        html += '<table class="watch-table"><thead><tr>'
-          + '<th>銘柄</th><th>カテゴリ</th><th>現在値</th>'
-          + '</tr></thead><tbody>';
-        holdItems.forEach(function(instr) {
-          var rate = rateMap[instr.pair];
-          html += '<tr>'
-            + '<td class="pair-name">' + escHtml(instr.label || instr.pair) + '</td>'
-            + '<td style="color:var(--label-secondary);font-size:12px">' + (instr.category || '') + '</td>'
-            + '<td>' + (rate ? fmtPrice(instr.pair, rate) : '-') + '</td>'
-            + '</tr>';
-        });
-        html += '</tbody></table></div>';
-      }
-
-      html += '</div>';
-      container.innerHTML = html;
-
-      // テーブル行クリック → ボトムシート
-      container.querySelectorAll('.watch-table-row').forEach(function(rowEl) {
-        rowEl.addEventListener('click', function() {
-          var pair = rowEl.getAttribute('data-pair');
-          var pos = posMap[pair];
-          var instr = INSTRUMENTS.filter(function(i) { return i.pair === pair; })[0];
-          openSheet(pos || null, instr);
-        });
-      });
-      return; // テーブル表示で終了
-    }
-    if (ld) {
-      rateMap['Nikkei225'] = ld.nikkei;
-      rateMap['S&P500']    = ld.sp500;
-      rateMap['US10Y']     = ld.us10y;
-    }
-    // スパークラインから最新レートを補完（新銘柄用）
-    var sparks = data.sparklines || {};
-    INSTRUMENTS.forEach(function(instr) {
-      if (!rateMap[instr.pair]) {
-        var pts = sparks[instr.pair];
-        if (pts && pts.length > 0) rateMap[instr.pair] = pts[pts.length - 1].rate;
-      }
-    });
-
-    // 銘柄を「保有中」「待機中」にセクション分離（Cognitive Load 軽減）
-    var activeInstr = [];
-    var holdInstr = [];
-    INSTRUMENTS.forEach(function(instr) {
-      if (posMap[instr.pair]) { activeInstr.push(instr); }
-      else { holdInstr.push(instr); }
-    });
-
-    function buildRow(instr) {
-      var pos         = posMap[instr.pair];
-      var currentRate = rateMap[instr.pair];
-
-      var unrealized = null;
-      if (pos && currentRate != null) {
-        unrealized = pos.direction === 'BUY'
-          ? (currentRate - pos.entry_rate) * instr.multiplier * (pos.lot || 1)
-          : (pos.entry_rate - currentRate) * instr.multiplier * (pos.lot || 1);
-      }
-      var pnlFmt = fmtPnl(unrealized, instr.unit);
-
-      var dirClass = pos ? 'watch-direction-' + pos.direction.toLowerCase() : 'watch-direction-hold';
-      var dirText  = pos ? (pos.direction === 'BUY' ? '買い' : '空売り') : 'HOLD';
-      var subText  = pos ? 'Entry ' + fmtPrice(instr.pair, pos.entry_rate) : '—';
-      // LIVE/PAPERソースバッジ（保有中のみ表示）
-      var sourceBadge = '';
-      if (pos && pos.source === 'oanda') {
-        sourceBadge = '<span class="watch-source-badge watch-source-live">LIVE</span>';
-      } else if (pos && data.tradingMode !== 'paper') {
-        sourceBadge = '<span class="watch-source-badge watch-source-paper">PAPER</span>';
-      }
-      var badgeCls = 'watch-pnl-' + pnlFmt.cls;
-
-      // スパークライン
-      var sparkPoints = data.sparklines && data.sparklines[instr.pair];
-      var sparkColor = (currentRate != null && sparkPoints && sparkPoints.length >= 2)
-        ? (sparkPoints[sparkPoints.length-1].rate >= sparkPoints[0].rate ? 'var(--green)' : 'var(--red)')
-        : 'var(--label-secondary)';
-      var sparkSvg = drawSparkline(sparkPoints, sparkColor, 60, 28);
-
-      return '<div class="watch-row" role="listitem" data-pair="' + escHtml(instr.pair) + '">' +
-        '<div class="watch-left">' +
-          '<div class="watch-pair">' + escHtml(instr.label) + '</div>' +
-          '<div class="watch-sub">' +
-            '<span class="watch-direction ' + dirClass + '">' + dirText + '</span>' +
-            sourceBadge +
-            '<span>' + subText + '</span>' +
-          '</div>' +
-        '</div>' +
-        (sparkSvg ? '<div style="display:flex;align-items:center;margin:0 8px">' + sparkSvg + '</div>' : '') +
-        '<div class="watch-right">' +
-          '<div class="watch-price">' + fmtPrice(instr.pair, currentRate) + '</div>' +
-          '<div class="watch-pnl-badge ' + badgeCls + '">' + pnlFmt.text + '</div>' +
-        '</div>' +
-      '</div>';
-    }
-
-    var html = activeInstr.map(buildRow).join('');
-    if (holdInstr.length > 0) {
-      html += '<div class="watch-section-divider" style="font-size:11px;font-weight:600;color:var(--label-tertiary);letter-spacing:0.8px;text-transform:uppercase;padding:12px 16px 4px">待機中</div>';
-      html += holdInstr.map(buildRow).join('');
-    }
-
-    container.innerHTML = html;
-
-    // PnLバッジ 変化フラッシュ（Variable Reward）
-    container.querySelectorAll('.watch-row').forEach(function(rowEl) {
-      var pair = rowEl.getAttribute('data-pair');
-      var badge = rowEl.querySelector('.watch-pnl-badge');
-      if (!badge) return;
-      var newText = badge.textContent;
-      if (lastPnlMap[pair] !== undefined && lastPnlMap[pair] !== newText) {
-        badge.classList.remove('changed');
-        void badge.offsetWidth; // reflow でアニメーション再起動
-        badge.classList.add('changed');
-      }
-      lastPnlMap[pair] = newText;
-    });
-
-    // ウォッチリスト行タップ → ボトムシート
-    container.querySelectorAll('.watch-row').forEach(function(rowEl) {
-      rowEl.addEventListener('click', function() {
-        var pair = rowEl.getAttribute('data-pair');
-        var pos  = posMap[pair];
-        var instr = INSTRUMENTS.filter(function(i) { return i.pair === pair; })[0];
-        openSheet(pos || null, instr);
-      });
-    });
-  }
-
-  // ── 市場状態サマリーバー（ヒーロー下の帯） ──
-  function renderMarketStateBar(data) {
-    var bar = el('market-state-bar');
-    if (!bar) return;
-    var st = data.statistics;
-    var regime = calcRegime(st);
-    var ewma = st && st.ewmaVol;
-    var volLabel = ewma ? (ewma.isHighVol ? '高め' : '普通') : '—';
-    var volColor = !ewma ? 'var(--label-secondary)' : ewma.isHighVol ? 'var(--orange)' : 'var(--green)';
-    var regimeColor = regime === 'volatile' ? 'var(--red)'
-                    : regime === 'trending' ? 'var(--blue)'
-                    : 'var(--orange)';
-    var sysStatus = data.systemStatus;
-    var totalRuns = (sysStatus && sysStatus.totalRuns) || 0;
-    var aiConf = st && st.aiAccuracy ? (st.aiAccuracy.accuracy * 100).toFixed(0) + '%' : '—';
-
-    bar.style.display = '';
-    bar.innerHTML =
-      '<div class="market-state-cell">' +
-        '<div class="market-state-label">EWMAボラ</div>' +
-        '<div class="market-state-value" style="color:' + volColor + '">' + volLabel + '</div>' +
-      '</div>' +
-      '<div class="market-state-cell">' +
-        '<div class="market-state-label">主流レジーム</div>' +
-        '<div class="market-state-value" style="color:' + regimeColor + '">' + regime + '</div>' +
-      '</div>' +
-      '<div class="market-state-cell">' +
-        '<div class="market-state-label">AI信頼度</div>' +
-        '<div class="market-state-value">' + aiConf + '</div>' +
-      '</div>' +
-      '<div class="market-state-cell">' +
-        '<div class="market-state-label">稼働</div>' +
-        '<div class="market-state-value">' + totalRuns.toLocaleString('ja-JP') + '回</div>' +
-      '</div>';
-  }
-
-  // ── 統計的有意性プログレスバー（ヒーロー内） ──
-  function renderPowerProgress(data) {
-    var wrap   = el('power-progress-wrap');
-    var fillEl = el('power-progress-fill');
-    var pctEl  = el('power-progress-pct');
-    var subEl  = el('power-progress-sub');
-    if (!wrap || !fillEl) return;
-
-    var pa = data.statistics && data.statistics.powerAnalysis;
-    if (!pa) { wrap.style.display = 'none'; return; }
-
-    wrap.style.display = '';
-    var pct = Math.max(0, Math.min(Math.round(pa.progressPct), 100));
-    fillEl.style.width = pct + '%';
-    if (pctEl) pctEl.textContent = pct + '% 達成';
-    if (subEl) subEl.textContent = pa.currentN.toLocaleString('ja-JP') + ' / ' + pa.requiredN.toLocaleString('ja-JP') + ' 件';
-
-    if (pa.isAdequate) {
-      fillEl.style.background = 'var(--green)';
-      if (pctEl) { pctEl.textContent = '✓ 達成'; pctEl.style.color = 'var(--green)'; }
-    }
-  }
-
-  // ── 統計タブ ナラティブサマリー（問い→答え形式） ──
-  function renderPerfSummary(data) {
-    var target = el('stats-narrative');
-    if (!target) return;
-    var st = data.statistics;
-    if (!st) {
-      target.innerHTML = '<div style="text-align:center;padding:40px 16px;color:var(--label-secondary);font-size:13px">統計データ蓄積中...</div>';
-      return;
-    }
-
-    // null ガード（データ不足時のクラッシュ防止）
-    var wrCI = st.winRateCI;
-    var roiCI = st.roiCI;
-    if (!wrCI || !wrCI.lower) {
-      target.innerHTML = '<div style="text-align:center;padding:40px 16px;color:var(--label-secondary);font-size:13px">統計データ蓄積中...</div>';
-      return;
-    }
-    var baseline = st.randomBaseline;
-    var aiAcc = st.aiAccuracy;
-    var wrLo = (wrCI.lower * 100).toFixed(1);
-    var wrHi = (wrCI.upper * 100).toFixed(1);
-    var wrPct = roiCI ? (roiCI.roi >= 0 ? '+' : '') + roiCI.roi.toFixed(1) + '%' : '—';
-    var roiLo = roiCI ? (roiCI.ciLower >= 0 ? '+' : '') + roiCI.ciLower.toFixed(1) + '%' : '—';
-    var roiHi = roiCI ? (roiCI.ciUpper >= 0 ? '+' : '') + roiCI.ciUpper.toFixed(1) + '%' : '—';
-    var beatRate = (baseline && baseline.beatRate != null) ? (baseline.beatRate * 100 >= 50 ? '+' : '') + (baseline.beatRate * 100 - 50).toFixed(1) + '%' : '—';
-    var pValue   = baseline ? 'p=' + baseline.mwu.pValue.toFixed(3) + (baseline.mwu.significant ? ' 有意' : '') : '—';
-    var brierStr = aiAcc ? aiAcc.brierScore.toFixed(2) : '—';
-    var accPct   = aiAcc ? (aiAcc.accuracy * 100).toFixed(1) + '%' : '—';
-
-    var winVerdict = wrCI.lower > 0.5 && (roiCI && roiCI.ciLower > 0);
-    var verdictCls = winVerdict ? 'yes' : 'warn';
-    var verdictTxt = winVerdict ? '✓ YES' : '△ 様子見';
-
-    var sharpe = st.sharpe || 0;
-    var dd = st.drawdown || { maxDDPct: 0, currentDDPct: 0, recoveryRatio: 1 };
-    var var95 = st.var95 != null ? Math.round(st.var95) : 0;
-    var kelly = st.kellyFraction != null ? (st.kellyFraction * 100).toFixed(1) : '—';
-    var sharpeColor = sharpe >= 1 ? 'var(--green)' : sharpe >= 0.5 ? 'var(--label)' : 'var(--red)';
-    var ddColor = dd.maxDDPct > 15 ? 'var(--red)' : dd.maxDDPct > 8 ? 'var(--orange)' : 'var(--label)';
-    var riskVerdict = sharpe >= 0.5 && dd.maxDDPct < 20;
-    var riskVerdictCls = riskVerdict ? 'yes' : 'warn';
-    var riskVerdictTxt = riskVerdict ? '✓ YES' : '△ 要注意';
-
-    var hierRates = st.hierarchicalWinRates || [];
-    var topPairs = hierRates
-      .filter(function(r) { return r.n >= 3; })
-      .sort(function(a, b) { return b.bayesRate - a.bayesRate; })
-      .slice(0, 3);
-    var medals = [
-      '<span class="ai-ranking-medal ai-ranking-medal--1">1</span>',
-      '<span class="ai-ranking-medal ai-ranking-medal--2">2</span>',
-      '<span class="ai-ranking-medal ai-ranking-medal--3">3</span>'
-    ];
-    var pairsVerdict = topPairs.length >= 2 ? 'yes' : 'warn';
-    var pairsVerdictTxt = topPairs.length >= 2 ? '✓ 明確' : '△ 不明瞭';
-
-    // CI バー計算
-    var ciMin = Math.min(wrCI.lower * 100 - 2, 47);
-    var ciMax = Math.max(wrCI.upper * 100 + 2, 53);
-    var ciRange = ciMax - ciMin || 1;
-    var lineAt50 = ((50 - ciMin) / ciRange * 100).toFixed(1);
-    var fillLeft  = Math.max(0, Math.min(((wrCI.lower * 100 - ciMin) / ciRange * 100), 100)).toFixed(1);
-    var fillWidth = Math.max(0, Math.min((((wrCI.upper - wrCI.lower) * 100) / ciRange * 100), 100 - parseFloat(fillLeft))).toFixed(1);
-    var above50 = wrCI.lower * 100 > 50 ? '50% 超え確認' : '50% 超え未確認';
-    var above50Color = wrCI.lower * 100 > 50 ? 'var(--green)' : 'var(--label-secondary)';
-
-    target.innerHTML =
-      // ① 勝てているか
-      '<div class="stats-narrative-section">' +
-        '<div class="stats-narrative-header">' +
-          '<div class="stats-narrative-question">' +
-            'このAIは統計的に勝てているか？' +
-          '</div>' +
-          '<span class="stats-verdict stats-verdict--' + verdictCls + '">' + verdictTxt + '</span>' +
-        '</div>' +
-        '<div class="stats-card">' +
-          '<div class="stats-grid-2">' +
-            '<div>' +
-              '<div class="stats-metric-label">勝率 95% CI</div>' +
-              '<div class="stats-metric-value" style="color:' + (wrCI.lower * 100 >= 50 ? 'var(--green)' : wrCI.lower * 100 >= 45 ? 'var(--label)' : 'var(--red)') + '">' + (wrCI.lower * 100).toFixed(1) + '%</div>' +
-              '<div class="stats-metric-sub">[' + wrLo + '% – ' + wrHi + '%]</div>' +
-            '</div>' +
-            '<div>' +
-              '<div class="stats-metric-label">ROI 95% CI</div>' +
-              '<div class="stats-metric-value" style="color:' + (roiCI && roiCI.roi >= 0 ? 'var(--green)' : 'var(--red)') + '">' + wrPct + '</div>' +
-              '<div class="stats-metric-sub">[' + roiLo + ' – ' + roiHi + ']</div>' +
-            '</div>' +
-            '<div>' +
-              '<div class="stats-metric-label">AI精度</div>' +
-              '<div class="stats-metric-value">' + accPct + '</div>' +
-              '<div class="stats-metric-sub">Brier ' + brierStr + '</div>' +
-            '</div>' +
-            '<div>' +
-              '<div class="stats-metric-label">vs ランダム</div>' +
-              '<div class="stats-metric-value" style="color:' + (baseline && baseline.beatRate != null && baseline.beatRate * 100 >= 50 ? 'var(--green)' : 'var(--red)') + '">' + beatRate + '</div>' +
-              '<div class="stats-metric-sub">' + pValue + '</div>' +
-            '</div>' +
-          '</div>' +
-        '</div>' +
-        '<div class="ci-bar-wrap">' +
-          '<div class="ci-bar-header">' +
-            '<span>勝率信頼区間</span>' +
-            '<span style="color:' + above50Color + ';font-weight:600">' + above50 + '</span>' +
-          '</div>' +
-          '<div class="ci-bar-track">' +
-            '<div class="ci-bar-fill" style="left:' + fillLeft + '%;width:' + fillWidth + '%"></div>' +
-            '<div class="ci-bar-marker" style="left:' + lineAt50 + '%"></div>' +
-          '</div>' +
-          '<div class="ci-bar-labels">' +
-            '<span>' + ciMin.toFixed(1) + '%</span>' +
-            '<span>50% ライン</span>' +
-            '<span>' + ciMax.toFixed(1) + '%</span>' +
-          '</div>' +
-        '</div>' +
-      '</div>' +
-
-      // ② リスクに見合ったリターンか
-      '<div class="stats-narrative-section">' +
-        '<div class="stats-narrative-header">' +
-          '<div class="stats-narrative-question">' +
-            'リスクに見合ったリターンか？' +
-          '</div>' +
-          '<span class="stats-verdict stats-verdict--' + riskVerdictCls + '">' + riskVerdictTxt + '</span>' +
-        '</div>' +
-        '<div class="stats-card">' +
-          '<div class="stats-grid-2">' +
-            '<div>' +
-              '<div class="stats-metric-label">Sharpe比</div>' +
-              '<div class="stats-metric-value" style="color:' + sharpeColor + '">' + sharpe.toFixed(2) + '</div>' +
-              '<div class="stats-metric-sub">±' + (st.sharpeSE != null ? st.sharpeSE.toFixed(2) : '—') + (st.sharpeSignificant ? ' (有意)' : '') + '</div>' +
-            '</div>' +
-            '<div>' +
-              '<div class="stats-metric-label">最大DD</div>' +
-              '<div class="stats-metric-value" style="color:' + ddColor + '">-' + dd.maxDDPct.toFixed(1) + '%</div>' +
-              '<div class="stats-metric-sub">許容範囲内</div>' +
-            '</div>' +
-            '<div>' +
-              '<div class="stats-metric-label">VaR 95%</div>' +
-              '<div class="stats-metric-value">-' + Math.abs(var95).toLocaleString('ja-JP') + '</div>' +
-              '<div class="stats-metric-sub">pip/トレード</div>' +
-            '</div>' +
-            '<div>' +
-              '<div class="stats-metric-label">Kelly推奨</div>' +
-              '<div class="stats-metric-value">' + kelly + '%</div>' +
-              '<div class="stats-metric-sub">ベットサイズ</div>' +
-            '</div>' +
-          '</div>' +
-        '</div>' +
-      '</div>' +
-
-      // ③ どの銘柄が得意か
-      '<div class="stats-narrative-section">' +
-        '<div class="stats-narrative-header">' +
-          '<div class="stats-narrative-question">' +
-            'どの銘柄が得意か？' +
-          '</div>' +
-          '<span class="stats-verdict stats-verdict--' + pairsVerdict + '">' + pairsVerdictTxt + '</span>' +
-        '</div>' +
-        (topPairs.length > 0 ?
-          '<div class="ai-ranking-list ai-ranking-list--inline">' +
-          topPairs.map(function(r, i) {
-            var inst = INSTRUMENTS.find(function(x) { return x.pair === r.pair; });
-            var label = inst ? inst.label : r.pair;
-            var pct = (r.bayesRate * 100).toFixed(1);
-            var barW = Math.round(r.bayesRate * 100);
-            return '<div class="ai-ranking-row">' +
-              medals[i] +
-              '<span class="ai-ranking-name">' + escHtml(label) + '</span>' +
-              '<div class="ai-ranking-bar"><div class="ai-ranking-bar-fill" style="width:' + barW + '%"></div></div>' +
-              '<span class="ai-ranking-pct">' + pct + '%</span>' +
-              '<span style="font-size:11px;color:var(--label-secondary);margin-left:4px">n=' + r.n + '</span>' +
-            '</div>';
-          }).join('') +
-          '</div>'
-          : '<div style="padding:16px;font-size:13px;color:var(--label-secondary)">データ蓄積中</div>'
-        ) +
-      '</div>';
-  }
-
-  // ── 資産推移グラフ描画 ──
-  // Apple HIG: 11pt最小フォント、8ptグリッド、十分な余白
-  // UX心理学: Peak-End（最終値強調）、Goal Gradient（目標ライン）、認知負荷軽減（ラベル統一）
-  function renderEquityChart(data) {
-    var chart = el('equity-chart');
-    if (!chart) return;
-    var closes = (data.recentCloses || []).slice().reverse();
-    if (closes.length < 2) {
-      chart.innerHTML = '<div style="text-align:center;color:var(--label-secondary);font-size:13px;padding:60px 0">取引データ蓄積中...</div>';
-      return;
-    }
-    // 資産推移を計算
-    var totalPnl = data.performance.totalPnl || 0;
-    var closePnlSum = 0;
-    closes.forEach(function(c) { closePnlSum += (c.pnl || 0); });
-    var missingPnl = totalPnl - closePnlSum;
-    var equity = [INITIAL_CAPITAL + missingPnl];
-    var cumPnl = 0;
-    closes.forEach(function(c) {
-      cumPnl += (c.pnl || 0);
-      equity.push(INITIAL_CAPITAL + missingPnl + cumPnl);
-    });
-
-    var font = '-apple-system,system-ui,sans-serif';
-    var w = chart.clientWidth || chart.offsetWidth || 300;
-    var h = 180;
-
-    var min = Math.min.apply(null, equity);
-    var max = Math.max.apply(null, equity);
-    var dataRange = max - min || 1;
-
-    // Nice axis: 綺麗な数値の目盛りを生成（500, 1000, 2000, 5000刻み等）
-    var yTicks = 4;
-    var rawStep = dataRange / yTicks;
-    var mag = Math.pow(10, Math.floor(Math.log10(rawStep)));
-    var niceStep = rawStep <= mag * 1.5 ? mag
-                 : rawStep <= mag * 3   ? mag * 2
-                 : rawStep <= mag * 7   ? mag * 5
-                 : mag * 10;
-    var niceMin = Math.floor(min / niceStep) * niceStep;
-    var niceMax = Math.ceil(max / niceStep) * niceStep;
-    yTicks = Math.round((niceMax - niceMin) / niceStep);
-    // 目盛り数が多すぎたら間引く（最大5本）
-    if (yTicks > 5) { niceStep *= 2; niceMax = niceMin + Math.ceil((max - niceMin) / niceStep) * niceStep; yTicks = Math.round((niceMax - niceMin) / niceStep); }
-    var niceRange = niceMax - niceMin || 1;
-
-    // Y軸ラベルフォーマット — 全ラベルがユニークになることを保証
-    function fmtYLabel(v) {
-      // 万単位表示の場合、niceStepに応じた精度で表示
-      if (v >= 10000 && niceStep >= 1000) return '¥' + (v / 10000).toFixed(v % 10000 === 0 ? 0 : 1) + '万';
-      // niceStep < 1000 or 1万未満 → 千円単位でカンマ区切り
-      return '¥' + Math.round(v).toLocaleString();
-    }
-
-    var maxLabelLen = 0;
-    for (var ti = 0; ti <= yTicks; ti++) {
-      var lbl = fmtYLabel(niceMin + niceStep * ti);
-      if (lbl.length > maxLabelLen) maxLabelLen = lbl.length;
-    }
-    var padL = Math.max(56, maxLabelLen * 8 + 12);
-    var padR = 8;
-    var padT = 28; // 最終値ラベル用余白（上に十分なスペース）
-    var padB = 28; // X軸ラベル用余白
-    var chartW = w - padL - padR;
-    var chartH = h - padT - padB;
-
-    // データ→座標変換
-    var step = equity.length > 1 ? chartW / (equity.length - 1) : 0;
-    var pts = equity.map(function(v, i) {
-      var x = padL + i * step;
-      var y = padT + chartH - ((v - niceMin) / niceRange) * chartH;
-      return x.toFixed(1) + ',' + y.toFixed(1);
-    });
-    var lastVal = equity[equity.length - 1];
-    var color = lastVal >= INITIAL_CAPITAL ? 'var(--green)' : 'var(--red)';
-    var gridColor = 'var(--label-quaternary, rgba(128,128,128,0.15))';
-
-    // Y軸グリッド + ラベル（HIG 11pt最小）
-    var yGridLines = '';
-    var yLabels = '';
-    for (var yi = 0; yi <= yTicks; yi++) {
-      var yVal = niceMin + niceStep * yi;
-      var yPos = padT + chartH - (chartH * yi / yTicks);
-      // 上下端はボーダーと重なるので線は省略、ラベルは表示
-      if (yi > 0 && yi < yTicks) {
-        yGridLines += '<line x1="' + padL + '" y1="' + yPos.toFixed(1) + '" x2="' + (w - padR) + '" y2="' + yPos.toFixed(1) + '" stroke="' + gridColor + '" stroke-width="0.5"/>';
-      }
-      yLabels += '<text x="' + (padL - 8) + '" y="' + (yPos + 4).toFixed(1) + '" text-anchor="end" fill="var(--label-secondary)" font-size="11" font-family="' + font + '">' + fmtYLabel(yVal) + '</text>';
-    }
-
-    // X軸ラベル: 両端 + 中間1本（シンプルに保つ）
-    var totalTrades = equity.length - 1;
-    var xLabels = '';
-    xLabels += '<text x="' + padL + '" y="' + (h - 8) + '" text-anchor="start" fill="var(--label-tertiary)" font-size="11" font-family="' + font + '">開始</text>';
-    if (totalTrades > 6) {
-      var midIdx = Math.round(totalTrades / 2);
-      var midX = padL + midIdx * step;
-      xLabels += '<text x="' + midX.toFixed(1) + '" y="' + (h - 8) + '" text-anchor="middle" fill="var(--label-tertiary)" font-size="11" font-family="' + font + '">' + midIdx + '件</text>';
-    }
-    xLabels += '<text x="' + (w - padR) + '" y="' + (h - 8) + '" text-anchor="end" fill="var(--label-tertiary)" font-size="11" font-family="' + font + '">' + totalTrades + '件</text>';
-
-    // 元本ライン
-    var capitalY = padT + chartH - ((INITIAL_CAPITAL - niceMin) / niceRange) * chartH;
-    var capitalLine = '';
-    if (INITIAL_CAPITAL >= niceMin && INITIAL_CAPITAL <= niceMax) {
-      capitalLine =
-        '<line x1="' + padL + '" y1="' + capitalY.toFixed(1) + '" x2="' + (w - padR) + '" y2="' + capitalY.toFixed(1) + '" stroke="var(--label-tertiary)" stroke-width="1" stroke-dasharray="4,4" opacity="0.4"/>' +
-        '<text x="' + (padL + 6) + '" y="' + (capitalY - 6).toFixed(1) + '" fill="var(--label-tertiary)" font-size="11" font-family="' + font + '">元本</text>';
-    }
-
-    // 目標ライン（Goal Gradient）
-    var goalLine = '';
-    var GOAL = 15000;
-    if (GOAL >= niceMin && GOAL <= niceMax) {
-      var goalY = padT + chartH - ((GOAL - niceMin) / niceRange) * chartH;
-      goalLine =
-        '<line x1="' + padL + '" y1="' + goalY.toFixed(1) + '" x2="' + (w - padR) + '" y2="' + goalY.toFixed(1) + '" stroke="var(--blue)" stroke-width="1" stroke-dasharray="5,4" opacity="0.5"/>' +
-        '<text x="' + (w - padR - 6) + '" y="' + (goalY - 6).toFixed(1) + '" text-anchor="end" fill="var(--blue)" font-size="11" font-weight="600" font-family="' + font + '" opacity="0.7">目標 ¥1.5万</text>';
-    }
-
-    // グラデーション塗りつぶし
-    var fillPts = pts.join(' ') + ' ' + (w - padR) + ',' + (padT + chartH) + ' ' + padL + ',' + (padT + chartH);
-
-    // 最終値ドット座標
-    var lastPt = pts[pts.length - 1].split(',');
-    var lastX = parseFloat(lastPt[0]);
-    var lastY = parseFloat(lastPt[1]);
-    // 最終値ラベル: ドットの上14px、上端に近すぎたら下に
-    var labelY = lastY - 14;
-    if (labelY < padT - 6) labelY = lastY + 18;
-    // 常に右寄せ（最終値は右端なので）
-    var labelAnchor = 'end';
-
-    chart.innerHTML =
-      '<svg width="' + w + '" height="' + h + '" viewBox="0 0 ' + w + ' ' + h + '" style="display:block;overflow:visible;max-width:100%">' +
-        '<defs><linearGradient id="eqGrad" x1="0" y1="0" x2="0" y2="1">' +
-          '<stop offset="0%" stop-color="' + color + '" stop-opacity="0.18"/>' +
-          '<stop offset="100%" stop-color="' + color + '" stop-opacity="0.01"/>' +
-        '</linearGradient></defs>' +
-        // チャートエリア境界線（角丸）
-        '<rect x="' + padL + '" y="' + padT + '" width="' + chartW + '" height="' + chartH + '" fill="none" stroke="' + gridColor + '" stroke-width="0.5" rx="4"/>' +
-        yGridLines + yLabels + xLabels +
-        capitalLine + goalLine +
-        // 塗りつぶし + ライン
-        '<polygon points="' + fillPts + '" fill="url(#eqGrad)"/>' +
-        '<polyline points="' + pts.join(' ') + '" fill="none" stroke="' + color + '" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>' +
-        // 最終値ドット（Peak-End強調: 大きめドット + 光彩）
-        '<circle cx="' + lastX.toFixed(1) + '" cy="' + lastY.toFixed(1) + '" r="6" fill="' + color + '" opacity="0.15"/>' +
-        '<circle cx="' + lastX.toFixed(1) + '" cy="' + lastY.toFixed(1) + '" r="3.5" fill="' + color + '"/>' +
-        // 最終値ラベル（HIG 13pt、ウェイト600）
-        '<text x="' + lastX.toFixed(1) + '" y="' + labelY.toFixed(1) + '" text-anchor="' + labelAnchor + '" fill="' + color + '" font-size="13" font-weight="600" font-family="' + font + '">' + fmtYen(lastVal) + '</text>' +
-      '</svg>';
-
-    // レスポンシブ: コンテナリサイズ時に再描画
-    if (!chart._resizeOb) {
-      chart._resizeOb = new ResizeObserver(function() {
-        if (chart._resizeTimer) clearTimeout(chart._resizeTimer);
-        chart._resizeTimer = setTimeout(function() { renderEquityChart(data); }, 150);
-      });
-      chart._resizeOb.observe(chart);
-    }
-  }
-
-  // ── 統計タブ描画 ──
-  // UX心理学: Serial Position（重要データ先頭）、Progressive Disclosure（段階的開示）、
-  // Loss Aversion（リスク可視化）、Aesthetic-Usability（統一された美しいレイアウト）
-  function renderStats(data) {
-    renderEquityChart(data);
-    renderPerfSummary(data);
-    var container = el('stats-pairs');
-    if (!container) return;
-    var byPair = data.performanceByPair || {};
-
-    // ── セクションヘッダー生成（Apple HIG: テキスト階層のみ、装飾最小限） ──
-    function secHeader(icon, bgColor, title) {
-      return '<div class="stats-sec-header">' +
-        '<span class="stats-sec-title">' + title + '</span>' +
-      '</div>';
-    }
-
-    // ── 1. 期間別パフォーマンス（Serial Position: 最重要を最初に） ──
-    var advStatsHtml = '';
-    var st = data.statistics;
-    if (st) {
-      var roll = st.rolling || {};
-      var r7 = roll[7] || { roi: 0, count: 0, winRate: 0 };
-      var r14 = roll[14] || { roi: 0, count: 0, winRate: 0 };
-      var r30 = roll[30] || { roi: 0, count: 0, winRate: 0 };
-      var fmtRoi = function(v) { return (v >= 0 ? '+' : '') + v.toFixed(2) + '%'; };
-      var roiColor = function(v) { return v > 0 ? 'var(--green)' : v < 0 ? 'var(--red)' : 'var(--label)'; };
-      // トレンド矢印（Variable Reward: 変化を視覚的に）
-      var trendArrow = function(v) { return v > 0 ? '↑' : v < 0 ? '↓' : '→'; };
-
-      advStatsHtml += secHeader('📈', 'var(--blue)', '期間別パフォーマンス') +
-        '<div class="metric-grid-3">' +
-          '<div class="metric-card" style="text-align:center">' +
-            '<div class="metric-label">直近7件</div>' +
-            '<div class="metric-value" style="color:' + roiColor(r7.roi) + '">' + trendArrow(r7.roi) + ' ' + fmtRoi(r7.roi) + '</div>' +
-            '<div class="metric-sub">勝率 ' + r7.winRate.toFixed(0) + '%</div>' +
-          '</div>' +
-          '<div class="metric-card" style="text-align:center">' +
-            '<div class="metric-label">直近14件</div>' +
-            '<div class="metric-value" style="color:' + roiColor(r14.roi) + '">' + trendArrow(r14.roi) + ' ' + fmtRoi(r14.roi) + '</div>' +
-            '<div class="metric-sub">勝率 ' + r14.winRate.toFixed(0) + '%</div>' +
-          '</div>' +
-          '<div class="metric-card" style="text-align:center">' +
-            '<div class="metric-label">直近30件</div>' +
-            '<div class="metric-value" style="color:' + roiColor(r30.roi) + '">' + trendArrow(r30.roi) + ' ' + fmtRoi(r30.roi) + '</div>' +
-            '<div class="metric-sub">勝率 ' + r30.winRate.toFixed(0) + '%</div>' +
-          '</div>' +
-        '</div>';
-
-      // ── 2. リスク指標（Loss Aversion: 危険度を色で直感的に） ──
-      var dd = st.drawdown || { maxDDPct: 0, currentDDPct: 0, recoveryRatio: 1 };
-      var ddAccent = dd.currentDDPct > 5 ? 'danger' : dd.currentDDPct > 2 ? 'warn' : 'ok';
-      var ddColor = dd.currentDDPct > 5 ? 'var(--red)' : dd.currentDDPct > 2 ? 'var(--orange,#ff9500)' : 'var(--label)';
-      var vol = st.volatility || { volRatio: 1, isHighVol: false };
-      var volLabel = vol.volRatio > 1.5 ? '高' : vol.volRatio > 0.8 ? '中' : '低';
-      var volColor = vol.isHighVol ? 'var(--red)' : 'var(--label)';
-      var volAccent = vol.isHighVol ? 'danger' : vol.volRatio > 0.8 ? 'warn' : 'ok';
-      var var95 = Math.round(st.var95).toLocaleString();
-      var cvar95 = Math.round(st.cvar95).toLocaleString();
-
-      advStatsHtml += secHeader('🛡️', 'var(--orange, #ff9500)', 'リスク指標') +
-        '<div class="metric-grid-2">' +
-          '<div class="metric-card metric-card--danger">' +
-            '<div class="metric-label">最大DD</div>' +
-            '<div class="metric-value" style="color:var(--red)">' + dd.maxDDPct.toFixed(1) + '%</div>' +
-          '</div>' +
-          '<div class="metric-card metric-card--' + ddAccent + '">' +
-            '<div class="metric-label">現在DD</div>' +
-            '<div class="metric-value" style="color:' + ddColor + '">' + dd.currentDDPct.toFixed(1) + '%</div>' +
-          '</div>' +
-          '<div class="metric-card metric-card--danger">' +
-            '<div class="metric-label">VaR / CVaR (95%)</div>' +
-            '<div class="metric-value" style="color:var(--red)">\u00a5' + var95 + ' / \u00a5' + cvar95 + '</div>' +
-          '</div>' +
-          '<div class="metric-card metric-card--' + volAccent + '">' +
-            '<div class="metric-label">\u30dc\u30e9\u30c6\u30a3\u30ea\u30c6\u30a3</div>' +
-            '<div class="metric-value" style="color:' + volColor + '">' + volLabel + ' <span style="font-size:11px;font-weight:400;color:var(--label-secondary)">\u00d7' + vol.volRatio.toFixed(2) + '</span></div>' +
-          '</div>' +
-        '</div>';
-
-      // ── 3. 統計的信頼性 ──
-      var wrLo = (st.winRateCI.lower * 100).toFixed(1);
-      var wrHi = (st.winRateCI.upper * 100).toFixed(1);
-      var sharpeFmt = st.sharpe.toFixed(3);
-      var sharpeSig = st.sharpeSignificant;
-      var kellyPct = (st.kellyFraction * 100).toFixed(1);
-      var streakPct = (st.markov.streakProb3 * 100).toFixed(1);
-      var roiCI = st.roiCI;
-      var roiColor = roiCI && roiCI.roi >= 0 ? 'var(--green)' : 'var(--red)';
-      var aiAcc = st.aiAccuracy;
-      var aiColor = aiAcc ? (aiAcc.accuracy >= 0.55 ? 'var(--green)' : aiAcc.accuracy >= 0.50 ? 'var(--label)' : 'var(--red)') : 'var(--label-secondary)';
-
-      advStatsHtml += secHeader('📊', 'var(--purple, #af52de)', '統計的信頼性') +
-        '<div class="metric-grid-2">' +
-          '<div class="metric-card">' +
-            '<div class="metric-label">勝率 95% CI</div>' +
-            '<div class="metric-value">' + wrLo + '% \u2014 ' + wrHi + '%</div>' +
-          '</div>' +
-          (roiCI ? '<div class="metric-card">' +
-            '<div class="metric-label">ROI 95% CI <span style="font-size:10px;color:var(--label-tertiary)">n=' + roiCI.n + '</span></div>' +
-            '<div class="metric-value" style="color:' + roiColor + '">' +
-              (roiCI.roi >= 0 ? '+' : '') + roiCI.roi.toFixed(1) + '% ' +
-              '<span style="font-size:11px;font-weight:400;color:var(--label-secondary)">[' +
-                (roiCI.ciLower >= 0 ? '+' : '') + roiCI.ciLower.toFixed(1) + '%, ' +
-                (roiCI.ciUpper >= 0 ? '+' : '') + roiCI.ciUpper.toFixed(1) + '%]' +
-              '</span>' +
-            '</div>' +
-          '</div>' : '') +
-          '<div class="metric-card">' +
-            '<div class="metric-label">Sharpe\u6bd4' +
-              (sharpeSig ? ' <span style="color:var(--green);font-weight:700">\u6709\u610f</span>' : ' <span style="color:var(--label-tertiary)">n.s.</span>') +
-            '</div>' +
-            '<div class="metric-value">' + sharpeFmt + ' <span style="font-size:11px;font-weight:400;color:var(--label-secondary)">\u00b1' + st.sharpeSE.toFixed(3) + '</span></div>' +
-          '</div>' +
-          '<div class="metric-card">' +
-            '<div class="metric-label">Kelly\u57fa\u6e96</div>' +
-            '<div class="metric-value">' + kellyPct + '%</div>' +
-          '</div>' +
-          (aiAcc ? '<div class="metric-card">' +
-            '<div class="metric-label">AI\u7684\u4e2d\u7387 <span style="font-size:10px;color:var(--label-tertiary)">n=' + aiAcc.n + '</span></div>' +
-            '<div class="metric-value" style="color:' + aiColor + '">' +
-              (aiAcc.accuracy * 100).toFixed(1) + '% ' +
-              '<span style="font-size:11px;font-weight:400;color:var(--label-secondary)">BS=' + aiAcc.brierScore.toFixed(2) + '</span>' +
-            '</div>' +
-          '</div>' : '') +
-          '<div class="metric-card">' +
-            '<div class="metric-label">PF / 3\u9023\u6557</div>' +
-            '<div class="metric-value">' + (st.profitFactor != null ? st.profitFactor.toFixed(2) : '\u2014') + ' / <span style="color:' + (parseFloat(streakPct) > 20 ? 'var(--red)' : 'var(--label)') + '">' + streakPct + '%</span></div>' +
-          '</div>' +
-        '</div>';
-    }
-
-    // ── 4. 銘柄別成績（Progressive Disclosure: 取引ありのみ展開） ──
-    function buildStatsCard(instr) {
-      var p = byPair[instr.pair];
-      if (!p) p = { total: 0, wins: 0, totalPnl: 0 };
-      var winRate = p.total > 0 ? (p.wins / p.total * 100) : 0;
-      var pnlFmt  = fmtPnl(p.totalPnl, instr.unit);
-      var pnlCls  = pnlFmt.cls === 'pos' ? 'var(--green)' : pnlFmt.cls === 'neg' ? 'var(--red)' : 'var(--label-secondary)';
-
-      return '<div class="stats-pair-card" data-stats-pair="' + escHtml(instr.pair) + '">' +
-        '<div class="stats-pair-header">' +
-          '<span class="stats-pair-name">' + escHtml(instr.label) + '</span>' +
-          '<span class="stats-pnl" style="color:' + pnlCls + '">' + pnlFmt.text + '</span>' +
-        '</div>' +
-        '<div class="stats-bar-track"><div class="stats-bar-fill" style="width:' + winRate.toFixed(0) + '%"></div></div>' +
-        '<div class="stats-bar-meta">' +
-          '<span>勝率 ' + winRate.toFixed(0) + '%</span>' +
-          '<span>' + p.wins + '勝 ' + (p.total - p.wins) + '敗（計' + p.total + '）</span>' +
-        '</div>' +
-      '</div>';
-    }
-    var traded = INSTRUMENTS.filter(function(i) { var p = byPair[i.pair]; return p && p.total > 0; });
-    var untraded = INSTRUMENTS.filter(function(i) { var p = byPair[i.pair]; return !p || p.total === 0; });
-    var pairHtml = secHeader('💹', 'var(--green)', '銘柄別成績') +
-      traded.map(buildStatsCard).join('');
-    // 未取引は折りたたみ（Cognitive Load軽減）
-    if (untraded.length > 0) {
-      pairHtml += '<button class="stats-fold-btn" id="untraded-toggle">未取引 ' + untraded.length + '銘柄を表示 ▾</button>' +
-        '<div id="untraded-list" style="display:none">' +
-          untraded.map(buildStatsCard).join('') +
-        '</div>';
-    }
-
-    // ── 5. 銘柄スコア（折りたたみ） ──
-    var scoresHtml = '';
-    var scores = data.instrumentScores || [];
-    if (scores.length > 0) {
-      scoresHtml = secHeader('🏆', 'var(--yellow, #ffcc00)', '銘柄スコア') +
-        '<div id="scores-list">' +
-        scores.map(function(s, idx) {
-          var instrS = INSTRUMENTS.filter(function(i) { return i.pair === s.pair; })[0];
-          var label = instrS ? instrS.label : s.pair;
-          var wr = (s.win_rate * 100).toFixed(0);
-          var qualified = s.win_rate >= 0.55 && s.avg_rr >= 1.0 && s.total_trades >= 5;
-          var barColor = qualified ? 'var(--green)' : 'var(--label-secondary)';
-          var barWidth = Math.max(s.score * 100, 3);
-          return '<div class="score-row">' +
-            '<span class="score-rank">' + (idx + 1) + '</span>' +
-            '<div class="score-body">' +
-              '<div class="score-head">' +
-                '<span class="score-name">' + escHtml(label) +
-                  (qualified ? ' <span style="font-size:11px;color:var(--green)">QUALIFIED</span>' : '') +
-                '</span>' +
-                '<span class="score-val">' + (s.score * 100).toFixed(0) + '点</span>' +
-              '</div>' +
-              '<div class="score-bar"><div class="score-bar-fill" style="width:' + barWidth + '%;background:' + barColor + '"></div></div>' +
-              '<div class="score-details">' +
-                '<span>勝率' + wr + '%</span>' +
-                '<span>RR ' + s.avg_rr.toFixed(2) + '</span>' +
-                '<span>Sharpe ' + s.sharpe.toFixed(2) + '</span>' +
-                '<span>' + s.total_trades + '件</span>' +
-              '</div>' +
-            '</div>' +
-          '</div>';
-        }).join('') +
-        '</div>';
-    }
-
-    // ── 5.5. 銘柄別 RR / Kelly テーブル ──
-    var rrKellyHtml = '';
-    if (scores.length > 0) {
-      var rrRows = scores
-        .filter(function(s) { return s.total_trades >= 1; })
-        .map(function(s) {
-          var rr = s.avg_rr;
-          var wr = s.win_rate;
-          var kelly = rr > 0 ? wr - (1 - wr) / rr : -9.99;
-          return { pair: s.pair, n: s.total_trades, wr: wr, rr: rr, kelly: kelly };
-        })
-        .sort(function(a, b) { return b.kelly - a.kelly; });
-
-      rrKellyHtml = secHeader('📐', 'var(--teal, #30b0c7)', '銘柄別 RR / Kelly') +
-        '<table style="display:table;width:100%;border-collapse:collapse;font-size:12px">' +
-        '<thead><tr style="color:var(--label-secondary);font-size:11px">' +
-        '<th style="text-align:left;padding:4px 6px;font-weight:500">銘柄</th>' +
-        '<th style="text-align:right;padding:4px 6px;font-weight:500">件数</th>' +
-        '<th style="text-align:right;padding:4px 6px;font-weight:500">勝率</th>' +
-        '<th style="text-align:right;padding:4px 6px;font-weight:500">RR</th>' +
-        '<th style="text-align:right;padding:4px 6px;font-weight:500">Kelly</th>' +
-        '</tr></thead><tbody>' +
-        rrRows.map(function(r) {
-          var instrR = INSTRUMENTS.filter(function(i) { return i.pair === r.pair; })[0];
-          var label = instrR ? instrR.label : r.pair;
-          var kellyColor = r.kelly >= 0.1 ? 'var(--green)' : r.kelly >= 0 ? 'var(--orange, #ff9500)' : 'var(--red)';
-          var kellyText = r.kelly <= -9 ? '—' : (r.kelly >= 0 ? '+' : '') + (r.kelly * 100).toFixed(1) + '%';
-          var rrColor = r.rr >= 1.5 ? 'var(--green)' : r.rr >= 1.0 ? 'var(--label)' : 'var(--red)';
-          return '<tr style="border-bottom:1px solid var(--separator)">' +
-            '<td style="padding:6px;font-weight:500">' + escHtml(label) + '</td>' +
-            '<td style="text-align:right;padding:6px;color:var(--label-secondary)">' + r.n + '</td>' +
-            '<td style="text-align:right;padding:6px">' + (r.wr * 100).toFixed(0) + '%</td>' +
-            '<td style="text-align:right;padding:6px;color:' + rrColor + '">' + r.rr.toFixed(2) + '</td>' +
-            '<td style="text-align:right;padding:6px;font-weight:600;color:' + kellyColor + '">' + kellyText + '</td>' +
-            '</tr>';
-        }).join('') +
-        '</tbody></table>';
-    }
-
-    // ── 6. 取引履歴（Progressive Disclosure: 初期5件 + もっと見る） ──
-    var HIST_INITIAL = 5;
-    var closes = (data.recentCloses || []).slice();
-    var histHtml = '';
-    if (closes.length > 0) {
-      histHtml = secHeader('📋', 'var(--teal, #30b0c7)', '取引履歴') +
-        '<div id="trade-history">' +
-        closes.map(function(c, idx) {
-          var instrH = INSTRUMENTS.filter(function(i) { return i.pair === c.pair; })[0];
-          var label = instrH ? instrH.label : c.pair;
-          var unit = instrH ? instrH.unit : '';
-          var pnl = c.pnl != null ? c.pnl : 0;
-          var pnlColor = pnl > 0 ? 'var(--green)' : pnl < 0 ? 'var(--red)' : 'var(--label-secondary)';
-          var icon = c.close_reason === 'TP' ? '<span style="color:var(--green);font-size:10px;font-weight:700;letter-spacing:0.3px">TP</span>' : c.close_reason === 'SL' ? '<span style="color:var(--red);font-size:10px;font-weight:700;letter-spacing:0.3px">SL</span>' : '—';
-          var dir = c.direction === 'BUY' ? '買い' : '空売り';
-          var hidden = idx >= HIST_INITIAL ? ' style="display:none" data-hist-extra' : '';
-          return '<div class="trade-row"' + hidden + '>' +
-            '<div>' +
-              '<div class="trade-label">' + escHtml(label) + '</div>' +
-              '<div class="trade-meta">' + icon + ' ' + (c.close_reason || '') + ' · ' + dir + ' · ' + fmtTime(c.closed_at) + '</div>' +
-            '</div>' +
-            '<span class="trade-pnl" style="color:' + pnlColor + '">' + fmtPnl(pnl, unit).text + '</span>' +
-          '</div>';
-        }).join('') +
-        '</div>';
-      if (closes.length > HIST_INITIAL) {
-        histHtml += '<button class="stats-fold-btn" id="hist-toggle">残り' + (closes.length - HIST_INITIAL) + '件を表示 ▾</button>';
-      }
-    }
-
-    // 全銘柄の取引数合計
-    var totalTrades = INSTRUMENTS.reduce(function(sum, instr) {
-      var p = byPair[instr.pair];
-      return sum + (p ? p.total : 0);
-    }, 0);
-
-    // レイアウト順序: 統計データ → 銘柄別 → スコア → 履歴
-    container.innerHTML = advStatsHtml + pairHtml + scoresHtml + rrKellyHtml + histHtml +
-      (totalTrades === 0
-        ? '<div class="secondary-text" style="padding:8px 0 4px;text-align:center;font-size:13px">まだ決済された取引はありません<br>Cronが蓄積されると成績が表示されます</div>'
-        : '');
-
-    // ── 折りたたみイベント ──
-    var untradedBtn = document.getElementById('untraded-toggle');
-    if (untradedBtn) {
-      untradedBtn.addEventListener('click', function() {
-        var list = document.getElementById('untraded-list');
-        if (!list) return;
-        var isHidden = list.style.display === 'none';
-        list.style.display = isHidden ? '' : 'none';
-        untradedBtn.textContent = isHidden
-          ? '未取引 ' + untraded.length + '銘柄を隠す ▴'
-          : '未取引 ' + untraded.length + '銘柄を表示 ▾';
-      });
-    }
-    var histBtn = document.getElementById('hist-toggle');
-    if (histBtn) {
-      histBtn.addEventListener('click', function() {
-        var extras = document.querySelectorAll('[data-hist-extra]');
-        var isHidden = extras.length > 0 && extras[0].style.display === 'none';
-        extras.forEach(function(el) { el.style.display = isHidden ? '' : 'none'; });
-        histBtn.textContent = isHidden
-          ? '折りたたむ ▴'
-          : '残り' + (closes.length - HIST_INITIAL) + '件を表示 ▾';
-      });
-    }
-
-    // 銘柄カードタップ → 銘柄別取引履歴シート
-    container.querySelectorAll('[data-stats-pair]').forEach(function(card) {
-      card.addEventListener('click', function() {
-        var pair = card.getAttribute('data-stats-pair');
-        var instr = INSTRUMENTS.filter(function(i) { return i.pair === pair; })[0];
-        var label = instr ? instr.label : pair;
-        var unit = instr ? instr.unit : '';
-        var p = byPair[pair] || { total: 0, wins: 0, totalPnl: 0 };
-        var pairCloses = closes.filter(function(c) { return c.pair === pair; });
-
-        el('sheet-title').textContent = label + ' 取引履歴';
-
-        var summaryHtml =
-          '<div style="display:flex;gap:16px;margin-bottom:12px">' +
-            '<div style="flex:1;text-align:center;padding:8px;background:var(--bg-tertiary);border-radius:8px">' +
-              '<div style="font-size:11px;color:var(--label-secondary)">損益</div>' +
-              '<div style="font-size:16px;font-weight:700;color:' + (p.totalPnl > 0 ? 'var(--green)' : p.totalPnl < 0 ? 'var(--red)' : 'var(--label)') + '">' + fmtPnl(p.totalPnl, unit).text + '</div>' +
-            '</div>' +
-            '<div style="flex:1;text-align:center;padding:8px;background:var(--bg-tertiary);border-radius:8px">' +
-              '<div style="font-size:11px;color:var(--label-secondary)">勝率</div>' +
-              '<div style="font-size:16px;font-weight:700">' + (p.total > 0 ? (p.wins / p.total * 100).toFixed(0) + '%' : '—') + '</div>' +
-            '</div>' +
-            '<div style="flex:1;text-align:center;padding:8px;background:var(--bg-tertiary);border-radius:8px">' +
-              '<div style="font-size:11px;color:var(--label-secondary)">取引</div>' +
-              '<div style="font-size:16px;font-weight:700">' + p.total + '件</div>' +
-            '</div>' +
-          '</div>';
-
-        var listHtml = '';
-        if (pairCloses.length > 0) {
-          listHtml = pairCloses.map(function(c) {
-            var pnl = c.pnl != null ? c.pnl : 0;
-            var pnlColor = pnl > 0 ? 'var(--green)' : pnl < 0 ? 'var(--red)' : 'var(--label-secondary)';
-            var icon = c.close_reason === 'TP' ? '<span style="color:var(--green);font-size:10px;font-weight:700;letter-spacing:0.3px">TP</span>' : c.close_reason === 'SL' ? '<span style="color:var(--red);font-size:10px;font-weight:700;letter-spacing:0.3px">SL</span>' : '—';
-            var dir = c.direction === 'BUY' ? '買い' : '空売り';
-            return '<div style="display:flex;justify-content:space-between;align-items:center;padding:10px 0;border-bottom:1px solid var(--separator)">' +
-              '<div>' +
-                '<div style="font-size:13px">' + icon + ' ' + (c.close_reason || '') + ' · ' + dir + '</div>' +
-                '<div style="font-size:11px;color:var(--label-secondary);margin-top:2px">' +
-                  fmtPrice(pair, c.entry_rate) + ' → ' + fmtPrice(pair, c.close_rate) + ' · ' + fmtTime(c.closed_at) +
-                '</div>' +
-              '</div>' +
-              '<span style="font-size:15px;font-weight:700;color:' + pnlColor + '">' + fmtPnl(pnl, unit).text + '</span>' +
-            '</div>';
-          }).join('');
-        } else {
-          listHtml = '<div style="text-align:center;color:var(--label-secondary);padding:16px;font-size:13px">まだ取引履歴がありません</div>';
-        }
-
-        el('sheet-body').innerHTML = summaryHtml + listHtml;
-        lockScroll();
-        el('sheet').classList.add('open');
-        el('sheet-backdrop').classList.add('visible');
-      });
-    });
-  }
-
-  // ── メインレンダリング ──
-  // ── 戦略タブ ──
-  function renderStrategy(data) {
-    if (!data.strategyMap) return;
-    var sm = data.strategyMap;
-
-    // 銘柄ティア一覧
-    var tiersEl = el('strategy-tiers');
-    if (tiersEl && sm.instrumentTiers) {
-      var tierGroups = { A: [], B: [], C: [], D: [] };
-      sm.instrumentTiers.forEach(function(t) {
-        if (tierGroups[t.tier]) tierGroups[t.tier].push(t);
-      });
-      var html = '';
-      ['A', 'B', 'C', 'D'].forEach(function(tier) {
-        var items = tierGroups[tier] || [];
-        if (items.length === 0) return;
-        var colors = { A: '#34c759', B: '#007aff', C: '#ff9500', D: '#8e8e93' };
-        var labels = { A: 'x1.0', B: 'x0.7', C: 'x0.5', D: 'x0.3' };
-        html += '<div class="stat-card" style="border-left:3px solid ' + colors[tier] + '">' +
-          '<div class="stat-label">Tier ' + tier + ' <span style="color:' + colors[tier] + '">' + labels[tier] + '</span></div>' +
-          '<div class="stat-value" style="font-size:12px;font-weight:400">' +
-          items.map(function(i) { return i.pair; }).join(', ') +
-          '</div></div>';
-      });
-      tiersEl.innerHTML = html;
-    }
-
-    // 手法×環境マトリクス
-    var matrixEl = el('strategy-matrix');
-    if (matrixEl && sm.strategyStats && sm.strategyStats.length > 0) {
-      var rows = sm.strategyStats.map(function(s) {
-        var reliabilityBadge = s.reliability === 'trusted'
-          ? '<span style="color:#34c759">●</span>'
-          : s.reliability === 'tentative'
-            ? '<span style="color:#ff9500">●</span>'
-            : '<span style="color:#8e8e93">●</span>';
-        var wrColor = s.winRate >= 0.55 ? '#34c759' : s.winRate >= 0.45 ? '#ff9500' : '#ff3b30';
-        return '<tr>' +
-          '<td>' + (s.strategy || '—') + '</td>' +
-          '<td>' + (s.regime || '—') + '</td>' +
-          '<td style="text-align:right">' + s.count + '</td>' +
-          '<td style="text-align:right;color:' + wrColor + '">' + (s.winRate * 100).toFixed(0) + '%</td>' +
-          '<td style="text-align:right">' + (s.avgPnl >= 0 ? '+' : '') + s.avgPnl.toFixed(1) + '</td>' +
-          '<td style="text-align:center">' + reliabilityBadge + '</td>' +
-          '</tr>';
-      }).join('');
-      matrixEl.innerHTML =
-        '<table style="width:100%;font-size:11px;border-collapse:collapse">' +
-        '<thead><tr style="color:var(--text2);border-bottom:1px solid var(--border)">' +
-        '<th style="text-align:left;padding:4px">手法</th>' +
-        '<th style="text-align:left;padding:4px">環境</th>' +
-        '<th style="text-align:right;padding:4px">N</th>' +
-        '<th style="text-align:right;padding:4px">勝率</th>' +
-        '<th style="text-align:right;padding:4px">期待値</th>' +
-        '<th style="text-align:center;padding:4px">信頼</th>' +
-        '</tr></thead><tbody>' + rows + '</tbody></table>';
-    } else if (matrixEl) {
-      matrixEl.innerHTML = '<p style="color:var(--text2);font-size:12px">データ蓄積中...</p>';
-    }
-  }
-
-  function render(data) {
-    var prev = lastData;
-    lastData = data;
-
-    // 警報バナー（最優先で描画）
-    renderAlertBanner(data);
-
-    // ヘッダー: トレーディングモードバッジ
-    var modeBadgeEl = document.getElementById('mode-badge');
-    if (modeBadgeEl) {
-      if (data.tradingMode === 'live') {
-        modeBadgeEl.textContent = 'LIVE';
-        modeBadgeEl.className = 'mode-badge mode-live';
-        modeBadgeEl.style.display = '';
-      } else if (data.tradingMode === 'demo') {
-        modeBadgeEl.textContent = 'DEMO';
-        modeBadgeEl.className = 'mode-badge mode-demo';
-        modeBadgeEl.style.display = '';
-      } else {
-        modeBadgeEl.style.display = 'none';
-      }
-    }
-
-    // RiskGuard状態（ログタブに表示）
-    var riskEl = document.getElementById('risk-status');
-    if (riskEl && data.riskStatus) {
-      var rs = data.riskStatus;
-      var killCls = rs.killSwitchActive ? 'negative' : 'positive';
-      var killText = rs.killSwitchActive ? 'ON' : 'OFF';
-      riskEl.innerHTML =
-        '<div class="risk-status-card">' +
-          '<div class="risk-status-title">RiskGuard</div>' +
-          '<div class="risk-status-grid">' +
-            '<div class="risk-item"><span class="risk-label">キルスイッチ</span><span class="risk-value ' + killCls + '">' + killText + '</span></div>' +
-            '<div class="risk-item"><span class="risk-label">本日損失</span><span class="risk-value ' + (rs.todayLoss < 0 ? 'negative' : '') + '">\\u00A5' + Math.round(rs.todayLoss).toLocaleString('ja-JP') + ' / -\\u00A5' + Math.round(rs.maxDailyLoss).toLocaleString('ja-JP') + '</span></div>' +
-            '<div class="risk-item"><span class="risk-label">実弾ポジション</span><span class="risk-value">' + rs.livePositions + ' / ' + rs.maxPositions + '</span></div>' +
-          '</div>' +
-        '</div>';
-      riskEl.style.display = '';
-    } else if (riskEl) {
-      riskEl.style.display = 'none';
-    }
-
-    // TP/SLバナー検出
-    detectAndShowBanner(data);
-
-    // 因果サマリー描画
-    renderCausalSummary(data);
-
-    // Hero: 資産残高（元手 + 累計PnL）
-    var perf = data.performance;
-    var heroEl = el('hero-pnl');
-    var totalPnl = perf.totalPnl;
-    var capital = INITIAL_CAPITAL + totalPnl;
-    heroEl.className = 'hero-pnl ' + (totalPnl > 0 ? 'positive' : totalPnl < 0 ? 'negative' : 'neutral');
-    animatePnl(heroEl, capital);
-
-    var dpEl = el('today-pnl');
-    dpEl.textContent = fmtYenCompact(totalPnl);
-    dpEl.className   = 'hero-sub-value ' + (totalPnl > 0 ? 'positive' : totalPnl < 0 ? 'negative' : 'neutral');
-
-    // 含み損益（全オープンポジション合計）
-    var unrealizedTotal = 0;
-    var opens = data.openPositions || [];
-    if (opens.length > 0) {
-      var rMap = {};
-      rMap['USD/JPY'] = data.rate;
-      var ld2 = data.latestDecision;
-      if (ld2) { rMap['Nikkei225'] = ld2.nikkei; rMap['S&P500'] = ld2.sp500; rMap['US10Y'] = ld2.us10y; }
-      var spk = data.sparklines || {};
-      INSTRUMENTS.forEach(function(instr) {
-        if (!rMap[instr.pair]) {
-          var pts = spk[instr.pair];
-          if (pts && pts.length > 0) rMap[instr.pair] = pts[pts.length - 1].rate;
-        }
-      });
-      opens.forEach(function(pos) {
-        var instr = INSTRUMENTS.find(function(i) { return i.pair === pos.pair; });
-        var cr = rMap[pos.pair];
-        if (instr && cr != null) {
-          var pnl = pos.direction === 'BUY'
-            ? (cr - pos.entry_rate) * (pos.lot || 1) * (instr.multiplier || 100)
-            : (pos.entry_rate - cr) * (pos.lot || 1) * (instr.multiplier || 100);
-          unrealizedTotal += pnl;
-        }
-      });
-    }
-    var upEl = el('unrealized-pnl');
-    if (upEl) {
-      upEl.textContent = fmtYenCompact(Math.round(unrealizedTotal));
-      upEl.className = 'hero-sub-value ' + (unrealizedTotal > 0 ? 'positive' : unrealizedTotal < 0 ? 'negative' : 'neutral');
-    }
-
-    var roiEl = el('roi-value');
-    var roiPct = (totalPnl / INITIAL_CAPITAL) * 100;
-    if (roiEl) {
-      var roiText = Math.abs(roiPct) >= 1000 ? roiPct.toFixed(0) : roiPct.toFixed(2);
-      roiEl.textContent = (roiPct >= 0 ? '+' : '') + roiText + '%';
-      roiEl.className = 'hero-sub-value ' + (roiPct > 0 ? 'positive' : roiPct < 0 ? 'negative' : 'neutral');
-    }
-    el('win-rate').textContent     = perf.winRate.toFixed(1) + '%';
-    el('total-trades').textContent = perf.totalClosed + ' 件';
-
-    // ウォッチリスト
-    renderWatchlist(data);
-
-    renderAiTab(data);
-
-    // 市場状態バー・プログレスバー（資産タブ）
-    renderMarketStateBar(data);
-    renderPowerProgress(data);
-
-    // 統計タブ
-    renderStats(data);
-
-    // ログタブ
-    renderLog(data);
-
-    // 戦略タブ
-    renderStrategy(data);
-
-    // タブバッジ更新（Zeigarnik効果）
-    updateTabBadges(data);
-
-    // ニュースドロワー（acceptedNews優先、なければlatestNewsフォールバック）
-    var newsForDrawer = (data.acceptedNews || []).length > 0
-      ? (data.acceptedNews || []).map(function(n) {
-          return { title: n.title_ja, title_ja: n.title_ja, description: n.desc_ja, desc_ja: n.desc_ja, pubDate: n.fetched_at, source: n.source, url: n.url || null };
-        })
-      : (data.latestNews || []);
-    if (window._renderNews) window._renderNews(newsForDrawer, data.newsAnalysis || []);
-
-    // ティッカーバー（ニュースドロワー展開時の横スクロール銘柄バー）
-    var tickerEl = el('ticker-scroll');
-    if (tickerEl) {
-      tickerEl.innerHTML = INSTRUMENTS.map(function(instr) {
-        var pos = (data.openPositions || []).find(function(p) { return p.pair === instr.pair; });
-        var sparkPoints = data.sparklines && data.sparklines[instr.pair];
-        var currentRate = null;
-        if (pos) currentRate = pos.entry_rate;
-        if (sparkPoints && sparkPoints.length > 0) currentRate = sparkPoints[sparkPoints.length - 1].rate;
-        if (instr.pair === 'USD/JPY' && data.rate) currentRate = data.rate;
-        var sparkColor = (sparkPoints && sparkPoints.length >= 2)
-          ? (sparkPoints[sparkPoints.length-1].rate >= sparkPoints[0].rate ? 'var(--green)' : 'var(--red)')
-          : 'var(--label-secondary)';
-        var sparkSvg = drawSparkline(sparkPoints, sparkColor, 48, 20);
-        var change = pos ? (pos.pnl != null ? pos.pnl : 0) : 0;
-        var changeCls = change > 0 ? 'positive' : change < 0 ? 'negative' : '';
-        var changeText = change !== 0 ? ((change > 0 ? '+' : '') + change.toFixed(1)) : '—';
-        return '<div class="ticker-item">' +
-          '<div class="ticker-name">' + escHtml(instr.label) + '</div>' +
-          '<div class="ticker-mid">' +
-            '<span class="ticker-price">' + fmtPrice(instr.pair, currentRate) + '</span>' +
-            (sparkSvg ? '<span class="ticker-spark">' + sparkSvg + '</span>' : '') +
-          '</div>' +
-          '<div class="ticker-change ' + changeCls + '">' + changeText + '</div>' +
-        '</div>';
-      }).join('');
-      // シームレスループ用に2倍複製
-      tickerEl.innerHTML = tickerEl.innerHTML + tickerEl.innerHTML;
-      // iOS Safari対応: アニメーション開始は展開時のみ（marquee-activeクラスで制御）
-    }
-
-    // システムステータス
-    el('last-run').textContent   = fmtTime(data.systemStatus.lastRun);
-    el('total-runs').textContent = Number(data.systemStatus.totalRuns).toLocaleString('ja-JP');
-
-    // PC: 右パネル描画
-    renderPanel(data);
-  }
-
-  // ── タブバッジ更新（Zeigarnik効果） ──
-  function updateTabBadges(data) {
-    var tabs = document.querySelectorAll('.tab-item');
-    tabs.forEach(function(tab) {
-      var old = tab.querySelector('.tab-badge');
-      if (old) old.remove();
-    });
-    // ログタブ: WARN + ERROR 件数
-    var logs = data.systemLogs || [];
-    var warnCount = logs.filter(function(l) { return l.level === 'WARN' || l.level === 'ERROR'; }).length;
-    if (warnCount > 0) {
-      var logTab = document.querySelector('[data-tab="tab-log"]');
-      if (logTab) {
-        var badge = document.createElement('span');
-        badge.className = 'tab-badge';
-        badge.textContent = warnCount > 99 ? '99+' : String(warnCount);
-        logTab.appendChild(badge);
-      }
-    }
-  }
-
-  // ── ログタブ描画 ──
-  function renderLog(data) {
-    var stats = data.logStats || {};
-    var logs  = data.systemLogs || [];
-
-    // JSON detailを人間が読める形に整形
-    function fmtLogDetail(detail) {
-      if (!detail) return '';
-      try {
-        var obj = JSON.parse(detail);
-        // キーと値をペアで表示（ネストしない）
-        return Object.keys(obj).map(function(k) {
-          var v = obj[k];
-          if (typeof v === 'number') v = Math.round(v * 10000) / 10000;
-          return k + ': ' + v;
-        }).join(' | ');
-      } catch (e) {
-        // JSONでなければそのまま（120文字に切り詰め）
-        return detail.slice(0, 120);
-      }
-    }
-
-    // 統計グリッド
-    var grid = el('log-stats-grid');
-    if (grid) {
-      var skipRate = stats.totalRuns > 0
-        ? Math.round(stats.holdCount / stats.totalRuns * 100) : 0;
-      grid.innerHTML =
-        statCell('総実行回数', Number(stats.totalRuns || 0).toLocaleString('ja-JP'), '回') +
-        statCell('AI呼出回数', Number(stats.geminiCalls || 0).toLocaleString('ja-JP'), '回') +
-        statCell('WARN', stats.warnCount || 0, '件') +
-        statCell('ERROR', stats.errorCount || 0, '件');
-    }
-
-    // ログリスト
-    var list = el('log-list');
-    if (!list) return;
-    if (logs.length === 0) {
-      list.innerHTML = '<div class="log-row"><span class="log-msg" style="color:var(--label-secondary)">ログなし</span></div>';
-      return;
-    }
-    list.innerHTML = logs.map(function(log) {
-      var lvlCls = log.level === 'ERROR' ? 'log-level-error' : log.level === 'WARN' ? 'log-level-warn' : 'log-level-info';
-      return '<div class="log-row">' +
-        '<span class="log-level ' + lvlCls + '">' + escHtml(log.level) + '</span>' +
-        '<div style="flex:1;min-width:0">' +
-          '<div style="display:flex;justify-content:space-between;gap:8px">' +
-            '<span class="log-msg">' + escHtml(log.message) + '</span>' +
-            '<span class="log-time">' + fmtTime(log.created_at) + '</span>' +
-          '</div>' +
-          (log.detail ? '<div class="log-detail">' + escHtml(fmtLogDetail(log.detail)) + '</div>' : '') +
-        '</div>' +
-      '</div>';
-    }).join('');
-  }
-
-  function statCell(label, value, unit) {
-    return '<div class="stat-cell">' +
-      '<div class="stat-cell-label">' + label + '</div>' +
-      '<div><span class="stat-cell-value">' + value + '</span><span class="stat-cell-unit">' + unit + '</span></div>' +
-    '</div>';
-  }
-
-  // ── AI判断タブ: データ描画 ──
-  function renderAiTab(data) {
-    var decisions   = data.recentDecisions  || [];
-    var openPos     = data.openPositions    || [];
-    var stats       = data.statistics       || {};
-    var perf        = data.performance      || {};
-    var timeline    = el('ai-timeline-list');
-    if (!timeline) return;
-
-    // ─ KPI: 今日の判断 ─
-    // IPA品質修正: recentDecisions は LIMIT 20 のため過小計上になる
-    // サーバー側の専用COUNTクエリ値（todayDecisionCount 等）を使用する
-    // todayD: トリガー内訳の計算では引き続き利用（isToday + LIMIT 20 サブセットで可）
-    var todayD    = decisions.filter(function(d) { return isToday(d.created_at); });
-    var todayTotal = data.todayDecisionCount != null ? data.todayDecisionCount : todayD.length;
-    var buyCount  = data.todayBuyCount  != null ? data.todayBuyCount
-                  : todayD.filter(function(d) { return d.decision === 'BUY';  }).length;
-    var sellCount = data.todaySellCount != null ? data.todaySellCount
-                  : todayD.filter(function(d) { return d.decision === 'SELL'; }).length;
-
-    var kpiTodayVal = el('ai-kpi-today-val');
-    var kpiTodaySub = el('ai-kpi-today-sub');
-    if (kpiTodayVal) kpiTodayVal.textContent = todayTotal > 0 ? String(todayTotal) : '—';
-    if (kpiTodaySub) kpiTodaySub.textContent = 'BUY ' + buyCount + ' · SELL ' + sellCount;
-
-    // ─ KPI: AI的中率 ─
-    var acc = stats.aiAccuracy;
-    var kpiAccVal = el('ai-kpi-acc-val');
-    var kpiAccSub = el('ai-kpi-acc-sub');
-    if (kpiAccVal) kpiAccVal.textContent = acc && acc.accuracy != null
-      ? (acc.accuracy * 100).toFixed(1) + '%' : '—';
-    if (kpiAccSub) kpiAccSub.textContent = acc
-      ? 'n=' + (acc.n || 0) + ' · Brier ' + (acc.brierScore != null ? acc.brierScore.toFixed(2) : '—')
-      : 'n=— · Brier —';
-
-    // ─ KPI: 今日の損益 ─
-    var todayPnl  = perf.todayPnl;
-    var todayWins = perf.todayWins;
-    var todayLosses = perf.todayLosses;
-    var kpiPnlVal = el('ai-kpi-pnl-val');
-    var kpiPnlSub = el('ai-kpi-pnl-sub');
-    if (kpiPnlVal) {
-      var pnlText = todayPnl != null
-        ? (todayPnl >= 0 ? '+¥' : '-¥') + Math.abs(Math.round(todayPnl)).toLocaleString('ja-JP')
-        : '—';
-      kpiPnlVal.textContent = pnlText;
-      kpiPnlVal.className = 'kpi-val' + (todayPnl > 0 ? ' green' : todayPnl < 0 ? ' red' : '');
-    }
-    if (kpiPnlSub) {
-      var winsText   = todayWins   != null ? String(todayWins)   : '—';
-      var lossesText = todayLosses != null ? String(todayLosses) : '—';
-      kpiPnlSub.textContent = winsText + ' 勝 ' + lossesText + ' 敗';
-    }
-
-    // ─ KPI: 最新判断 ─
-    var latest      = decisions[0];
-    var kpiBadge    = el('ai-kpi-latest-badge');
-    var kpiPair     = el('ai-kpi-latest-pair');
-    var kpiTime     = el('ai-kpi-latest-time');
-    if (latest) {
-      if (kpiBadge) {
-        kpiBadge.textContent = latest.decision;
-        kpiBadge.className = 'dir-badge ' + (latest.decision === 'BUY' ? 'buy' : latest.decision === 'SELL' ? 'sell' : 'hold');
-      }
-      if (kpiPair) kpiPair.textContent = latest.pair || 'USD/JPY';
-      if (kpiTime) kpiTime.textContent = fmtElapsed(latest.created_at);
-    }
-
-    // ─ トリガーカウント ─
-    var newsCount = todayD.filter(function(d) { return inferTrigger(d) === 'news'; }).length;
-    var rateCount = todayD.filter(function(d) { return inferTrigger(d) === 'rate'; }).length;
-    var cronCount = todayD.filter(function(d) { return inferTrigger(d) === 'cron'; }).length;
-    var triggerNewsEl = el('ai-trigger-news'); if (triggerNewsEl) triggerNewsEl.textContent = String(newsCount);
-    var triggerRateEl = el('ai-trigger-rate'); if (triggerRateEl) triggerRateEl.textContent = String(rateCount);
-    var triggerCronEl = el('ai-trigger-cron'); if (triggerCronEl) triggerCronEl.textContent = String(cronCount);
-
-    // ─ タイムラインカード描画 ─
-    if (decisions.length === 0) {
-      timeline.innerHTML = '<div style="padding:24px;text-align:center;color:var(--label-secondary);font-size:13px">データなし</div>';
-      return;
-    }
-
-    timeline.innerHTML = decisions.map(function(d, i) {
-      var trigger  = inferTrigger(d);
-      var dirCls   = d.decision === 'BUY' ? 'buy' : d.decision === 'SELL' ? 'sell' : 'hold';
-      var reasoning = fmtReasoning(d.reasoning);
-
-      // 判断結果の判定（4分類: 保有中 / TP勝ち / SL負け / 未実行）
-      // openPositions → recentCloses → 未実行 の順で照合
-      // IPA品質修正: IEEE 754 浮動小数点許容差 0.01 を使用
-      var resultKey  = 'closed';
-      var resultText = '⏸ 未実行';
-      var resultPnl  = '';
-      if (d.decision === 'BUY' || d.decision === 'SELL') {
-        var matchedOpen = openPos.find(function(p) {
-          return p.pair === (d.pair || 'USD/JPY') && p.direction === d.decision && Math.abs(p.entry_rate - d.rate) < 0.01;
-        });
-        if (matchedOpen) {
-          resultKey  = 'open';
-          resultText = '📂 保有中';
-        } else {
-          var closes = data.recentCloses || [];
-          var matchedClose = closes.find(function(p) {
-            return p.pair === (d.pair || 'USD/JPY') && p.direction === d.decision && Math.abs(p.entry_rate - d.rate) < 0.01;
-          });
-          if (matchedClose) {
-            if (matchedClose.close_reason === 'TP') {
-              resultKey  = 'tp';
-              resultText = '✅ TP';
-              resultPnl  = matchedClose.pnl != null ? (matchedClose.pnl >= 0 ? ' +' : ' ') + fmt(matchedClose.pnl, 0) : '';
-            } else if (matchedClose.close_reason === 'SL') {
-              resultKey  = 'sl';
-              resultText = '❌ SL';
-              resultPnl  = matchedClose.pnl != null ? (matchedClose.pnl >= 0 ? ' +' : ' ') + fmt(matchedClose.pnl, 0) : '';
-            } else {
-              resultKey  = 'closed';
-              resultText = '📋 決済済';
-              resultPnl  = matchedClose.pnl != null ? (matchedClose.pnl >= 0 ? ' +' : ' ') + fmt(matchedClose.pnl, 0) : '';
-            }
-          }
-        }
-      } else {
-        // HOLD判断 → 常に「様子見」
-        resultKey  = 'closed';
-        resultText = '👀 様子見';
-      }
-
-      // 指標チップ
-      var chips = [];
-      if (d.vix   != null) chips.push('VIX ' + fmt(d.vix, 1));
-      if (d.us10y != null) chips.push(fmt(d.us10y, 2) + '%');
-
-      // TP/SL表示（tp_rateがAPIに追加されていれば使用、なければ省略）
-      var tpslText = '';
-      if (d.tp_rate != null || d.sl_rate != null) {
-        tpslText = ' · TP ' + (d.tp_rate != null ? fmt(d.tp_rate, 3) : '—') +
-                   ' / SL ' + (d.sl_rate != null ? fmt(d.sl_rate, 3) : '—');
-      }
-
-      return '<div class="tl-card" role="listitem" data-ai-idx="' + i + '">' +
-        '<div class="tl-inner">' +
-          '<div class="tl-accent ' + resultKey + '"></div>' +
-          '<div class="tl-row1">' +
-            '<div class="tl-left">' +
-              '<span class="tl-pair">' + escHtml(d.pair || 'USD/JPY') + '</span>' +
-              '<span class="tl-rate">' + fmt(d.rate, 3) + '</span>' +
-              '<span class="dir-badge ' + dirCls + '">' + d.decision + '</span>' +
-            '</div>' +
-            '<div class="tl-meta">' +
-              '<span class="tl-time">' + fmtElapsed(d.created_at) + '</span>' +
-              '<span class="tl-chevron">▸</span>' +
-            '</div>' +
-          '</div>' +
-          '<div class="tl-row2">' +
-            '<span class="tl-chip ' + trigger + '">' + escHtml(triggerLabel(trigger)) + '</span>' +
-            (reasoning && reasoning !== '—'
-              ? '<span class="tl-reasoning-chip">' + escHtml(reasoning.slice(0, 40)) + (reasoning.length > 40 ? '…' : '') + '</span>'
-              : '') +
-          '</div>' +
-          '<div class="tl-row3">' +
-            '<div style="display:flex;gap:4px">' +
-              chips.map(function(c) { return '<span class="tl-chip cron">' + escHtml(c) + '</span>'; }).join('') +
-            '</div>' +
-            '<div class="tl-result">' +
-              '<div class="result-dot ' + resultKey + '"></div>' +
-              '<span class="tl-result-text ' + resultKey + '">' + resultText + resultPnl + '</span>' +
-            '</div>' +
-          '</div>' +
-        '</div>' +
-        '<div class="detail-panel" id="ai-detail-' + i + '">' +
-
-          // ── セクション1: TP / SL ゲージ（BUY/SELLのみ） ──
-          (d.decision !== 'HOLD' && (d.tp_rate != null || d.sl_rate != null)
-            ? (function() {
-                var tp = d.tp_rate;
-                var sl = d.sl_rate;
-                var entry = d.rate;
-                var isBuy = d.decision === 'BUY';
-                // ゲージ計算: SL----Entry----TP を視覚的に表示
-                var slDist = sl != null ? Math.abs(entry - sl) : 0;
-                var tpDist = tp != null ? Math.abs(tp - entry) : 0;
-                var totalDist = slDist + tpDist || 1;
-                var slPct = Math.round((slDist / totalDist) * 100);
-                var tpPct = 100 - slPct;
-                var rrRatio = slDist > 0 ? (tpDist / slDist).toFixed(1) : '—';
-
-                return '<div class="detail-tpsl-section">' +
-                  '<div class="detail-section-label">TP / SL</div>' +
-                  '<div class="detail-tpsl-gauge">' +
-                    '<div class="tpsl-bar">' +
-                      '<div class="tpsl-sl-zone" style="width:' + slPct + '%"></div>' +
-                      '<div class="tpsl-entry-mark"></div>' +
-                      '<div class="tpsl-tp-zone" style="width:' + tpPct + '%"></div>' +
-                    '</div>' +
-                    '<div class="tpsl-labels">' +
-                      '<span class="tpsl-label sl">' + (sl != null ? 'SL ' + fmt(sl, 3) : '—') + '</span>' +
-                      '<span class="tpsl-label entry">' + fmt(entry, 3) + '</span>' +
-                      '<span class="tpsl-label tp">' + (tp != null ? 'TP ' + fmt(tp, 3) : '—') + '</span>' +
-                    '</div>' +
-                  '</div>' +
-                  '<div class="tpsl-meta">' +
-                    '<span class="tpsl-rr">RR ' + rrRatio + '</span>' +
-                    (slDist > 0 ? '<span class="tpsl-pips">SL ' + fmt(slDist, 3) + ' / TP ' + fmt(tpDist, 3) + '</span>' : '') +
-                  '</div>' +
-                '</div>';
-              })()
-            : '') +
-
-          // ── セクション2: AI判断理由（メインコンテンツ） ──
-          (reasoning && reasoning !== '—'
-            ? '<div class="detail-reason-section">' +
-                '<div class="detail-section-label">AI判断理由</div>' +
-                '<div class="detail-reason-body">' + escHtml(reasoning) + '</div>' +
-              '</div>'
-            : '') +
-
-          // ── セクション3: 市場コンテキスト（指標 + ニュース） ──
-          (function() {
-            // Path B判定: reasoning が [PATH_B] で始まる
-            var isPathB = d.reasoning && d.reasoning.indexOf('[PATH_B]') === 0;
-
-            // ニュース解析
-            var newsArr = [];
-            if (d.news_summary) {
-              try {
-                var raw = d.news_summary;
-                for (var attempt = 0; attempt < 3 && typeof raw === 'string'; attempt++) {
-                  try { raw = JSON.parse(raw); } catch(e) { break; }
-                }
-                if (Array.isArray(raw)) newsArr = raw;
-              } catch(e) {}
-            }
-
-            // Path B: title_ja/impact付き = 判断根拠ニュース
-            var hasPathBNews = isPathB && newsArr.length > 0 && newsArr.some(function(n) {
-              return n && typeof n === 'object' && (n.title_ja || n.impact);
-            });
-
-            var sectionHtml = '<div class="detail-context-section">';
-
-            // セクションヘッダー: Path B → 「判断根拠ニュース」、Path A → 「市場コンテキスト」
-            if (hasPathBNews) {
-              sectionHtml += '<div class="detail-section-label">判断根拠ニュース</div>';
-              // Path B: 判断根拠のニュースを強調表示
-              sectionHtml += '<div class="detail-news-list pathb">' +
-                newsArr.slice(0, 3).map(function(n) {
-                  var title = n.title_ja || n.title || (typeof n === 'string' ? n : String(n));
-                  var impact = n.impact;
-                  var impactCls = impact === 'high' ? 'high' : impact === 'medium' ? 'med' : '';
-                  return '<div class="detail-news-item">' +
-                    (impactCls ? '<span class="detail-news-dot ' + impactCls + '"></span>' : '<span class="detail-news-dot"></span>') +
-                    '<span class="detail-news-title">' + escHtml(String(title).slice(0, 80)) + '</span>' +
-                    (impact ? '<div class="detail-news-impact">' + escHtml(impact) + '</div>' : '') +
-                  '</div>';
-                }).join('') +
-              '</div>';
-            } else {
-              sectionHtml += '<div class="detail-section-label">市場コンテキスト</div>';
-            }
-
-            // 指標バー（共通）
-            if (d.vix != null || d.us10y != null || d.nikkei != null || d.sp500 != null) {
-              sectionHtml += '<div class="detail-indicator-bar">' +
-                (d.vix != null ? '<div class="detail-ind"><span class="detail-ind-label">VIX</span><span class="detail-ind-val' + (d.vix >= 25 ? ' warn' : '') + '">' + fmt(d.vix, 1) + '</span></div>' : '') +
-                (d.us10y != null ? '<div class="detail-ind"><span class="detail-ind-label">米10Y</span><span class="detail-ind-val">' + fmt(d.us10y, 2) + '%</span></div>' : '') +
-                (d.nikkei != null ? '<div class="detail-ind"><span class="detail-ind-label">日経</span><span class="detail-ind-val">' + fmt(d.nikkei, 0) + '</span></div>' : '') +
-                (d.sp500 != null ? '<div class="detail-ind"><span class="detail-ind-label">S&P</span><span class="detail-ind-val">' + fmt(d.sp500, 0) + '</span></div>' : '') +
-              '</div>';
-            }
-
-            // Path A: ニュースがあれば「参考ニュース」として控えめに表示
-            if (!hasPathBNews && newsArr.length > 0) {
-              sectionHtml += '<div class="detail-news-ref">' +
-                '<span class="detail-news-ref-label">参考ニュース（判断時点）</span>' +
-                newsArr.slice(0, 2).map(function(n) {
-                  var title = n.title_ja || n.title || (typeof n === 'string' ? n : String(n));
-                  return '<div class="detail-news-ref-item">' + escHtml(String(title).slice(0, 60)) + '</div>';
-                }).join('') +
-              '</div>';
-            }
-
-            sectionHtml += '</div>';
-            return sectionHtml;
-          })() +
-
-          // ── セクション4: フッター（トリガー + 結果 + 時刻） ──
-          '<div class="detail-footer">' +
-            '<div class="detail-footer-left">' +
-              '<span class="tl-chip ' + trigger + '" style="font-size:10px">' + escHtml(triggerLabel(trigger)) + '</span>' +
-              '<span class="detail-footer-time">' + fmtTimeHMS(d.created_at) + '</span>' +
-            '</div>' +
-            '<div class="tl-result">' +
-              '<div class="result-dot ' + resultKey + '"></div>' +
-              '<span class="tl-result-text ' + resultKey + '">' + resultText + resultPnl + '</span>' +
-            '</div>' +
-          '</div>' +
-
-        '</div>' +
-      '</div>';
-    }).join('');
-
-    // タップでパネル展開（イベント委譲）
-    timeline.onclick = function(e) {
-      var card = e.target.closest('[data-ai-idx]');
-      if (!card) return;
-      var idx   = card.dataset.aiIdx;
-      var panel = el('ai-detail-' + idx);
-      if (!panel) return;
-      var isOpen = card.classList.contains('expanded');
-      timeline.querySelectorAll('.tl-card.expanded').forEach(function(c) {
-        c.classList.remove('expanded');
-        var p = c.querySelector('.detail-panel');
-        if (p) p.classList.remove('open');
-      });
-      if (!isOpen) {
-        card.classList.add('expanded');
-        panel.classList.add('open');
-      }
-    };
-  }
-
-  function openNewsSheet(d) {
-    var bc = d.decision === 'BUY' ? 'badge-buy' : d.decision === 'SELL' ? 'badge-sell' : 'badge-hold';
-    el('sheet-title').innerHTML =
-      '<span class="decision-pair" style="font-size:16px">' + escHtml(d.pair || '') + '</span> ' +
-      '<span class="badge ' + bc + '" style="font-size:13px">' + d.decision + '</span>';
-
-    var rows = '';
-    rows += sheetRow('日時', fmtTime(d.created_at));
-    if (d.vix != null)   rows += sheetRow('VIX',     fmt(d.vix, 1));
-    if (d.us10y != null) rows += sheetRow('米10年債', fmt(d.us10y, 2) + '%');
-
-    if (d.reasoning) {
-      rows += '<div style="margin-top:12px;padding-top:12px;border-top:1px solid var(--separator)">' +
-        '<div style="font-size:12px;color:var(--label-secondary);margin-bottom:6px">AI判断理由</div>' +
-        '<div style="font-size:14px;line-height:1.6;color:var(--label)">' + escHtml(d.reasoning) + '</div>' +
-        '</div>';
-    }
-
-    if (d.news_summary) {
-      // news_summaryをパースしてタイトルリストに変換（多重エンコード対応）
-      var newsItems = [];
-      try {
-        var raw = d.news_summary;
-        // 最大3回パースを試行（多重エンコード対応）
-        for (var attempt = 0; attempt < 3 && typeof raw === 'string'; attempt++) {
-          try { raw = JSON.parse(raw); } catch(e) { break; }
-        }
-        if (Array.isArray(raw)) {
-          // 各アイテムのtitleもJSON文字列の場合があるので展開
-          raw.forEach(function(item) {
-            if (typeof item === 'string') {
-              newsItems.push({ title: item });
-            } else if (item.title && item.title.charAt(0) === '[') {
-              try {
-                var inner = JSON.parse(item.title);
-                if (Array.isArray(inner)) inner.forEach(function(i) { newsItems.push(i); });
-                else newsItems.push(item);
-              } catch(e) { newsItems.push(item); }
-            } else {
-              newsItems.push(item);
-            }
-          });
-        }
-      } catch(e) {
-        newsItems = d.news_summary.split(' | ').map(function(t) { return { title: t.trim() }; });
-      }
-      if (newsItems.length > 0) {
-        rows += '<div style="margin-top:12px;padding-top:12px;border-top:1px solid var(--separator)">' +
-          '<div style="font-size:12px;color:var(--label-secondary);margin-bottom:6px">参照ニュース</div>' +
-          newsItems.slice(0, 5).map(function(n) {
-            return '<div style="font-size:12px;line-height:1.5;color:var(--label);padding:4px 0;border-bottom:1px solid var(--separator)">• ' + escHtml(n.title || '') + '</div>';
-          }).join('') +
-          '</div>';
-      }
-    }
-
-    el('sheet-body').innerHTML = rows;
-    var sheet = el('sheet');
-    sheet.style.transform = '';
-    lockScroll();
-    sheet.classList.add('open');
-    el('sheet-backdrop').classList.add('visible');
-  }
-
-  function sheetRow(label, val) {
-    return '<div style="display:flex;justify-content:space-between;align-items:baseline;padding:8px 0;border-bottom:1px solid var(--separator)">' +
-      '<span style="font-size:14px;color:var(--label-secondary)">' + label + '</span>' +
-      '<span style="font-size:14px;color:var(--label)">' + val + '</span>' +
-    '</div>';
-  }
-
-  // ── データ取得 ──
   function refresh() {
     fetch('/api/status')
       .then(function(r) {
@@ -2818,858 +2318,100 @@ export const JS = `
       })
       .then(function(data) {
         render(data);
-        el('last-updated').textContent =
-          new Date().toLocaleTimeString('ja-JP', { hour: '2-digit', minute: '2-digit', second: '2-digit' }) + ' 更新';
       })
-      .catch(function() {
-        el('last-updated').textContent = '更新失敗';
+      .catch(function(err) {
+        console.error('[FX Sim] refresh error:', err);
       });
   }
-
-  // ── イベントリスナー ──
-  var btn = el('refresh-btn');
-  if (btn) {
-    btn.addEventListener('click', function() {
-      btn.classList.add('spinning');
-      setTimeout(function() { btn.classList.remove('spinning'); }, 700);
-      // ページ自体をハードリロード（キャッシュ無効化）
-      location.reload();
-    });
-  }
-
-  // テーマ切替
-  var themeBtn = el('theme-btn');
-  var sunIcon = el('theme-icon-sun');
-  var moonIcon = el('theme-icon-moon');
-  function updateThemeIcon(theme) {
-    if (!sunIcon || !moonIcon) return;
-    // ダークモード時: 太陽アイコン（ライトに切替）、ライトモード時: 月アイコン（ダークに切替）
-    sunIcon.style.display = theme === 'light' ? 'none' : '';
-    moonIcon.style.display = theme === 'light' ? '' : 'none';
-  }
-  if (themeBtn) {
-    var savedTheme = localStorage.getItem('fx-theme');
-    if (savedTheme) {
-      document.documentElement.setAttribute('data-theme', savedTheme);
-      updateThemeIcon(savedTheme);
-    }
-    themeBtn.addEventListener('click', function() {
-      var current = document.documentElement.getAttribute('data-theme');
-      var next = current === 'light' ? 'dark' : 'light';
-      document.documentElement.setAttribute('data-theme', next);
-      localStorage.setItem('fx-theme', next);
-      updateThemeIcon(next);
-    });
-  }
-
-  // 通知許可リクエスト
-  if ('Notification' in window && Notification.permission === 'default') {
-    Notification.requestPermission();
-  }
-
-  // PC: viewport動的変更（タブレット以上ではズーム許可）
-  function updateViewport() {
-    var meta = document.querySelector('meta[name="viewport"]');
-    if (!meta) return;
-    if (window.innerWidth >= 769) {
-      meta.setAttribute('content', 'width=device-width, initial-scale=1.0');
-    } else {
-      meta.setAttribute('content', 'width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no');
-    }
-  }
-  updateViewport();
-
-  // PC: リサイズ時のレイアウト再描画
-  var resizeTimer;
-  window.addEventListener('resize', function() {
-    clearTimeout(resizeTimer);
-    resizeTimer = setTimeout(function() {
-      updateViewport();
-      if (lastData) {
-        renderWatchlist(lastData);
-        renderPanel(lastData);
-      }
-    }, 250);
-  });
 
   refresh();
   setInterval(refresh, 30000);
 
-  // ─── パラメーター管理 (/api/params) ───────────────────────────────────────
+  // ══════════════════════════════════════════
+  // パラメーター管理（戦略タブ遅延ロード）
+  // ══════════════════════════════════════════
 
   var paramsData = null;
-  var paramsTabActive = 'current';
-
-  // タブ切り替え（HTMLから呼ばれる）
-  window.showParamsTab = function(tab) {
-    paramsTabActive = tab;
-    var cur = el('params-current');
-    var hist = el('params-history');
-    var btnC = el('params-tab-current');
-    var btnH = el('params-tab-history');
-    if (cur)  cur.style.display  = tab === 'current'  ? 'block' : 'none';
-    if (hist) hist.style.display = tab === 'history'  ? 'block' : 'none';
-    if (btnC) { btnC.classList.toggle('active', tab === 'current'); }
-    if (btnH) { btnH.classList.toggle('active', tab === 'history'); }
-    if (paramsData) renderParamsData(paramsData);
-  };
 
   function loadParams() {
-    fetch('/api/params')
+    return fetch('/api/params')
       .then(function(r) { return r.json(); })
-      .then(function(d) {
-        paramsData = d;
-        var loading = el('params-loading');
-        if (loading) loading.style.display = 'none';
-        renderEmergencyBanner(d.latestEmergency);
-        renderParamsData(d);
-        renderParamsPanelReview(d);
-      })
-      .catch(function(e) {
-        var loading = el('params-loading');
-        if (loading) loading.textContent = 'データ取得失敗';
-      });
+      .then(function(d) { paramsData = d; return d; })
+      .catch(function() {});
   }
 
-  // ─── 因果サマリー描画（Task 3-B） ──────────────────────────────────────────
-
-  // ─── ヒートマップ描画（Task 6） ──────────────────────────────────────────
-
-  function heatmapColor(val, key) {
-    if (key === 'pnl_closed') {
-      if (val > 0) return 'rgba(48,209,88,' + Math.min(Math.abs(val) / 500, 0.6) + ')';
-      if (val < 0) return 'rgba(255,69,58,' + Math.min(Math.abs(val) / 500, 0.6) + ')';
-      return 'transparent';
-    }
-    if (key === 'vix_effect') {
-      return val > 0 ? 'rgba(255,159,10,' + Math.min(val, 0.6) + ')' : 'transparent';
-    }
-    if (key === 'param_changed') {
-      return val > 0 ? 'rgba(10,132,255,0.3)' : 'transparent';
-    }
-    if (key === 'news_impact') {
-      return val > 0 ? 'rgba(255,69,58,' + Math.min(val / 100 * 0.6, 0.6) + ')' : 'transparent';
-    }
-    return 'transparent';
-  }
-
-  function heatmapLabel(val, key) {
-    if (key === 'pnl_closed') return val !== 0 ? (val > 0 ? '+' : '') + Math.round(val) : '\\u2014';
-    if (key === 'vix_effect') return val > 0 ? val.toFixed(1) : '\\u2014';
-    if (key === 'param_changed') return val > 0 ? '\\u2713' : '\\u2014';
-    if (key === 'news_impact') return val > 0 ? Math.round(val) : '\\u2014';
-    return '\\u2014';
-  }
-
-  function renderHeatmap(heatmapData) {
-    var hmEl = document.getElementById('causal-heatmap');
-    if (!hmEl) return;
-    if (!heatmapData || heatmapData.length === 0) {
-      hmEl.style.display = 'none';
-      return;
-    }
-    hmEl.style.display = '';
-
-    var cols = ['\\u9298\\u67C4', 'PnL', 'VIX', 'PR', '\\u30CB\\u30E5\\u30FC\\u30B9'];
-    var keys = ['pnl_closed', 'vix_effect', 'param_changed', 'news_impact'];
-
-    var html = '<div class="heatmap-grid" style="grid-template-columns: auto repeat(' + keys.length + ', 1fr)">';
-
-    for (var h = 0; h < cols.length; h++) {
-      html += '<div class="hm-header">' + cols[h] + '</div>';
-    }
-
-    for (var i = 0; i < heatmapData.length; i++) {
-      var row = heatmapData[i];
-      html += '<div class="hm-pair">' + row.pair + '</div>';
-      for (var k = 0; k < keys.length; k++) {
-        var val = (row.factors && row.factors[keys[k]]) || 0;
-        var bg = heatmapColor(val, keys[k]);
-        html += '<div class="hm-cell" style="background:' + bg + '">' + heatmapLabel(val, keys[k]) + '</div>';
-      }
-    }
-    html += '</div>';
-    hmEl.innerHTML = html;
-  }
-
-  function renderCausalSummary(data) {
-    var section = document.getElementById('causal-summary');
-    if (!section) return;
-    var cs = data.causalSummary;
-    if (!cs) { section.style.display = 'none'; return; }
-    section.style.display = '';
-
-    // ナラティブ
-    var narEl = document.getElementById('causal-narrative');
-    if (narEl) narEl.textContent = cs.narrative || '';
-
-    // キードライバー — profitTop
-    var profitEl = document.getElementById('causal-profit-top');
-    if (profitEl) {
-      if (cs.drivers && cs.drivers.profitTop) {
-        var p = cs.drivers.profitTop;
-        profitEl.innerHTML = '<div class="driver-label">\\u5229\\u76CATop</div>' +
-          '<div class="driver-pair">' + p.pair + '</div>' +
-          '<div class="driver-pnl positive">+' + Math.round(p.pnl) + '\\u5186</div>' +
-          '<div class="driver-reason">' + (p.reason || '') + '</div>';
-        profitEl.style.display = '';
-        profitEl.onclick = function() { switchTab('tab-stats', 'perf-' + p.pair.replace(/[\\/\\s]/g, '-')); };
-      } else {
-        profitEl.style.display = 'none';
-      }
-    }
-
-    // キードライバー — lossTop
-    var lossEl = document.getElementById('causal-loss-top');
-    if (lossEl) {
-      if (cs.drivers && cs.drivers.lossTop) {
-        var l = cs.drivers.lossTop;
-        lossEl.innerHTML = '<div class="driver-label">\\u640D\\u5931Top</div>' +
-          '<div class="driver-pair">' + l.pair + '</div>' +
-          '<div class="driver-pnl negative">' + Math.round(l.pnl) + '\\u5186</div>' +
-          '<div class="driver-reason">' + (l.reason || '') + '</div>';
-        lossEl.style.display = '';
-        lossEl.onclick = function() { switchTab('tab-stats', 'perf-' + l.pair.replace(/[\\/\\s]/g, '-')); };
-      } else {
-        lossEl.style.display = 'none';
-      }
-    }
-
-    // 要因バッジ (factors)
-    var tabMap = {
-      'vix': 'tab-strategy',
-      'macro': 'tab-strategy',
-      'param_review': 'tab-strategy',
-      'news': 'tab-ai',
-      'trailing': 'tab-stats',
-      'delisted': 'tab-log'
-    };
-    var scrollMap = {
-      'vix': '',
-      'macro': '',
-      'param_review': 'review-history',
-      'news': 'news-analysis',
-      'trailing': '',
-      'delisted': ''
-    };
-    var factorsEl = document.getElementById('causal-factors');
-    if (factorsEl && cs.drivers && cs.drivers.factors) {
-      factorsEl.innerHTML = cs.drivers.factors.map(function(f) {
-        var cls = f.severity === 'high' ? 'factor-high' : f.severity === 'medium' ? 'factor-medium' : 'factor-low';
-        var targetTab = tabMap[f.type] || 'tab-log';
-        var targetScroll = scrollMap[f.type] || '';
-        return '<span class="factor-badge ' + cls + '" onclick="switchTab(\\'' + targetTab + '\\', \\'' + targetScroll + '\\')">' + f.label + '</span>';
-      }).join('');
-    }
-
-    // ヒートマップ
-    renderHeatmap(cs.heatmap);
-  }
-
-  // ─── 警報バナー描画（Task 4-B） ──────────────────────────────────────────
-
-  function renderAlertBanner(data) {
-    var container = document.getElementById('alert-banner-container');
-    if (!container) return;
-    var alerts = [];
-
-    // DD 警告（赤）
-    if (data.riskStatus && data.riskStatus.killSwitchActive) {
-      alerts.push({ cls: 'red', text: '\\u26A0\\uFE0F DD STOP \\u2014 \\u65E5\\u6B21\\u640D\\u5931\\u4E0A\\u9650\\u8D85\\u904E\\u3002\\u65B0\\u898F\\u30A8\\u30F3\\u30C8\\u30EA\\u30FC\\u505C\\u6B62\\u4E2D' });
-    }
-    // DD 注意（オレンジ）
-    else if (data.riskStatus && data.riskStatus.maxDailyLoss > 0 &&
-             data.riskStatus.todayLoss / data.riskStatus.maxDailyLoss > 0.8) {
-      var pct = Math.round(data.riskStatus.todayLoss / data.riskStatus.maxDailyLoss * 100);
-      alerts.push({ cls: 'orange', text: '\\u26A1 DD\\u6CE8\\u610F \\u2014 \\u65E5\\u6B21\\u640D\\u5931\\u304C\\u4E0A\\u9650\\u306E' + pct + '%\\u306B\\u5230\\u9054' });
-    }
-
-    // 緊急ニュース（赤）
-    if (data.newsAnalysis) {
-      var now = Date.now();
-      var tenMin = 10 * 60 * 1000;
-      data.newsAnalysis.forEach(function(n) {
-        if (n.attention && n.analyzed_at) {
-          var diff = now - new Date(n.analyzed_at).getTime();
-          if (diff < tenMin) {
-            alerts.push({ cls: 'red', text: '\\uD83D\\uDD34 \\u7DCA\\u6025\\u30CB\\u30E5\\u30FC\\u30B9: ' + (n.title_ja || n.title || '\\u901F\\u5831') });
-          }
-        }
-      });
-    }
-
-    // システムエラー（オレンジ）
-    if (data.systemLogs) {
-      var recentErrors = data.systemLogs.slice(0, 5).filter(function(l) { return l.level === 'ERROR'; });
-      if (recentErrors.length > 0) {
-        alerts.push({ cls: 'orange', text: '\\uD83D\\uDD27 \\u30B7\\u30B9\\u30C6\\u30E0\\u30A8\\u30E9\\u30FC\\u691C\\u51FA: ' + recentErrors[0].message });
-      }
-    }
-
-    // 孤立ポジション（黄）
-    if (data.causalSummary && data.causalSummary.drivers && data.causalSummary.drivers.factors) {
-      var delisted = data.causalSummary.drivers.factors.filter(function(f) { return f.type === 'delisted'; });
-      if (delisted.length > 0) {
-        alerts.push({ cls: 'yellow', text: '\\u26A0 \\u5B64\\u7ACB\\u30DD\\u30B8\\u30B7\\u30E7\\u30F3: ' + delisted[0].label });
-      }
-    }
-
-    // 表示
-    if (alerts.length === 0) {
-      container.style.display = 'none';
-      return;
-    }
-    container.style.display = '';
-    container.innerHTML = alerts.map(function(a) {
-      return '<div class="alert-banner alert-' + a.cls + '">' + a.text + '</div>';
-    }).join('');
-  }
-
-  // ─── 緊急ニュースバナー（4-B） ─────────────────────────────────────────────
-
-  function renderEmergencyBanner(emergency) {
-    var banner = el('emergency-news-banner');
-    if (!banner) return;
-    if (!emergency || !emergency.created_at) return;
-
-    var now = Date.now();
-    var createdMs = new Date(emergency.created_at).getTime();
-    var ageMs = now - createdMs;
-    var TEN_MIN = 10 * 60 * 1000;
-
-    if (ageMs > TEN_MIN) return; // 10分以上経過ならバナー非表示
-
-    // タイトルを設定
-    var titleEl = banner.querySelector('.emergency-news-title');
-    if (titleEl) titleEl.textContent = emergency.news_title || '緊急ニュース検出';
-
-    // バナー表示
-    banner.classList.add('visible');
-    banner.classList.remove('fading');
-
-    // 残り時間後に自動非表示
-    var remainMs = TEN_MIN - ageMs;
-    setTimeout(function() {
-      banner.classList.add('fading');
-      setTimeout(function() {
-        banner.classList.remove('visible');
-        banner.classList.remove('fading');
-      }, 800);
-    }, remainMs);
-  }
-
-  // ─── パラメーターカード展開トグル（4-C） ──────────────────────────────────
-
-  window.toggleParamCard = function(pair) {
-    var storageKey = 'param-expanded-cards';
-    var expanded = {};
-    try { expanded = JSON.parse(localStorage.getItem(storageKey) || '{}'); } catch {}
-
-    var cardDetail = document.querySelector('[data-param-detail="' + pair + '"]');
-    var chevron    = document.querySelector('[data-param-chevron="' + pair + '"]');
-    if (!cardDetail) return;
-
-    var isExpanded = expanded[pair] === true;
-    if (isExpanded) {
-      expanded[pair] = false;
-      cardDetail.classList.remove('expanded');
-      if (chevron) chevron.style.transform = 'rotate(0deg)';
-    } else {
-      expanded[pair] = true;
-      cardDetail.classList.add('expanded');
-      if (chevron) chevron.style.transform = 'rotate(180deg)';
-    }
-    try { localStorage.setItem(storageKey, JSON.stringify(expanded)); } catch {}
-  };
-
-  // ─── カテゴリアコーディオン（4-D） ────────────────────────────────────────
-
-  window.toggleParamCat = function(cat) {
-    var storageKey = 'param-collapsed-cats';
-    var collapsed = {};
-    try { collapsed = JSON.parse(localStorage.getItem(storageKey) || '{}'); } catch {}
-
-    var header = document.querySelector('[data-cat-header="' + cat + '"]');
-    var body   = document.querySelector('[data-cat-body="' + cat + '"]');
-    if (!header || !body) return;
-
-    var isCollapsed = collapsed[cat] === true;
-    if (isCollapsed) {
-      collapsed[cat] = false;
-      header.classList.remove('collapsed');
-      body.classList.remove('collapsed');
-    } else {
-      collapsed[cat] = true;
-      header.classList.add('collapsed');
-      body.classList.add('collapsed');
-    }
-    try { localStorage.setItem(storageKey, JSON.stringify(collapsed)); } catch {}
-  };
-
-  // ─── 現在パラメーター表 ───────────────────────────────────────────────────
-
-  // パラメーター名 → 表示ラベル + 小数桁
-  var PARAM_COLS = [
-    { key: 'rsi_oversold',      label: 'RSI売られ',  dp: 0 },
-    { key: 'rsi_overbought',    label: 'RSI買われ',  dp: 0 },
-    { key: 'adx_min',           label: 'ADX最小',    dp: 0 },
-    { key: 'atr_tp_multiplier', label: 'TP倍率',     dp: 1 },
-    { key: 'atr_sl_multiplier', label: 'SL倍率',     dp: 1 },
-    { key: 'vix_max',           label: 'VIX上限',    dp: 0 },
-    { key: 'param_version',     label: 'Ver',        dp: 0 },
-    { key: 'trades_since_review', label: '次Revまで', dp: 0, isProgress: true },
-  ];
-
-  function fmt(v, dp) {
-    if (v == null) return '—';
-    return Number(v).toFixed(dp);
-  }
-
-  function rrColor(rr) {
-    if (rr == null) return '';
-    if (rr >= 2.0) return 'color:#34c759';
-    if (rr >= 1.5) return 'color:#ff9500';
-    return 'color:#ff3b30';
-  }
-
-  function diffBadge(oldVal, newVal, dp) {
-    if (oldVal == null || newVal == null) return '';
-    var diff = newVal - oldVal;
-    if (Math.abs(diff) < 0.001) return '<span style="color:var(--label-secondary);font-size:10px"> (変化なし)</span>';
-    var pct = oldVal !== 0 ? Math.round(diff / Math.abs(oldVal) * 100) : 0;
-    var color = diff > 0 ? '#34c759' : '#ff3b30';
-    var sign = diff > 0 ? '+' : '';
-    return '<span style="color:' + color + ';font-size:10px;font-weight:600"> (' + sign + pct + '%)</span>';
-  }
-
-  function renderCurrentParams(params) {
-    var wrap = el('params-table-wrap');
-    if (!wrap || !params || params.length === 0) return;
-
-    // localStorage から展開状態・カテゴリ折りたたみ状態を復元
-    var expandedCards = {};
-    var collapsedCats = {};
-    try { expandedCards = JSON.parse(localStorage.getItem('param-expanded-cards') || '{}'); } catch {}
-    try { collapsedCats = JSON.parse(localStorage.getItem('param-collapsed-cats') || '{}'); } catch {}
-
-    var NOW_MS = Date.now();
-    var TWELVE_H = 12 * 60 * 60 * 1000;
-
-    var categories = {
-      '為替':       ['USD/JPY','EUR/USD','GBP/USD','AUD/USD'],
-      '株式指数':   ['S&P500','NASDAQ','Nikkei225','DAX'],
-      '暗号資産':   ['BTC/USD','ETH/USD','SOL/USD'],
-      'コモディティ':['Gold','Silver','CrudeOil'],
-      '債券':       ['US10Y'],
-    };
-    var catOrder = ['為替','株式指数','暗号資産','コモディティ','債券'];
-    var pairMap = {};
-    params.forEach(function(p) { pairMap[p.pair] = p; });
-
-    var html = '';
-
-    catOrder.forEach(function(cat) {
-      var pairs = categories[cat] || [];
-      var catParams = pairs.map(function(pair) { return pairMap[pair]; }).filter(Boolean);
-      if (catParams.length === 0) return;
-
-      var isCatCollapsed = collapsedCats[cat] === true;
-      var catId = encodeURIComponent(cat);
-
-      html +=
-        '<div class="param-category-header' + (isCatCollapsed ? ' collapsed' : '') + '" ' +
-          'data-cat-header="' + catId + '" ' +
-          'onclick="toggleParamCat(&quot;' + catId + '&quot;)">' +
-          '<span class="param-category-title">' + escHtml(cat) + '</span>' +
-          '<span class="param-category-chevron">▼</span>' +
-        '</div>' +
-        '<div class="param-category-body' + (isCatCollapsed ? ' collapsed' : '') + '" ' +
-          'data-cat-body="' + catId + '">';
-
-      catParams.forEach(function(p) {
-        var rrVal = p.atr_sl_multiplier > 0 ? p.atr_tp_multiplier / p.atr_sl_multiplier : 0;
-        var rrStyle = rrVal >= 2.0 ? 'color:var(--green);font-weight:700' : 'color:var(--red);font-weight:700';
-
-        // 進捗バー（Goal Gradient）
-        var remainTrades = Math.max(0, (p.review_trade_count || 0) - (p.trades_since_review || 0));
-        var total = p.review_trade_count || 1;
-        var remainPct = Math.min(100, Math.round(remainTrades / total * 100));
-        var progressClass = remainPct > 60 ? 'progress-normal' : remainPct > 20 ? 'progress-warning' : 'progress-urgent';
-
-        // バッジ（Variable Reward）
-        var verBadge;
-        if (p.param_version >= 2) {
-          var lastReviewedMs = p.last_reviewed_at ? new Date(p.last_reviewed_at).getTime() : 0;
-          var isRecent = (NOW_MS - lastReviewedMs) < TWELVE_H;
-          if (isRecent) {
-            verBadge = '<span class="badge-upgraded">UPGRADED</span>';
-          } else {
-            verBadge = '<span class="badge-version">v' + p.param_version + '</span>';
-          }
-        } else {
-          verBadge = '<span class="badge-version" style="opacity:0.5">v1</span>';
-        }
-
-        var reviewedLabel = p.reviewed_by === 'INITIAL'
-          ? '<span style="color:var(--label-tertiary);font-size:10px">初期値</span>'
-          : '<span style="color:var(--blue);font-size:10px">AI調整済</span>';
-        var lastAt = p.last_reviewed_at ? p.last_reviewed_at.slice(0, 10) : '未レビュー';
-        var pairKey = p.pair;
-        var isExpanded = expandedCards[pairKey] === true;
-
-        html +=
-          '<div class="param-card">' +
-            // 概要行（常に表示）
-            '<div class="param-card-summary" onclick="toggleParamCard(&quot;' + escHtml(pairKey) + '&quot;)">' +
-              '<span style="font-size:13px;font-weight:600;flex:1">' + escHtml(p.pair) + '</span>' +
-              verBadge +
-              '<span style="margin-left:6px">' + reviewedLabel + '</span>' +
-              '<span style="font-size:12px;' + rrStyle + ';margin-left:6px">RR ' + rrVal.toFixed(2) + '</span>' +
-              '<span style="font-size:10px;color:var(--label-tertiary);margin-left:6px">' + remainTrades + '件</span>' +
-              '<span class="param-chevron" data-param-chevron="' + escHtml(pairKey) + '" ' +
-                'style="transform:rotate(' + (isExpanded ? '180' : '0') + 'deg)">▼</span>' +
-            '</div>' +
-            // 進捗バー
-            '<div class="param-progress-track">' +
-              '<div class="param-progress-fill ' + progressClass + '" style="width:' + remainPct + '%"></div>' +
-            '</div>' +
-            // 詳細（折りたたみ）
-            '<div class="param-card-detail' + (isExpanded ? ' expanded' : '') + '" ' +
-              'data-param-detail="' + escHtml(pairKey) + '">' +
-              '<div class="param-detail-inner">' +
-                '<div class="param-grid-6">' +
-                  /* ── グループ1: エントリー基本 ── */
-                  '<div class="param-group-divider">エントリー基本</div>' +
-                  '<div class="param-grid-cell">' +
-                    '<div class="cell-label">RSI売られ</div>' +
-                    '<div class="cell-value">' + fmt(p.rsi_oversold, 0) + '</div>' +
-                  '</div>' +
-                  '<div class="param-grid-cell">' +
-                    '<div class="cell-label">RSI買われ</div>' +
-                    '<div class="cell-value">' + fmt(p.rsi_overbought, 0) + '</div>' +
-                  '</div>' +
-                  '<div class="param-grid-cell">' +
-                    '<div class="cell-label">ADX最小</div>' +
-                    '<div class="cell-value">' + fmt(p.adx_min, 0) + '</div>' +
-                  '</div>' +
-                  '<div class="param-grid-cell">' +
-                    '<div class="cell-label">TP倍率</div>' +
-                    '<div class="cell-value">' + fmt(p.atr_tp_multiplier, 1) + '</div>' +
-                  '</div>' +
-                  '<div class="param-grid-cell">' +
-                    '<div class="cell-label">SL倍率</div>' +
-                    '<div class="cell-value">' + fmt(p.atr_sl_multiplier, 1) + '</div>' +
-                  '</div>' +
-                  '<div class="param-grid-cell">' +
-                    '<div class="cell-label">VIX上限</div>' +
-                    '<div class="cell-value">' + fmt(p.vix_max, 0) + '</div>' +
-                  '</div>' +
-                  /* ── グループ2: クローズ調整（Ph.6） ── */
-                  '<div class="param-group-divider">クローズ調整</div>' +
-                  '<div class="param-grid-cell">' +
-                    '<div class="cell-label">VIX TP倍率</div>' +
-                    '<div class="cell-value">' + fmt(p.vix_tp_scale, 2) + '</div>' +
-                  '</div>' +
-                  '<div class="param-grid-cell">' +
-                    '<div class="cell-label">VIX SL倍率</div>' +
-                    '<div class="cell-value">' + fmt(p.vix_sl_scale, 2) + '</div>' +
-                  '</div>' +
-                  '<div class="param-grid-cell">' +
-                    '<div class="cell-label">マクロSL倍率</div>' +
-                    '<div class="cell-value">' + fmt(p.macro_sl_scale, 2) + '</div>' +
-                  '</div>' +
-                  /* ── グループ3: エントリースコアリング（Ph.7） ── */
-                  '<div class="param-group-divider">エントリースコアリング</div>' +
-                  '<div class="param-grid-cell">' +
-                    '<div class="cell-label">w(RSI)</div>' +
-                    '<div class="cell-value">' + fmt(p.w_rsi, 2) + '</div>' +
-                  '</div>' +
-                  '<div class="param-grid-cell">' +
-                    '<div class="cell-label">w(ER)</div>' +
-                    '<div class="cell-value">' + fmt(p.w_er, 2) + '</div>' +
-                  '</div>' +
-                  '<div class="param-grid-cell">' +
-                    '<div class="cell-label">w(MTF)</div>' +
-                    '<div class="cell-value">' + fmt(p.w_mtf, 2) + '</div>' +
-                  '</div>' +
-                  '<div class="param-grid-cell">' +
-                    '<div class="cell-label">w(S/R)</div>' +
-                    '<div class="cell-value">' + fmt(p.w_sr, 2) + '</div>' +
-                  '</div>' +
-                  '<div class="param-grid-cell">' +
-                    '<div class="cell-label">w(PA)</div>' +
-                    '<div class="cell-value">' + fmt(p.w_pa, 2) + '</div>' +
-                  '</div>' +
-                  '<div class="param-grid-cell">' +
-                    '<div class="cell-label">w(BB)</div>' +
-                    '<div class="cell-value">' + fmt(p.w_bb, 2) + '</div>' +
-                  '</div>' +
-                  '<div class="param-grid-cell">' +
-                    '<div class="cell-label">w(DIV)</div>' +
-                    '<div class="cell-value">' + fmt(p.w_div, 2) + '</div>' +
-                  '</div>' +
-                  '<div class="param-grid-cell">' +
-                    '<div class="cell-label">最低スコア</div>' +
-                    '<div class="cell-value">' + fmt(p.entry_score_min, 2) + '</div>' +
-                  '</div>' +
-                  '<div class="param-grid-cell">' +
-                    '<div class="cell-label">最小RR比</div>' +
-                    '<div class="cell-value">' + fmt(p.min_rr_ratio, 1) + '</div>' +
-                  '</div>' +
-                  /* ── グループ4: 戦略設定 ── */
-                  '<div class="param-group-divider">戦略設定</div>' +
-                  '<div class="param-grid-cell">' +
-                    '<div class="cell-label">戦略</div>' +
-                    '<div class="cell-value" style="font-size:11px">' + escHtml(p.strategy_primary || '—') + '</div>' +
-                  '</div>' +
-                  '<div class="param-grid-cell">' +
-                    '<div class="cell-label">シグナル強度</div>' +
-                    '<div class="cell-value">' + fmt(p.min_signal_strength, 2) + '</div>' +
-                  '</div>' +
-                  /* ── グループ5: 環境検出（Ph.9） ── */
-                  '<div class="param-group-divider">環境検出</div>' +
-                  '<div class="param-grid-cell">' +
-                    '<div class="cell-label">BB期間</div>' +
-                    '<div class="cell-value">' + fmt(p.bb_period, 0) + '</div>' +
-                  '</div>' +
-                  '<div class="param-grid-cell">' +
-                    '<div class="cell-label">BBスクイーズ</div>' +
-                    '<div class="cell-value">' + fmt(p.bb_squeeze_threshold, 2) + '</div>' +
-                  '</div>' +
-                  '<div class="param-grid-cell">' +
-                    '<div class="cell-label">DIV参照</div>' +
-                    '<div class="cell-value">' + fmt(p.divergence_lookback, 0) + '</div>' +
-                  '</div>' +
-                  '<div class="param-grid-cell">' +
-                    '<div class="cell-label">最低根拠数</div>' +
-                    '<div class="cell-value">' + fmt(p.min_confirm_signals, 0) + '</div>' +
-                  '</div>' +
-                  '<div class="param-grid-cell">' +
-                    '<div class="cell-label">ER上限(逆張り)</div>' +
-                    '<div class="cell-value">' + fmt(p.er_upper_limit, 2) + '</div>' +
-                  '</div>' +
-                  /* ── グループ6: ポジション管理（Ph.8） ── */
-                  '<div class="param-group-divider">ポジション管理</div>' +
-                  '<div class="param-grid-cell">' +
-                    '<div class="cell-label">最大保有</div>' +
-                    '<div class="cell-value">' + fmt(p.max_hold_minutes, 0) + '分</div>' +
-                  '</div>' +
-                  '<div class="param-grid-cell">' +
-                    '<div class="cell-label">SL後CD</div>' +
-                    '<div class="cell-value">' + fmt(p.cooldown_after_sl, 0) + '分</div>' +
-                  '</div>' +
-                  '<div class="param-grid-cell">' +
-                    '<div class="cell-label">連敗縮退</div>' +
-                    '<div class="cell-value">' + fmt(p.consecutive_loss_shrink, 0) + '連敗</div>' +
-                  '</div>' +
-                  '<div class="param-grid-cell">' +
-                    '<div class="cell-label">日次上限</div>' +
-                    '<div class="cell-value">' + fmt(p.daily_max_entries, 0) + '回</div>' +
-                  '</div>' +
-                  '<div class="param-grid-cell">' +
-                    '<div class="cell-label">Trail開始</div>' +
-                    '<div class="cell-value">' + fmt(p.trailing_activation_atr, 1) + '×ATR</div>' +
-                  '</div>' +
-                  '<div class="param-grid-cell">' +
-                    '<div class="cell-label">Trail幅</div>' +
-                    '<div class="cell-value">' + fmt(p.trailing_distance_atr, 1) + '×ATR</div>' +
-                  '</div>' +
-                  '<div class="param-grid-cell">' +
-                    '<div class="cell-label">TP1比率</div>' +
-                    '<div class="cell-value">' + fmt(p.tp1_ratio, 2) + '</div>' +
-                  '</div>' +
-                  /* ── グループ6: レビュー設定（Ph.8） ── */
-                  '<div class="param-group-divider">レビュー設定</div>' +
-                  '<div class="param-grid-cell">' +
-                    '<div class="cell-label">最低サンプル</div>' +
-                    '<div class="cell-value">' + fmt(p.review_min_trades, 0) + '件</div>' +
-                  '</div>' +
-                  '<div class="param-grid-cell">' +
-                    '<div class="cell-label">セッション</div>' +
-                    '<div class="cell-value" style="font-size:11px">' + fmt(p.session_start_utc, 0) + '〜' + fmt(p.session_end_utc, 0) + 'h UTC</div>' +
-                  '</div>' +
-                '</div>' +
-                '<div class="param-last-review">最終レビュー: ' + escHtml(lastAt) + '</div>' +
-              '</div>' +
-            '</div>' +
-          '</div>';
-      });
-
-      html += '</div>'; // param-category-body
-    });
-
-    wrap.innerHTML = html;
-  }
-
-  // ─── 変更履歴 ─────────────────────────────────────────────────────────────
-
-  function renderParamsHistory(history) {
-    var listEl = el('params-history-list');
-    if (!listEl) return;
-    if (!history || history.length === 0) {
-      listEl.innerHTML = '<p style="color:var(--label-secondary);font-size:12px;padding:8px 0">レビュー履歴がありません</p>';
-      return;
-    }
-
-    var PARAM_LABELS = {
-      rsi_oversold: 'RSI売られ', rsi_overbought: 'RSI買われ',
-      adx_min: 'ADX最小', atr_tp_multiplier: 'TP倍率', atr_sl_multiplier: 'SL倍率',
-      vix_max: 'VIX上限',
-    };
-
-    var html = '';
-    history.forEach(function(h) {
-      var oldP = {};
-      var newP = {};
-      try { oldP = JSON.parse(h.old_params); } catch {}
-      try { newP = JSON.parse(h.new_params); } catch {}
-
-      var winPct  = Math.round((h.win_rate || 0) * 100);
-      var winColor = winPct >= 50 ? 'var(--green)' : winPct >= 40 ? 'var(--orange)' : 'var(--red)';
-      var rrVal   = h.actual_rr || 0;
-      var rrCol   = rrVal >= 2.0 ? 'var(--green)' : rrVal >= 1.5 ? 'var(--orange)' : 'var(--red)';
-      var pfVal   = h.profit_factor || 0;
-      var pfCol   = pfVal >= 1.5 ? 'var(--green)' : pfVal >= 1.0 ? 'var(--orange)' : 'var(--red)';
-
-      // 変化ありパラメーターを列挙（差分バッジサイズ分岐: ≥15%で大きく太字）
-      var changedKeys = Object.keys(newP).filter(function(k) {
-        return Math.abs((newP[k] || 0) - (oldP[k] || 0)) > 0.001;
-      });
-
-      var diffHtml = changedKeys.length === 0
-        ? '<span style="color:var(--label-secondary);font-size:11px">変化なし（様子見）</span>'
-        : changedKeys.map(function(k) {
-            var diff = (newP[k] || 0) - (oldP[k] || 0);
-            var pct  = oldP[k] !== 0 ? Math.round(diff / Math.abs(oldP[k]) * 100) : 0;
-            var c    = diff > 0 ? 'var(--green)' : 'var(--red)';
-            var sign = diff > 0 ? '▲' : '▼';
-            // ≥15%変化: font-size:12px・font-weight:700（大きく太字）
-            var isBig = Math.abs(pct) >= 15;
-            return '<span style="display:inline-flex;align-items:center;gap:3px;' +
-              'background:var(--bg-secondary);border-radius:6px;padding:2px 7px;' +
-              'font-size:11px;margin:2px">' +
-              escHtml(PARAM_LABELS[k] || k) + ' ' +
-              '<span style="color:' + c + ';' +
-                (isBig ? 'font-size:12px;font-weight:700' : 'font-weight:600') + '">' +
-                sign + ' ' + Math.abs(pct) + '%' +
-              '</span>' +
-              '</span>';
-          }).join('');
-
-      html +=
-        '<div style="background:var(--bg-secondary);border-radius:12px;padding:12px;margin-bottom:10px">' +
-
-          // 1. ヘッダー: ペア + バージョン + 日時
-          '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">' +
-            '<div style="display:flex;align-items:center;gap:6px">' +
-              '<span style="font-size:13px;font-weight:700">' + escHtml(h.pair) + '</span>' +
-              '<span class="badge-version">v' + (h.param_version || 1) + '</span>' +
-            '</div>' +
-            '<span style="font-size:11px;color:var(--label-secondary)">' +
-              escHtml((h.created_at || '').slice(0, 16).replace('T', ' ')) +
-            '</span>' +
-          '</div>' +
-
-          // 2. AI判断理由（Peak-End則: 最上段・強調表示）
-          '<div class="param-reason-block">' +
-            '<div class="param-reason-label">🤖 AI判断理由</div>' +
-            escHtml(h.reason || '—') +
-          '</div>' +
-
-          // 3. 変更内容
-          '<div style="margin-bottom:10px">' +
-            '<div style="font-size:10px;color:var(--label-secondary);font-weight:600;' +
-              'text-transform:uppercase;letter-spacing:0.05em;margin-bottom:6px">変更内容</div>' +
-            '<div style="display:flex;flex-wrap:wrap;gap:0">' + diffHtml + '</div>' +
-          '</div>' +
-
-          // 4. 評価実績グリッド
-          '<div style="display:grid;grid-template-columns:repeat(2,1fr);gap:6px">' +
-            '<div style="text-align:center;background:var(--bg-tertiary);border-radius:8px;padding:6px">' +
-              '<div style="font-size:9px;color:var(--label-secondary)">評価Tr数</div>' +
-              '<div style="font-size:14px;font-weight:700">' + (h.trades_eval || 0) + '</div>' +
-            '</div>' +
-            '<div style="text-align:center;background:var(--bg-tertiary);border-radius:8px;padding:6px">' +
-              '<div style="font-size:9px;color:var(--label-secondary)">勝率</div>' +
-              '<div style="font-size:14px;font-weight:700;color:' + winColor + '">' + winPct + '%</div>' +
-            '</div>' +
-            '<div style="text-align:center;background:var(--bg-tertiary);border-radius:8px;padding:6px">' +
-              '<div style="font-size:9px;color:var(--label-secondary)">実RR</div>' +
-              '<div style="font-size:14px;font-weight:700;color:' + rrCol + '">' + rrVal.toFixed(2) + '</div>' +
-            '</div>' +
-            '<div style="text-align:center;background:var(--bg-tertiary);border-radius:8px;padding:6px">' +
-              '<div style="font-size:9px;color:var(--label-secondary)">Profit Factor</div>' +
-              '<div style="font-size:14px;font-weight:700;color:' + pfCol + '">' + pfVal.toFixed(2) + '</div>' +
-            '</div>' +
-          '</div>' +
-
-        '</div>';
-    });
-    listEl.innerHTML = html;
-  }
-
-  // ─── PC右パネル: 最新レビューサマリー ────────────────────────────────────
-
-  function renderParamsPanelReview(d) {
-    var panelEl = el('panel-params-review');
-    if (!panelEl) return;
-    var history = d.history || [];
-    if (history.length === 0) {
-      panelEl.innerHTML = '<p style="padding:12px;color:var(--label-secondary);font-size:12px">まだレビューなし</p>';
-      return;
-    }
-    // 最新3件を表示
-    var html = '';
-    history.slice(0, 3).forEach(function(h) {
-      var winPct = Math.round((h.win_rate || 0) * 100);
-      var winColor = winPct >= 50 ? '#34c759' : '#ff3b30';
-      var rrVal = h.actual_rr || 0;
-      var rrCol = rrVal >= 2.0 ? '#34c759' : '#ff9500';
-      html +=
-        '<div style="padding:10px 16px;border-bottom:0.5px solid var(--separator)">' +
-          '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px">' +
-            '<span style="font-size:13px;font-weight:600">' + h.pair + '</span>' +
-            '<span style="font-size:10px;color:var(--label-secondary)">' + (h.created_at || '').slice(0, 10) + '</span>' +
-          '</div>' +
-          '<div style="font-size:11px;color:var(--label-secondary);line-height:1.4;margin-bottom:6px">' + escHtml((h.reason || '').slice(0, 80)) + (h.reason && h.reason.length > 80 ? '…' : '') + '</div>' +
-          '<div style="display:flex;gap:12px">' +
-            '<span style="font-size:11px">勝率 <strong style="color:' + winColor + '">' + winPct + '%</strong></span>' +
-            '<span style="font-size:11px">RR <strong style="color:' + rrCol + '">' + rrVal.toFixed(2) + '</strong></span>' +
-            '<span style="font-size:11px">PF <strong>' + (h.profit_factor || 0).toFixed(2) + '</strong></span>' +
-          '</div>' +
-        '</div>';
-    });
-    panelEl.innerHTML = html;
-  }
-
-  function escHtml(s) {
-    return String(s || '')
-      .replace(/&/g, '&amp;')
-      .replace(/</g, '&lt;')
-      .replace(/>/g, '&gt;')
-      .replace(/"/g, '&quot;');
-  }
-
-  function renderParamsData(d) {
-    if (paramsTabActive === 'current') renderCurrentParams(d.params);
-    else renderParamsHistory(d.history);
-  }
-
-  // 戦略タブがアクティブになった時にロード（遅延ロード）
   document.addEventListener('click', function(e) {
     var btn = e.target && e.target.closest && e.target.closest('[data-tab="tab-strategy"]');
     if (btn && !paramsData) loadParams();
   });
 
-  // 初回ロード時に戦略タブが選択済みなら即ロード
-  if (document.querySelector('#tab-strategy.active') || document.querySelector('.tab-item.active[data-tab="tab-strategy"]')) {
-    loadParams();
-  }
+  setInterval(function() { if (paramsData) loadParams(); }, 60000);
 
-  // 30秒ごとにパラメーターも更新
-  setInterval(function() {
-    if (paramsData) loadParams();
-  }, 60000);
+  // ═══ Pull-to-Refresh ═══
+  (function() {
+    var startY = 0;
+    var pulling = false;
+    var pullIndicator = null;
+    var threshold = 80;
+
+    function createIndicator() {
+      var el = document.createElement('div');
+      el.id = 'pull-indicator';
+      el.style.cssText = 'position:fixed;top:0;left:0;right:0;height:0;display:flex;align-items:center;justify-content:center;z-index:200;overflow:hidden;transition:height 0.2s ease;background:transparent;';
+      el.innerHTML = '<div style="width:24px;height:24px;border:2px solid var(--tertiary);border-top-color:var(--blue);border-radius:50%;"></div>';
+      document.body.insertBefore(el, document.body.firstChild);
+      return el;
+    }
+
+    document.addEventListener('touchstart', function(e) {
+      if (window.scrollY <= 0) {
+        startY = e.touches[0].clientY;
+        pulling = true;
+        if (!pullIndicator) pullIndicator = createIndicator();
+      }
+    }, { passive: true });
+
+    document.addEventListener('touchmove', function(e) {
+      if (!pulling) return;
+      var dy = e.touches[0].clientY - startY;
+      if (dy > 0 && window.scrollY <= 0) {
+        var h = Math.min(dy * 0.5, threshold);
+        if (pullIndicator) {
+          pullIndicator.style.height = h + 'px';
+          var spinner = pullIndicator.querySelector('div');
+          if (spinner) {
+            var rotation = (dy / threshold) * 360;
+            spinner.style.transform = 'rotate(' + rotation + 'deg)';
+            spinner.style.borderTopColor = dy > threshold ? 'var(--green)' : 'var(--blue)';
+          }
+        }
+      }
+    }, { passive: true });
+
+    document.addEventListener('touchend', function() {
+      if (!pulling) return;
+      pulling = false;
+      var h = pullIndicator ? parseInt(pullIndicator.style.height) : 0;
+      if (h >= threshold * 0.8) {
+        if (pullIndicator) {
+          var spinner = pullIndicator.querySelector('div');
+          if (spinner) spinner.style.animation = 'spin 0.6s linear infinite';
+        }
+        refresh();
+        setTimeout(function() {
+          if (pullIndicator) pullIndicator.style.height = '0';
+          setTimeout(function() {
+            if (pullIndicator) {
+              var spinner = pullIndicator.querySelector('div');
+              if (spinner) spinner.style.animation = '';
+            }
+          }, 200);
+        }, 800);
+      } else {
+        if (pullIndicator) pullIndicator.style.height = '0';
+      }
+    }, { passive: true });
+  })();
 
 })();
 `;

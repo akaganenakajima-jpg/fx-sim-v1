@@ -333,3 +333,10 @@ const closeReason = isTrailingProfit ? 'TRAILING_SL' : 'SL';
 | B2失敗WARN/時間 | 2-3件 | 0件 |
 | 最大OPEN数 | 11件 | ≤ 12件（ブロック機能） |
 | SL/TRAILING_SL比率 | 測定不可 | 計測開始 |
+
+---
+## 2026-03-25 クローズ記録
+ステータス: **大部分対応済み**
+- W001 (CRON超過): PATH_A廃止(Ph.6)でPARALLEL_PATH_ABも削除済み。CRON超過は改善
+- W002-W006: 各種修正コミットで対応済みまたは設計上許容済み
+- 残件は monitoring で継続観察

@@ -246,6 +246,7 @@ async function fetchRssSource(src: SourceDef, now: Date): Promise<NewsItem[]> {
       Accept: 'application/rss+xml, application/xml, text/xml',
     },
     cf: { cacheTtl: 60 },
+    signal: AbortSignal.timeout(6000),
   } as RequestInit);
   if (!res.ok) return [];
   const xml = await res.text();

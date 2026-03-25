@@ -206,6 +206,21 @@ const MIGRATIONS: Array<{ version: number; description: string; sql: string }> =
     description: 'instrument_params にエントリー精度7パラメーター追加（bb_period/bb_squeeze_threshold/w_bb/w_div/divergence_lookback/min_confirm_signals/er_upper_limit）',
     sql: `CREATE TABLE IF NOT EXISTS _dummy_v217 (id INTEGER PRIMARY KEY)`,
   },
+  // アクティビティフィード: 指標変化ログテーブル（RSI/ER変化をフィード表示）
+  {
+    version: 218,
+    description: 'indicator_logs テーブル追加（RSI/ER変化ログ・アクティビティフィード用）',
+    sql: `CREATE TABLE IF NOT EXISTS indicator_logs (
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  pair        TEXT    NOT NULL,
+  metric      TEXT    NOT NULL,
+  prev_value  REAL    NOT NULL,
+  curr_value  REAL    NOT NULL,
+  direction   TEXT    NOT NULL,
+  note        TEXT,
+  created_at  TEXT    NOT NULL
+)`,
+  },
 ];
 
 export async function runMigrations(db: D1Database): Promise<void> {

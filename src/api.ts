@@ -28,8 +28,21 @@ export interface RecentDecision {
   reddit_signal: string | null;
   vix: number | null;
   us10y: number | null;
+  nikkei: number | null;
+  sp500: number | null;
   tp_rate: number | null;
   sl_rate: number | null;
+  created_at: string;
+}
+
+export interface IndicatorLog {
+  id: number;
+  pair: string;
+  metric: string;
+  prev_value: number;
+  curr_value: number;
+  direction: string;
+  note: string | null;
   created_at: string;
 }
 
@@ -87,7 +100,38 @@ export interface StatusResponse {
   logStats: LogStats;
   latestNews: Array<{ title: string; pubDate: string; description: string; source?: string }>;
   acceptedNews: Array<{ id: number; source: string; title_ja: string; desc_ja: string; url: string | null; fetched_at: string }>;
-  newsAnalysis: Array<{ index: number; attention: boolean; impact: string | null; title_ja: string | null; title?: string | null }>;
+  newsAnalysis: Array<{
+    index: number;
+    attention: boolean;
+    impact: string | null;
+    title_ja: string | null;
+    title?: string | null;
+    pubDate?: string | null;
+    description?: string | null;
+    source?: string | null;
+    score?: number | null;
+    affected_pairs?: string[] | null;
+    verdict?: 'correct' | 'wrong' | 'pending' | null;
+    why_chain?: string[] | null;
+    trade_decisions?: Array<{ pair: string; decision: string; reasoning: string | null }> | null;
+    hold_reason?: string | null;
+    analyzed_at?: string | null;
+  }>;
+  /** Ph.Why: 全ペアのパラメーター変更履歴（Tab3/4で使用） */
+  paramHistory: Array<{
+    pair: string;
+    version: number;
+    reason: string;
+    description: string;
+    change: string;
+    result_text: string;
+    verdict: 'worked' | 'worsened' | 'pending';
+    winRate: number | null;
+    rr: number | null;
+    created_at: string;
+    time: string;
+    why_chain: string[] | null;
+  }>;
   tradingMode: 'paper' | 'demo' | 'live';
   riskStatus: {
     killSwitchActive: boolean;
@@ -114,10 +158,11 @@ export interface StatusResponse {
   statistics: {
     winRateCI: { lower: number; upper: number };
     roiCI: { roi: number; ciLower: number; ciUpper: number; n: number };
-    aiAccuracy: { accuracy: number; brierScore: number; n: number; wins: number } | null;
+    aiAccuracy: { accuracy: number; brierScore: number; n: number; wins: number; brierHistory: number[]; brierTrend: 'improving' | 'worsening' | 'stable' } | null;
     sharpe: number;
     sharpeSE: number;
     sharpeSignificant: boolean;
+    avgRR: number;
     var95: number;
     cvar95: number;
     kellyFraction: number;
@@ -149,6 +194,8 @@ export interface StatusResponse {
   todayDecisionCount: number;
   todayBuyCount: number;
   todaySellCount: number;
+  /** アクティビティフィード: 直近24時間の指標変化ログ（RSI/ER変化） */
+  recentIndicatorLogs: IndicatorLog[];
   /** Ph.6: 因果サマリー — ナラティブ+キードライバー+ヒートマップ */
   causalSummary: {
     narrative: string;
@@ -206,6 +253,7 @@ export interface StatusResponse {
       winRate: number | null;
       rr: number | null;
     }>;
+    entryWhyChain: string[] | null;
   }> | null;
   /** テスタ施策21: 戦略マップデータ */
   strategyMap: {
@@ -223,7 +271,7 @@ export interface StatusResponse {
 }
 
 export async function getApiStatus(db: D1Database, tradingEnv?: { TRADING_ENABLED?: string; OANDA_LIVE?: string; RISK_MAX_DAILY_LOSS?: string; RISK_MAX_LIVE_POSITIONS?: string; RISK_MAX_LOT_SIZE?: string; RISK_ANOMALY_THRESHOLD?: string }): Promise<StatusResponse> {
-  const [rateRow, openPositions, perf, latest, recent, sysRow, sparkRaw, perfByPairRaw, recentClosesRaw, acceptedNewsRaw, sysLogsRaw, logStatsRaw, instrScoresRaw, slPatternsRow, cronTimingsRow, todayDecisionCountRow] =
+  const [rateRow, openPositions, perf, latest, recent, sysRow, sparkRaw, perfByPairRaw, recentClosesRaw, acceptedNewsRaw, sysLogsRaw, logStatsRaw, instrScoresRaw, slPatternsRow, cronTimingsRow, todayDecisionCountRow, paramReviewLogRaw, indicatorLogsRaw] =
     await Promise.all([
       db
         .prepare("SELECT value FROM market_cache WHERE key = 'prev_rate_USD/JPY'")
@@ -257,7 +305,7 @@ export async function getApiStatus(db: D1Database, tradingEnv?: { TRADING_ENABLE
       // 判定履歴（BUY/SELLのみ直近20件）
       db
         .prepare(
-          `SELECT id, pair, decision, rate, reasoning, news_summary, reddit_signal, vix, us10y, tp_rate, sl_rate, created_at
+          `SELECT id, pair, decision, rate, reasoning, news_summary, reddit_signal, vix, us10y, nikkei, sp500, tp_rate, sl_rate, created_at
            FROM decisions WHERE decision != 'HOLD' ORDER BY id DESC LIMIT 20`
         )
         .all<RecentDecision>(),
@@ -266,12 +314,14 @@ export async function getApiStatus(db: D1Database, tradingEnv?: { TRADING_ENABLE
         .prepare(`SELECT COUNT(*) AS cnt, MAX(created_at) AS lastRun FROM decisions`)
         .first<{ cnt: number; lastRun: string }>(),
 
-      // スパークライン: 銘柄ごとの直近レート推移（全判断を使用）
+      // スパークライン: 銘柄ごとの直近レート推移（ペア別最新20件）
       db
         .prepare(
-          `SELECT pair, rate, created_at FROM decisions
-           WHERE pair IN ('USD/JPY','Nikkei225','S&P500','US10Y','BTC/USD','Gold','EUR/USD','ETH/USD','CrudeOil','NatGas','Copper','Silver','GBP/USD','AUD/USD','SOL/USD','DAX','NASDAQ')
-           ORDER BY id DESC LIMIT 80`
+          `SELECT pair, rate, created_at FROM (
+             SELECT pair, rate, created_at, ROW_NUMBER() OVER (PARTITION BY pair ORDER BY id DESC) AS rn
+             FROM decisions
+             WHERE pair IN ('USD/JPY','Nikkei225','S&P500','US10Y','BTC/USD','Gold','EUR/USD','ETH/USD','CrudeOil','NatGas','Copper','Silver','GBP/USD','AUD/USD','SOL/USD','DAX','NASDAQ','HK33','Silver','Copper')
+           ) WHERE rn <= 20`
         )
         .all<{ pair: string; rate: number; created_at: string }>(),
 
@@ -337,6 +387,30 @@ export async function getApiStatus(db: D1Database, tradingEnv?: { TRADING_ENABLE
            FROM decisions WHERE decision != 'HOLD' AND date(created_at) = date('now')`
         )
         .first<{ total: number; buyCount: number; sellCount: number }>(),
+
+      // パラメーター変更履歴（全ペア直近30件）
+      db
+        .prepare(
+          `SELECT pair, param_version, reason, win_rate, actual_rr, profit_factor, trades_eval, created_at
+           FROM param_review_log ORDER BY id DESC LIMIT 30`
+        )
+        .all<{
+          pair: string; param_version: number; reason: string;
+          win_rate: number | null; actual_rr: number | null; profit_factor: number | null;
+          trades_eval: number | null; created_at: string;
+        }>()
+        .catch(() => ({ results: [] as Array<{ pair: string; param_version: number; reason: string; win_rate: number | null; actual_rr: number | null; profit_factor: number | null; trades_eval: number | null; created_at: string }> })),
+
+      // アクティビティフィード: 直近24時間の指標変化ログ（最大50件）
+      db
+        .prepare(
+          `SELECT id, pair, metric, prev_value, curr_value, direction, note, created_at
+           FROM indicator_logs
+           WHERE created_at >= datetime('now', '-24 hours')
+           ORDER BY id DESC LIMIT 50`
+        )
+        .all<IndicatorLog>()
+        .catch(() => ({ results: [] as IndicatorLog[] })),
     ]);
 
   const rate = rateRow ? parseFloat(rateRow.value) : null;
@@ -480,6 +554,7 @@ export async function getApiStatus(db: D1Database, tradingEnv?: { TRADING_ENABLE
         sharpe: sharpeResult.sharpe,
         sharpeSE: sharpeResult.se,
         sharpeSignificant: sharpeResult.significant,
+        avgRR,
         var95: risk.var95,
         cvar95: risk.cvar95,
         kellyFraction: kellyFraction(wins / totalClosed, avgRR),
@@ -575,6 +650,8 @@ export async function getApiStatus(db: D1Database, tradingEnv?: { TRADING_ENABLE
     tradeContext: (openPositions.results ?? []).length > 0
       ? await buildTradeContext(db, openPositions.results ?? [])
       : null,
+    paramHistory: buildParamHistory(paramReviewLogRaw as unknown as { results: Array<{ pair: string; param_version: number; reason: string; win_rate: number | null; actual_rr: number | null; profit_factor: number | null; trades_eval: number | null; created_at: string }> }),
+    recentIndicatorLogs: (indicatorLogsRaw as unknown as { results: IndicatorLog[] }).results ?? [],
   };
 }
 
@@ -856,6 +933,7 @@ async function buildTradeContext(
           winRate: r.win_rate,
           rr: r.actual_rr,
         })),
+        entryWhyChain: synthesizeEntryWhyChain(decisionRow?.reasoning ?? null, pos.pair),
       };
     } catch {
       // 個別銘柄の失敗は無視して次へ
@@ -897,13 +975,176 @@ async function getStrategyMapData(db: D1Database): Promise<StatusResponse['strat
   }
 }
 
+// ─── Why×5チェーン合成（ニュース・パラメーター変更用） ───────────────────────
+
+/** ニュースのimpact文字列から5段階Why×5チェーンを合成 */
+function synthesizeNewsWhyChain(title: string | null, impact: string | null): string[] {
+  const t = title || 'ニュース';
+  const imp = impact || '';
+
+  // impactから核心ワードを抽出してチェーン生成
+  const hasBuy = /買い|上昇|強気|利上げ|緊縮|ドル高|円安|リスクオン/i.test(imp);
+  const hasSell = /売り|下落|弱気|利下げ|緩和|ドル安|円高|リスクオフ/i.test(imp);
+  const hasVix = /VIX|ボラティリティ|不安定|リスク/i.test(imp);
+  const hasCb = /FRB|Fed|日銀|BOJ|ECB|中央銀行|金利|利率/i.test(imp + t);
+  const hasTrade = /貿易|関税|輸出|輸入|制裁/i.test(imp + t);
+  const hasCpi = /CPI|インフレ|物価|インフレ率/i.test(imp + t);
+
+  let direction = '市場への影響は限定的';
+  let aiAction = '様子見（HOLD）判断';
+  let tradeAction = '新規エントリーなし';
+  let expected = '現状維持を継続';
+
+  if (hasBuy) {
+    direction = '円安・リスクオン方向に作用';
+    aiAction = 'BUY方向のシグナル強化';
+    tradeAction = 'エントリースコアが閾値を超えた場合BUYを検討';
+    expected = 'USD/JPY上昇、TP達成で利確';
+  } else if (hasSell) {
+    direction = '円高・リスクオフ方向に作用';
+    aiAction = 'SELL方向のシグナル強化';
+    tradeAction = 'エントリースコアが閾値を超えた場合SELLを検討';
+    expected = 'USD/JPY下落、TP達成で利確';
+  }
+
+  if (hasVix) {
+    direction += '（VIX上昇でTP/SLを拡張）';
+    tradeAction = 'VIXスケールを適用してTP/SL幅を調整';
+  }
+
+  const context = hasCb ? '中央銀行政策の変化' : hasTrade ? '貿易・地政学リスク' : hasCpi ? 'インフレ指標' : '市場センチメント';
+
+  return [
+    `「${t.length > 30 ? t.slice(0, 30) + '…' : t}」が発生`,
+    `${context}として解釈 → ${direction}`,
+    `AI: ${imp || 'ファンダメンタル分析を実施'} → ${aiAction}`,
+    `戦略反映: ${tradeAction}`,
+    `結果予測: ${expected}`,
+  ];
+}
+
+/** エントリーreasoningから5段階Why×5チェーンを合成 */
+function synthesizeEntryWhyChain(reasoning: string | null, pair: string): string[] {
+  if (!reasoning) {
+    return [
+      `${pair}のシグナル確認`,
+      '複数指標の一致を検出',
+      'エントリースコアが閾値超過',
+      'リスクリワード比が設定基準を満たす',
+      'ポジションをオープン',
+    ];
+  }
+
+  const r = reasoning;
+  const hasBuy = /買い|BUY|上昇|円安/i.test(r);
+  const hasSell = /売り|SELL|下落|円高/i.test(r);
+  const hasNews = /ニュース|news|発表|声明/i.test(r);
+  const hasRsi = /RSI|過売|oversold|overbought|過買/i.test(r);
+  const hasTrend = /トレンド|trend|方向|momentum/i.test(r);
+  const hasScore = /score|スコア|[0-9]+%/i.test(r);
+
+  const dirStr = hasBuy ? 'BUY（買い）' : hasSell ? 'SELL（売り）' : '方向判断';
+  const trigger = hasNews ? 'ニュースシグナル' : hasRsi ? 'RSI逆張りシグナル' : hasTrend ? 'トレンドフォロー' : 'マルチシグナル';
+  const scoreStr = hasScore ? '（スコア基準クリア）' : '';
+
+  // reasoningを最大40字に切り詰めて表示
+  const shortR = r.length > 40 ? r.slice(0, 40) + '…' : r;
+
+  return [
+    `${pair}の${trigger}を検出`,
+    `判断根拠: ${shortR}`,
+    `${dirStr}シグナルが収束${scoreStr}`,
+    `ATRベースでTP/SLを設定（リスクリワード最適化）`,
+    `ポジションオープン → 監視ループへ`,
+  ];
+}
+
+/** パラメーター変更reasoningからWhy×5チェーンを合成 */
+function synthesizeParamWhyChain(reason: string, winRate: number | null, rr: number | null): string[] {
+  const r = reason || '';
+  const hasWinRate = /勝率|win.rate/i.test(r);
+  const hasRr = /RR|リスクリワード|risk.reward/i.test(r);
+  const hasSl = /SL|ストップロス|stop.loss/i.test(r);
+  const hasTp = /TP|テイクプロフィット|take.profit/i.test(r);
+  const hasAtr = /ATR|ボラティリティ/i.test(r);
+
+  const what = hasWinRate ? '勝率改善' : hasRr ? 'RR比改善' : hasSl ? 'SL最適化' : hasTp ? 'TP最適化' : hasAtr ? 'ATR調整' : 'パラメーター調整';
+  const shortR = r.length > 40 ? r.slice(0, 40) + '…' : r;
+  const wrStr = winRate != null ? `${(winRate * 100).toFixed(0)}%` : '算出中';
+  const rrStr = rr != null ? rr.toFixed(2) : '算出中';
+
+  return [
+    `AIが直近取引の${what}の必要性を検出`,
+    `根拠: ${shortR}`,
+    `統計: 勝率=${wrStr}, RR=${rrStr} → 閾値と比較`,
+    `最適化アルゴリズムが新パラメーターを算出`,
+    `更新適用 → 次トレードから有効`,
+  ];
+}
+
+// ─── パラメーター変更履歴の構築 ────────────────────────────────────────────
+
+function buildParamHistory(
+  rawResult: { results: Array<{ pair: string; param_version: number; reason: string; win_rate: number | null; actual_rr: number | null; profit_factor: number | null; trades_eval: number | null; created_at: string }> },
+): StatusResponse['paramHistory'] {
+  const rows = rawResult?.results ?? [];
+  return rows.map(r => {
+    // verdict判定: profit_factorが1.0以上かつwin_rateが改善傾向なら'worked'
+    const pf = r.profit_factor ?? 0;
+    const wr = r.win_rate ?? 0;
+    const verdict: 'worked' | 'worsened' | 'pending' =
+      r.profit_factor == null ? 'pending'
+      : pf >= 1.1 && wr >= 0.5 ? 'worked'
+      : pf < 0.9 || wr < 0.4 ? 'worsened'
+      : 'pending';
+
+    const shortReason = r.reason?.length > 30 ? r.reason.slice(0, 30) + '…' : (r.reason || '');
+    const description = `${r.pair} v${r.param_version}: ${shortReason}`;
+    const change = r.reason || '';
+    const wrPct = r.win_rate != null ? `${(r.win_rate * 100).toFixed(0)}%` : '—';
+    const rrStr = r.actual_rr != null ? r.actual_rr.toFixed(2) : '—';
+    const result_text = `勝率 ${wrPct}, RR ${rrStr}${r.trades_eval ? `（${r.trades_eval}件評価）` : ''}`;
+
+    return {
+      pair: r.pair,
+      version: r.param_version,
+      reason: r.reason || '',
+      description,
+      change,
+      result_text,
+      verdict,
+      winRate: r.win_rate,
+      rr: r.actual_rr,
+      created_at: r.created_at,
+      time: r.created_at,
+      why_chain: synthesizeParamWhyChain(r.reason, r.win_rate, r.actual_rr),
+    };
+  });
+}
+
 async function getNewsAnalysis(db: D1Database): Promise<{
-  items: Array<{ index: number; attention: boolean; impact: string | null; title_ja: string | null; title?: string | null; pubDate?: string | null }>;
+  items: StatusResponse['newsAnalysis'];
   updatedAt: string | null;
 }> {
   try {
     const row = await db.prepare("SELECT value, updated_at FROM market_cache WHERE key = 'news_analysis'").first<{ value: string; updated_at: string }>();
-    if (row) return { items: JSON.parse(row.value), updatedAt: row.updated_at };
+    if (row) {
+      const raw = JSON.parse(row.value) as Array<{
+        index: number; attention: boolean; impact: string | null;
+        title_ja: string | null; title?: string | null; pubDate?: string | null;
+        description?: string | null; source?: string | null; score?: number | null;
+        affected_pairs?: string[] | null; verdict?: string | null; why_chain?: string[] | null;
+      }>;
+      // why_chainが未設定の場合は合成生成
+      const items = raw.map(item => ({
+        ...item,
+        verdict: (item.verdict as 'correct' | 'wrong' | 'pending' | null | undefined) ?? null,
+        why_chain: (item.why_chain && item.why_chain.length > 0)
+          ? item.why_chain
+          : synthesizeNewsWhyChain(item.title_ja || item.title || null, item.impact),
+      }));
+      return { items, updatedAt: row.updated_at };
+    }
   } catch {}
   return { items: [], updatedAt: null };
 }

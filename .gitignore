@@ -12,5 +12,6 @@ tmp_*.sql
 audit/
 screenshots/
 mockups/
+tasks/compare/
 .claude/
 .superpowers/
