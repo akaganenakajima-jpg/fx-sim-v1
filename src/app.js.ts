@@ -573,9 +573,12 @@ export const JS = `
       }
       var hasScore = rawScore != null && rawScore > 0;
       var score100 = hasScore ? Math.round(rawScore * 10) : 0;
-      var badgeCls = score100 >= 90 ? 'nf-badge-emergency' : score100 >= 70 ? 'nf-badge-trend' : 'nf-badge-info';
-      var badgeText = score100 >= 90 ? '緊急' : score100 >= 70 ? 'トレンド' : '情報';
-      var borderCls = score100 >= 90 ? 'nf-emergency' : score100 >= 70 ? 'nf-trend' : '';
+      // attention=trueでスコア不明 → 最低トレンド扱い（AI分析で影響ありと判定済み）
+      var isAtLeastTrend = n.attention && score100 < 70;
+      var effectiveLevel = score100 >= 90 ? 'emergency' : (score100 >= 70 || isAtLeastTrend) ? 'trend' : 'info';
+      var badgeCls = effectiveLevel === 'emergency' ? 'nf-badge-emergency' : effectiveLevel === 'trend' ? 'nf-badge-trend' : 'nf-badge-info';
+      var badgeText = effectiveLevel === 'emergency' ? '緊急' : effectiveLevel === 'trend' ? 'トレンド' : '情報';
+      var borderCls = effectiveLevel === 'emergency' ? 'nf-emergency' : effectiveLevel === 'trend' ? 'nf-trend' : '';
       var scoreStr = hasScore ? ' ' + score100 + '/100' : '';
       var headline = n.title_ja || n.title || '';
 
@@ -777,9 +780,9 @@ export const JS = `
     var totalCount = latest.length + accepted.length;
     var analyzedCount = analysis.length;
     var triggeredCount = analysis.filter(function(n) { return n.attention; }).length;
-    // 緊急: attentionかつaffected_pairsが複数、またはattentionが最高優先度のニュース
+    // 緊急: score ≥ 9.0 (= 90/100) — バックエンドと同じ基準
     var emergencyCount = analysis.filter(function(n) {
-      return n.attention && n.affected_pairs && n.affected_pairs.length >= 2;
+      return n.score != null && Math.round(n.score * 10) >= 90;
     }).length;
 
     var nkTotal = el('nk-total'); if (nkTotal) nkTotal.textContent = String(totalCount);
@@ -874,13 +877,18 @@ export const JS = `
   }
 
   function newsCard(n, highlight, idx) {
-    // attention=trueなら緊急/トレンド扱い、falseなら情報
+    // 分類基準をスコアで統一（HOME速報と同じ基準）
+    // EMERGENCY: score ≥ 9.0 (= 90/100), TREND: score ≥ 7.0 OR attention=true, INFO: それ以外
     var isAttention = !!n.attention;
-    var isEmergency = isAttention && n.affected_pairs && n.affected_pairs.length >= 2;
-    var badgeCls = isEmergency ? 'nf-badge-emergency' : isAttention ? 'nf-badge-trend' : 'nf-badge-info';
-    var badgeBase = isEmergency ? '緊急' : isAttention ? 'トレンド' : '情報';
-    var badgeText = (n.score != null && n.score > 0) ? badgeBase + ' ' + Math.round(n.score * 10) + '/100' : badgeBase;
-    var borderCls = isEmergency ? 'nf-emergency' : isAttention ? 'nf-trend' : 'nf-info';
+    var rawScore = n.score;
+    var score100 = (rawScore != null && rawScore > 0) ? Math.round(rawScore * 10) : 0;
+    // attention=trueでスコア不明 → 最低トレンド扱い（AI分析で影響ありと判定済み）
+    var isAtLeastTrend = isAttention && score100 < 70;
+    var effectiveLevel = score100 >= 90 ? 'emergency' : (score100 >= 70 || isAtLeastTrend) ? 'trend' : 'info';
+    var badgeCls = effectiveLevel === 'emergency' ? 'nf-badge-emergency' : effectiveLevel === 'trend' ? 'nf-badge-trend' : 'nf-badge-info';
+    var badgeBase = effectiveLevel === 'emergency' ? '緊急' : effectiveLevel === 'trend' ? 'トレンド' : '情報';
+    var badgeText = score100 > 0 ? badgeBase + ' ' + score100 + '/100' : badgeBase;
+    var borderCls = effectiveLevel === 'emergency' ? 'nf-emergency' : effectiveLevel === 'trend' ? 'nf-trend' : 'nf-info';
     // impactフィールドはAI判断テキスト（数値スコアではない）
     var impactText = typeof n.impact === 'string' ? n.impact : '';
     var aiText = n.desc_ja || n.description || impactText || '';

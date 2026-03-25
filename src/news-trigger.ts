@@ -10,8 +10,9 @@
 
 import { insertSystemLog, setCacheValue } from './db';
 
-// ─── 緊急判定キーワード ────────────────────────────────────────────────────
-// これらが含まれかつスコアが高い場合はEMERGENCYとして扱う
+// ─── 緊急関連キーワード ────────────────────────────────────────────────────
+// スコアが TREND 帯（7.0-8.9）でもこれらが含まれれば EMERGENCY に昇格
+// ただし composite_score >= 8.0 が条件（7.x では昇格しない）
 const EMERGENCY_KEYWORDS = [
   '介入', 'intervention', 'emergency rate', '緊急利上げ', '緊急利下げ',
   'FOMC緊急', '日銀緊急', 'BOJ emergency', 'circuit breaker', 'halt',
@@ -39,16 +40,25 @@ export interface NewsTriggerResult {
 }
 
 // ─── 緊急度判定 ────────────────────────────────────────────────────────────
+// 仕様: EMERGENCY = composite ≥ 9.0 (= 90/100)
+//        例外: キーワード該当 かつ composite ≥ 8.0 → EMERGENCY に昇格
+//       TREND_INFLUENCE = composite 7.0〜8.9 (= 70-89/100)
 
-function isEmergency(title: string, scores: { relevance: number; sentiment: number }): boolean {
-  const hasKeyword = EMERGENCY_KEYWORDS.some(kw =>
-    title.toLowerCase().includes(kw.toLowerCase())
-  );
-  return (scores.relevance >= 9 && scores.sentiment >= 8) || hasKeyword;
+function isEmergency(title: string, scores: { relevance: number; sentiment: number; composite: number }): boolean {
+  // 基本基準: composite ≥ 9.0
+  if (scores.composite >= 9.0) return true;
+  // キーワード昇格: 介入・flash crash等 かつ composite ≥ 8.0
+  if (scores.composite >= 8.0) {
+    const hasKeyword = EMERGENCY_KEYWORDS.some(kw =>
+      title.toLowerCase().includes(kw.toLowerCase())
+    );
+    if (hasKeyword) return true;
+  }
+  return false;
 }
 
 function isTrendInfluence(scores: { relevance: number; sentiment: number; composite: number }): boolean {
-  return scores.relevance >= 7 && scores.sentiment >= 7 && scores.composite >= 7.5;
+  return scores.composite >= 7.0 && scores.composite < 9.0;
 }
 
 // ─── 直近未処理ニュースの取得 ─────────────────────────────────────────────
@@ -67,19 +77,20 @@ interface NewsRawRow {
 const LAST_TRIGGER_NEWS_ID_KEY = 'last_trigger_news_id';
 
 /**
- * 前回処理以降の採用ニュースから最高スコア記事を1件取得して分類する。
- * 処理済みidをキャッシュに記録してスキップを確実にする。
+ * 前回処理以降の採用ニュースで composite_score >= 7.0 の全件を取得する。
+ * スコア降順で最大5件処理（負荷と網羅性のバランス）。
+ * 処理済みidの最大値をキャッシュに記録してスキップを確実にする。
  */
-async function fetchLatestTriggerCandidate(
+async function fetchTriggerCandidates(
   db: D1Database,
-): Promise<{ row: NewsRawRow; parsedScores: { relevance: number; sentiment: number; composite: number } } | null> {
+): Promise<Array<{ row: NewsRawRow; parsedScores: { relevance: number; sentiment: number; composite: number } }>> {
   const lastIdRaw = await db
     .prepare(`SELECT value FROM market_cache WHERE key = ?`)
     .bind(LAST_TRIGGER_NEWS_ID_KEY)
     .first<{ value: string }>();
   const lastId = lastIdRaw ? parseInt(lastIdRaw.value) : 0;
 
-  // 前回処理以降の採用記事（composite_score >= 7.0 以上を対象）
+  // 前回処理以降の採用記事（composite_score >= 7.0 以上を対象、最大5件）
   const rows = await db
     .prepare(
       `SELECT id, hash, title_ja, title, composite_score, scores, fetched_at
@@ -88,22 +99,29 @@ async function fetchLatestTriggerCandidate(
          AND id > ?
          AND composite_score >= 7.0
        ORDER BY composite_score DESC
-       LIMIT 1`
+       LIMIT 5`
     )
     .bind(lastId)
     .all<NewsRawRow>();
 
-  const row = rows.results?.[0];
-  if (!row || !row.scores) return null;
+  const candidates: Array<{ row: NewsRawRow; parsedScores: { relevance: number; sentiment: number; composite: number } }> = [];
 
-  let parsed: { relevance?: number; sentiment?: number; composite?: number } = {};
-  try { parsed = JSON.parse(row.scores); } catch { return null; }
+  for (const row of rows.results ?? []) {
+    if (!row.scores) continue;
+    let parsed: { relevance?: number; sentiment?: number; composite?: number } = {};
+    try { parsed = JSON.parse(row.scores); } catch { continue; }
 
-  const relevance  = parsed.relevance  ?? 0;
-  const sentiment  = parsed.sentiment  ?? 0;
-  const composite  = parsed.composite  ?? row.composite_score ?? 0;
+    candidates.push({
+      row,
+      parsedScores: {
+        relevance: parsed.relevance ?? 0,
+        sentiment: parsed.sentiment ?? 0,
+        composite: parsed.composite ?? row.composite_score ?? 0,
+      },
+    });
+  }
 
-  return { row, parsedScores: { relevance, sentiment, composite } };
+  return candidates;
 }
 
 // ─── 緊急: PATH_B 強制発火フラグをセット ──────────────────────────────────
@@ -292,102 +310,115 @@ export async function getActiveTempParams(
 
 /**
  * 新着採用ニュースを検査し、緊急/トレンドに応じたアクションを起動する。
- * - EMERGENCY: PATH_B強制発火フラグをmarket_cacheにセット
- * - TREND: GPTで臨時パラメーター生成 → news_temp_paramsに保存
- * cron 1回につき1記事のみ処理（負荷抑制）
+ * - EMERGENCY (composite ≥ 9.0): PATH_B強制発火フラグをmarket_cacheにセット
+ * - TREND_INFLUENCE (composite 7.0-8.9): GPTで臨時パラメーター生成 → news_temp_paramsに保存
+ * cron 1回につき最大5記事を処理（漏れ防止）。最も重要な結果を返す。
  */
 export async function runNewsTrigger(
   db: D1Database,
   openaiApiKey?: string,
 ): Promise<NewsTriggerResult> {
-  const candidate = await fetchLatestTriggerCandidate(db);
+  const candidates = await fetchTriggerCandidates(db);
 
-  if (!candidate) {
+  if (candidates.length === 0) {
     return { triggerType: 'NONE', emergencyForced: false };
   }
 
-  const { row, parsedScores } = candidate;
-  const title = row.title_ja ?? row.title;
-
-  // 処理済みidを更新（次回重複処理を防止）
+  // 処理済みidの最大値を記録（全候補分スキップ）
+  const maxId = Math.max(...candidates.map(c => c.row.id));
   await db
     .prepare(`INSERT OR REPLACE INTO market_cache (key, value, updated_at) VALUES (?, ?, ?)`)
-    .bind(LAST_TRIGGER_NEWS_ID_KEY, row.id.toString(), new Date().toISOString())
+    .bind(LAST_TRIGGER_NEWS_ID_KEY, maxId.toString(), new Date().toISOString())
     .run();
 
-  // 緊急判定 → PATH_B強制発火
-  if (isEmergency(title, parsedScores)) {
-    await setEmergencyForceFlag(db);
+  let bestResult: NewsTriggerResult = { triggerType: 'NONE', emergencyForced: false };
 
-    await db
-      .prepare(
-        `INSERT INTO news_trigger_log (trigger_type, news_title, news_score, affected_pairs, detail, created_at)
-         VALUES ('EMERGENCY', ?, ?, NULL, 'PATH_B強制発火フラグセット', ?)`
-      )
-      .bind(title, row.composite_score, new Date().toISOString())
-      .run();
+  for (const { row, parsedScores } of candidates) {
+    const title = row.title_ja ?? row.title;
 
-    await insertSystemLog(db, 'INFO', 'NEWS_TRIGGER',
-      `緊急ニュース検出 → PATH_B強制発火: ${title.slice(0, 60)}`,
-      `score=${row.composite_score} relevance=${parsedScores.relevance} sentiment=${parsedScores.sentiment}`);
+    // 緊急判定 → PATH_B強制発火
+    if (isEmergency(title, parsedScores)) {
+      await setEmergencyForceFlag(db);
 
-    return {
-      triggerType: 'EMERGENCY',
-      newsTitle: title,
-      newsScore: row.composite_score ?? undefined,
-      emergencyForced: true,
-    };
-  }
+      await db
+        .prepare(
+          `INSERT INTO news_trigger_log (trigger_type, news_title, news_score, affected_pairs, detail, created_at)
+           VALUES ('EMERGENCY', ?, ?, NULL, 'PATH_B強制発火フラグセット', ?)`
+        )
+        .bind(title, row.composite_score, new Date().toISOString())
+        .run();
 
-  // トレンド影響判定 → 臨時パラメーター
-  if (isTrendInfluence(parsedScores)) {
-    if (!openaiApiKey) {
-      await insertSystemLog(db, 'WARN', 'NEWS_TRIGGER',
-        `トレンドニュース検出だがAPIキーなしでスキップ: ${title.slice(0, 60)}`, '');
-      return { triggerType: 'TREND_INFLUENCE', newsTitle: title, emergencyForced: false };
+      await insertSystemLog(db, 'INFO', 'NEWS_TRIGGER',
+        `緊急ニュース検出 → PATH_B強制発火: ${title.slice(0, 60)}`,
+        `score=${row.composite_score} relevance=${parsedScores.relevance} sentiment=${parsedScores.sentiment}`);
+
+      // EMERGENCYは最優先
+      bestResult = {
+        triggerType: 'EMERGENCY',
+        newsTitle: title,
+        newsScore: row.composite_score ?? undefined,
+        emergencyForced: true,
+      };
+      continue;
     }
 
-    const gptResult = await callGptForTempParams(title, row.composite_score ?? 7.5, openaiApiKey);
+    // トレンド影響判定 → 臨時パラメーター
+    if (isTrendInfluence(parsedScores)) {
+      if (!openaiApiKey) {
+        await insertSystemLog(db, 'WARN', 'NEWS_TRIGGER',
+          `トレンドニュース検出だがAPIキーなしでスキップ: ${title.slice(0, 60)}`, '');
+        if (bestResult.triggerType === 'NONE') {
+          bestResult = { triggerType: 'TREND_INFLUENCE', newsTitle: title, emergencyForced: false };
+        }
+        continue;
+      }
 
-    if (!gptResult || gptResult.pairs.length === 0) {
-      return { triggerType: 'TREND_INFLUENCE', newsTitle: title, emergencyForced: false, affectedPairs: [] };
+      const gptResult = await callGptForTempParams(title, row.composite_score ?? 7.5, openaiApiKey);
+
+      if (!gptResult || gptResult.pairs.length === 0) {
+        // パラメーター変更不要と判断された場合もログに記録
+        await db
+          .prepare(
+            `INSERT INTO news_trigger_log (trigger_type, news_title, news_score, affected_pairs, detail, created_at)
+             VALUES ('TREND_INFLUENCE', ?, ?, NULL, '影響軽微・パラメーター変更なし', ?)`
+          )
+          .bind(title, row.composite_score, new Date().toISOString())
+          .run();
+
+        if (bestResult.triggerType === 'NONE') {
+          bestResult = { triggerType: 'TREND_INFLUENCE', newsTitle: title, emergencyForced: false, affectedPairs: [] };
+        }
+        continue;
+      }
+
+      const appliedPairs = await saveTempParams(
+        db, gptResult.pairs, gptResult.reason, gptResult.expiresInHours,
+        title, row.composite_score ?? 7.5,
+      );
+
+      await db
+        .prepare(
+          `INSERT INTO news_trigger_log (trigger_type, news_title, news_score, affected_pairs, detail, created_at)
+           VALUES ('TREND_INFLUENCE', ?, ?, ?, ?, ?)`
+        )
+        .bind(title, row.composite_score, appliedPairs.join(','), gptResult.reason, new Date().toISOString())
+        .run();
+
+      await insertSystemLog(db, 'INFO', 'NEWS_TRIGGER',
+        `トレンドニュース → 臨時パラメーター設定: ${appliedPairs.join(',')}`,
+        `${gptResult.reason.slice(0, 100)} expires=${gptResult.expiresInHours}h`);
+
+      if (bestResult.triggerType !== 'EMERGENCY') {
+        bestResult = {
+          triggerType: 'TREND_INFLUENCE',
+          newsTitle: title,
+          newsScore: row.composite_score ?? undefined,
+          affectedPairs: appliedPairs,
+          emergencyForced: false,
+        };
+      }
     }
-
-    const appliedPairs = await saveTempParams(
-      db,
-      gptResult.pairs,
-      gptResult.reason,
-      gptResult.expiresInHours,
-      title,
-      row.composite_score ?? 7.5,
-    );
-
-    await db
-      .prepare(
-        `INSERT INTO news_trigger_log (trigger_type, news_title, news_score, affected_pairs, detail, created_at)
-         VALUES ('TREND_INFLUENCE', ?, ?, ?, ?, ?)`
-      )
-      .bind(
-        title,
-        row.composite_score,
-        appliedPairs.join(','),
-        gptResult.reason,
-        new Date().toISOString(),
-      )
-      .run();
-
-    await insertSystemLog(db, 'INFO', 'NEWS_TRIGGER',
-      `トレンドニュース → 臨時パラメーター設定: ${appliedPairs.join(',')}`,
-      `${gptResult.reason.slice(0, 100)} expires=${gptResult.expiresInHours}h`);
-
-    return {
-      triggerType: 'TREND_INFLUENCE',
-      newsTitle: title,
-      newsScore: row.composite_score ?? undefined,
-      affectedPairs: appliedPairs,
-      emergencyForced: false,
-    };
   }
 
-  return { triggerType: 'NONE', emergencyForced: false };
+  return bestResult;
 }
