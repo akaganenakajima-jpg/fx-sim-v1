@@ -512,12 +512,26 @@ export async function getApiStatus(db: D1Database, tradingEnv?: { TRADING_ENABLE
       const sharpeResult = sharpeWithSE(allPnls);
       const risk = varCvar(allPnls);
 
-      // RR≥1.0基準でavgWin/avgLossを計算（Kelly/avgRRの分母分子を統一）
+      // CLAUDE.md定義準拠: avgRR = AVG(realized_rr)
+      // NG例: PnLベース比率（avgWin_pnl/avgLoss_pnl）はmulti-instrument環境で
+      //   pnlMultiplier差（USD/JPY=100 vs EUR/USD=10000）と
+      //   「RR<1.0でもPnL>0の取引（trailing止め）」の混入により
+      //   265倍などの無意味な値になる
       const rrWinRows = allPnlRows.filter(r => (r.realized_rr ?? 0) >= 1.0);
       const rrLoseRows = allPnlRows.filter(r => (r.realized_rr ?? 0) < 1.0);
-      const avgWin = rrWinRows.length > 0 ? rrWinRows.reduce((s, r) => s + r.pnl, 0) / rrWinRows.length : 0;
-      const avgLoss = rrLoseRows.length > 0 ? Math.abs(rrLoseRows.reduce((s, r) => s + r.pnl, 0) / rrLoseRows.length) : 1;
-      const avgRR = avgLoss > 0 ? avgWin / avgLoss : 0;
+      const rrValidRows = allPnlRows.filter(r => r.realized_rr != null);
+      // 平均実現RR（CLAUDE.md定義: 実現利益/初期リスク の全取引平均）
+      const avgRR = rrValidRows.length > 0
+        ? rrValidRows.reduce((s, r) => s + r.realized_rr!, 0) / rrValidRows.length
+        : 0;
+      // Kelly用: 実現RRで正規化したペイオフ比 = avgWinRR / avgLossRR
+      const avgWinRR = rrWinRows.length > 0
+        ? rrWinRows.reduce((s, r) => s + r.realized_rr!, 0) / rrWinRows.length
+        : 0;
+      const avgLossRR = rrLoseRows.length > 0
+        ? Math.abs(rrLoseRows.reduce((s, r) => s + r.realized_rr!, 0) / rrLoseRows.length)
+        : 1;
+      const kellyPayoff = avgLossRR > 0 ? avgWinRR / avgLossRR : 0;
 
       const aiOutcomes = (aiOutcomesRaw.results ?? []).map(r => r.outcome as 'WIN' | 'LOSE');
       const aiResult = aiOutcomes.length >= 5 ? aiAccuracy(aiOutcomes) : null;
@@ -574,7 +588,7 @@ export async function getApiStatus(db: D1Database, tradingEnv?: { TRADING_ENABLE
         avgRR,
         var95: risk.var95,
         cvar95: risk.cvar95,
-        kellyFraction: kellyFraction(wins / totalClosed, avgRR),
+        kellyFraction: kellyFraction(wins / totalClosed, kellyPayoff),
         markov: markovTransition(outcomes),
         drawdown: maxDrawdown(allPnls),
         rolling: rollingReturns(allPnls, [7, 14, 30], 10000, outcomes),
