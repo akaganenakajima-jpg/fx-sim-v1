@@ -193,11 +193,11 @@ export function checkTpSlSanity(params: {
 type RegimeForAtr = 'strong_trend' | 'weak_trend' | 'ranging' | 'volatile' | 'uncertain';
 
 const ATR_MULTIPLIERS: Record<RegimeForAtr, { sl: number; tp: number }> = {
-  strong_trend: { sl: 2.0, tp: 3.0 },   // RR=1.5
-  weak_trend:   { sl: 1.5, tp: 2.5 },   // RR=1.67
-  ranging:      { sl: 1.0, tp: 1.5 },   // RR=1.5
-  volatile:     { sl: 2.5, tp: 4.0 },   // RR=1.6
-  uncertain:    { sl: 1.5, tp: 2.5 },   // RR=1.67
+  strong_trend: { sl: 1.5, tp: 4.5 },   // RR=3.0（トレンドに乗せて伸ばす）
+  weak_trend:   { sl: 1.5, tp: 3.0 },   // RR=2.0
+  ranging:      { sl: 1.0, tp: 2.0 },   // RR=2.0
+  volatile:     { sl: 2.0, tp: 5.0 },   // RR=2.5（高ボラ時はTPを大きく）
+  uncertain:    { sl: 1.5, tp: 3.0 },   // RR=2.0
 };
 
 /** ATRベースのTP/SL推奨値を算出（Geminiプロンプトの参考値として使用） */

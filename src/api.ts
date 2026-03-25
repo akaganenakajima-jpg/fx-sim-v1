@@ -512,10 +512,11 @@ export async function getApiStatus(db: D1Database, tradingEnv?: { TRADING_ENABLE
       const sharpeResult = sharpeWithSE(allPnls);
       const risk = varCvar(allPnls);
 
-      const winPnls = allPnls.filter(p => p > 0);
-      const losePnls = allPnls.filter(p => p <= 0);
-      const avgWin = winPnls.length > 0 ? winPnls.reduce((s, v) => s + v, 0) / winPnls.length : 0;
-      const avgLoss = losePnls.length > 0 ? Math.abs(losePnls.reduce((s, v) => s + v, 0) / losePnls.length) : 1;
+      // RR≥1.0基準でavgWin/avgLossを計算（Kelly/avgRRの分母分子を統一）
+      const rrWinRows = allPnlRows.filter(r => (r.realized_rr ?? 0) >= 1.0);
+      const rrLoseRows = allPnlRows.filter(r => (r.realized_rr ?? 0) < 1.0);
+      const avgWin = rrWinRows.length > 0 ? rrWinRows.reduce((s, r) => s + r.pnl, 0) / rrWinRows.length : 0;
+      const avgLoss = rrLoseRows.length > 0 ? Math.abs(rrLoseRows.reduce((s, r) => s + r.pnl, 0) / rrLoseRows.length) : 1;
       const avgRR = avgLoss > 0 ? avgWin / avgLoss : 0;
 
       const aiOutcomes = (aiOutcomesRaw.results ?? []).map(r => r.outcome as 'WIN' | 'LOSE');

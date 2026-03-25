@@ -962,7 +962,8 @@ export const JS = `
     var skWr = el('sk-winrate');
     if (skWr) {
       skWr.textContent = perf.winRate != null ? perf.winRate.toFixed(1) + '%' : '—';
-      if (perf.winRate != null) skWr.style.color = perf.winRate >= 50 ? 'var(--green)' : 'var(--red)';
+      // RR≥1.0基準: 勝率35%でもavgRR≥2.0ならEV正 → 35%を緑閾値に
+      if (perf.winRate != null) skWr.style.color = perf.winRate >= 35 ? 'var(--green)' : 'var(--red)';
     }
     var skPf = el('sk-pf'); if (skPf) skPf.textContent = st && st.profitFactor != null ? st.profitFactor.toFixed(2) : '—';
     var skSh = el('sk-sharpe'); if (skSh) skSh.textContent = st && st.sharpe != null ? st.sharpe.toFixed(2) : '—';
@@ -1075,8 +1076,9 @@ export const JS = `
           var cell = cellMap[strat + '|' + reg];
           if (cell && cell.count > 0) {
             var wr = (cell.winRate * 100).toFixed(0);
-            var bg = cell.winRate >= 0.55 ? 'rgba(48,209,88,0.25)' : cell.winRate >= 0.50 ? 'rgba(48,209,88,0.15)' : 'rgba(255,69,58,0.2)';
-            var pfx = cell.winRate >= 0.50 ? '+' : '';
+            // RR≥1.0基準: 勝率40%以上=緑濃、35%以上=緑薄、それ以下=赤
+            var bg = cell.winRate >= 0.40 ? 'rgba(48,209,88,0.25)' : cell.winRate >= 0.35 ? 'rgba(48,209,88,0.15)' : 'rgba(255,69,58,0.2)';
+            var pfx = cell.winRate >= 0.35 ? '+' : '';
             html += '<div class="matrix-c" style="background:' + bg + '">' + pfx + wr + '%<br><span style="font-size:9px;opacity:.6">' + cell.count + '件</span></div>';
           } else {
             html += '<div class="matrix-c">—</div>';
@@ -1128,8 +1130,9 @@ export const JS = `
       if (!d || d.total === 0) return '<div class="matrix-c" style="color:var(--tertiary);font-size:10px">蓄積中</div>';
       var wr = d.wins / d.total;
       var pct = (wr * 100).toFixed(0);
-      var bg = wr >= 0.55 ? 'rgba(48,209,88,0.25)' : wr >= 0.50 ? 'rgba(48,209,88,0.15)' : 'rgba(255,69,58,0.2)';
-      return '<div class="matrix-c" style="background:' + bg + '">' + (wr >= 0.50 ? '+' : '') + pct + '%</div>';
+      // SL非発生率: 50%以上=緑濃、40%以上=緑薄、それ以下=赤
+      var bg = wr >= 0.50 ? 'rgba(48,209,88,0.25)' : wr >= 0.40 ? 'rgba(48,209,88,0.15)' : 'rgba(255,69,58,0.2)';
+      return '<div class="matrix-c" style="background:' + bg + '">' + (wr >= 0.40 ? '+' : '') + pct + '%</div>';
     }
     var fb = '<div class="matrix-h"></div>';
     vixCols.forEach(function(v) { fb += '<div class="matrix-h">' + v + '</div>'; });

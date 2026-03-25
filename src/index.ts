@@ -1234,8 +1234,8 @@ async function updateInstrumentScores(db: D1Database): Promise<void> {
     `SELECT pair,
        COUNT(*) AS total_trades,
        COALESCE(SUM(CASE WHEN realized_rr >= 1.0 THEN 1 ELSE 0 END), 0) AS wins,
-       COALESCE(SUM(CASE WHEN pnl > 0 THEN pnl ELSE 0 END), 0) AS total_win_pnl,  -- 金額ベース（勝敗判定ではない）
-       COALESCE(SUM(CASE WHEN pnl <= 0 THEN ABS(pnl) ELSE 0 END), 0) AS total_loss_pnl,  -- 金額ベース（勝敗判定ではない）
+       COALESCE(SUM(CASE WHEN realized_rr >= 1.0 THEN pnl ELSE 0 END), 0) AS total_win_pnl,  -- RR≥1.0取引のPnL合計
+       COALESCE(SUM(CASE WHEN realized_rr IS NULL OR realized_rr < 1.0 THEN ABS(pnl) ELSE 0 END), 0) AS total_loss_pnl,  -- RR<1.0取引の|PnL|合計
        COALESCE(AVG(pnl), 0) AS avg_pnl,
        COALESCE(SUM(pnl), 0) AS total_pnl
      FROM positions WHERE status = 'CLOSED'
@@ -1292,7 +1292,7 @@ async function updateInstrumentScores(db: D1Database): Promise<void> {
 
     // RR中心スコア: avg_rr 40% + RR勝率 25% + Sharpe 20% + RRトレンド 15%
     const tradeScore = Math.min(r.total_trades / 20, 1); // 20件で満点
-    const avgRrNorm = Math.min(avgRR / 2, 1); // RR=2.0で満点
+    const avgRrNorm = Math.min(avgRR / 3, 1); // RR=3.0で満点（RR最大化ベクトル）
     const rrTrendScore = tradeScore; // 暫定: 取引数スコアをトレンド代用
     const score = avgRrNorm * 0.40 + winRate * 0.25 + Math.min(Math.max(sharpe, 0) / 1, 1) * 0.20 + rrTrendScore * 0.15;
 

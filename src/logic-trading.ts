@@ -356,7 +356,7 @@ export async function runLogicDecisions(
         const rawTpDist = Math.abs(scaledTp - currentRate);
         const rrRatio = rawSlDist > 0 ? rawTpDist / rawSlDist : 1.5;
         const clampedSlDist = instrument.tpSlMin;
-        const clampedTpDist = clampedSlDist * Math.max(rrRatio, 1.5);
+        const clampedTpDist = clampedSlDist * Math.max(rrRatio, 2.0);
         scaledSl = parseFloat((isBuySignal ? currentRate - clampedSlDist : currentRate + clampedSlDist).toFixed(5));
         scaledTp = parseFloat((isBuySignal ? currentRate + clampedTpDist : currentRate - clampedTpDist).toFixed(5));
       }

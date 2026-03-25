@@ -475,8 +475,8 @@ export function slPatternAnalysis(
 export function powerAnalysis(
   currentN: number,
   currentWins: number,
-  targetWinRate = 0.55,
-  baselineWinRate = 0.5,
+  targetWinRate = 0.40,     // RR≥1.0基準: 勝率40%+avgRR2.0でEV正
+  baselineWinRate = 0.30,   // RR≥1.0基準: ランダムベースラインは約30%
   alpha = 0.05,
   power = 0.8,
 ): {

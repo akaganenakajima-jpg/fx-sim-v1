@@ -273,7 +273,7 @@ export async function checkAndCloseAllPositions(
 }
 
 /** 直近の連続損失数を取得（全銘柄通算: 縮退判定用）
- *  最新クローズからSLまたはpnl<=0が続く件数を返す
+ *  最新クローズからrealized_rr<1.0が続く件数を返す（RR≥1.0勝率統一定義）
  */
 export async function getConsecutiveLosses(db: D1Database): Promise<number> {
   const recent = await db
