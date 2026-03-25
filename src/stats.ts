@@ -139,17 +139,40 @@ export function profitFactor(pnls: number[]): number {
  * @param outcomes BUY/SELL判定のoutcome配列（'WIN' | 'LOSE'）
  */
 export function aiAccuracy(outcomes: Array<'WIN' | 'LOSE'>): {
-  accuracy: number;       // 方向的中率（0〜1）
-  brierScore: number;     // Brier Score（0=完璧, 0.5=ランダム, 1=最悪）
-  n: number;              // 評価済みサンプル数
-  wins: number;           // 的中数
+  accuracy: number;        // 方向的中率（0〜1）
+  brierScore: number;      // Brier Score（0=完璧, 0.5=ランダム, 1=最悪）
+  n: number;               // 評価済みサンプル数
+  wins: number;            // 的中数
+  brierHistory: number[];  // 直近10ウィンドウのBrierスコア推移
+  brierTrend: 'improving' | 'worsening' | 'stable';
 } {
   const n = outcomes.length;
-  if (n === 0) return { accuracy: 0, brierScore: 0.5, n: 0, wins: 0 };
+  if (n === 0) return { accuracy: 0, brierScore: 0.5, n: 0, wins: 0, brierHistory: [], brierTrend: 'stable' };
   const wins = outcomes.filter(o => o === 'WIN').length;
   const accuracy = wins / n;
-  const brierScore = 1 - accuracy; // 決定論的予測（f=1固定）のBrier Score
-  return { accuracy, brierScore, n, wins };
+  const brierScore = 1 - accuracy;
+
+  // 直近10ウィンドウ（各5件）のBrierスコア推移
+  const windowSize = 5;
+  const brierHistory: number[] = [];
+  for (let i = windowSize; i <= n; i += Math.max(1, Math.floor(n / 10))) {
+    const slice = outcomes.slice(Math.max(0, i - windowSize), i);
+    const w = slice.filter(o => o === 'WIN').length;
+    brierHistory.push(1 - w / slice.length);
+    if (brierHistory.length >= 10) break;
+  }
+
+  // トレンド判定（最初の半分 vs 後半の半分）
+  let brierTrend: 'improving' | 'worsening' | 'stable' = 'stable';
+  if (brierHistory.length >= 4) {
+    const half = Math.floor(brierHistory.length / 2);
+    const early = brierHistory.slice(0, half).reduce((s, v) => s + v, 0) / half;
+    const late = brierHistory.slice(half).reduce((s, v) => s + v, 0) / (brierHistory.length - half);
+    if (late < early - 0.05) brierTrend = 'improving';
+    else if (late > early + 0.05) brierTrend = 'worsening';
+  }
+
+  return { accuracy, brierScore, n, wins, brierHistory, brierTrend };
 }
 
 /** ROIブートストラップ95%信頼区間

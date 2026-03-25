@@ -918,17 +918,88 @@ async function run(env: Env): Promise<void> {
 
       // news_analysis + latest_news キャッシュ更新
       if (result.newsAnalysis.length > 0) {
-        const enriched = result.newsAnalysis.map(a => ({
-          ...a,
-          title: news[a.index]?.title_ja || (news[a.index]?.title ?? null),
-          pubDate: news[a.index]?.pubDate ?? null,
-          description: news[a.index]?.desc_ja || (news[a.index]?.description ?? null),
-          source: (news[a.index] as any)?.source ?? null,
-        }));
-        await setCacheValue(env.DB, 'news_analysis', JSON.stringify(enriched));
-        await setCacheValue(env.DB, 'latest_news', JSON.stringify(
-          news.slice(0, 30).map(n => ({ ...n, title_ja: n.title_ja || null }))
-        ));
+        const enriched = result.newsAnalysis.map(a => {
+          // 同バッチのtrade_decisionsから該当ペアの判断を紐付け
+          const pairedDecisions = (result.decisions ?? [])
+            .filter(d => (a.affected_pairs ?? []).includes(d.pair))
+            .map(d => ({ pair: d.pair, decision: d.decision, reasoning: d.reasoning?.replace(/^\[PATH_B\] /, '').slice(0, 60) ?? null }));
+          // hold_reason: 注目ニュースで行動しなかった理由（機会損失の可視化）
+          let hold_reason: string | null = null;
+          if (a.attention && pairedDecisions.length === 0) {
+            const hasOpenPos = (a.affected_pairs ?? []).some((p: string) => openPairsForPathB.has(p));
+            hold_reason = hasOpenPos ? '既存ポジションあり' : 'AI判断: 様子見';
+          }
+          return {
+            ...a,
+            title: news[a.index]?.title_ja || (news[a.index]?.title ?? null),
+            pubDate: news[a.index]?.pubDate ?? null,
+            description: news[a.index]?.desc_ja || (news[a.index]?.description ?? null),
+            source: (news[a.index] as any)?.source ?? null,
+            trade_decisions: pairedDecisions.length > 0 ? pairedDecisions : null,
+            hold_reason,
+          };
+        });
+
+        // ── 過去24時間ローリングウィンドウ蓄積（上書きではなくマージ）──
+        const cutoff24h = Date.now() - 24 * 60 * 60 * 1000;
+        const existingAnalysisRaw = await getCacheValue(env.DB, 'news_analysis');
+        const existingAnalysis: any[] = existingAnalysisRaw
+          ? (() => { try { return JSON.parse(existingAnalysisRaw); } catch { return []; } })()
+          : [];
+        const existingIn24h = existingAnalysis.filter((e: any) => {
+          const d = e.pubDate || e.analyzed_at || '';
+          return d ? new Date(d).getTime() >= cutoff24h : false;
+        });
+        const newTitles = new Set(enriched.map((e: any) => e.title));
+        const preserved = existingIn24h.filter((e: any) => !newTitles.has(e.title));
+        const mergedAnalysis = [...enriched, ...preserved].slice(0, 80);
+        await setCacheValue(env.DB, 'news_analysis', JSON.stringify(mergedAnalysis));
+
+        // latest_news も過去24時間蓄積
+        const existingLatestRaw = await getCacheValue(env.DB, 'latest_news');
+        const existingLatest: any[] = existingLatestRaw
+          ? (() => { try { return JSON.parse(existingLatestRaw); } catch { return []; } })()
+          : [];
+        const newLatestTitles = new Set(news.slice(0, 30).map((n: any) => n.title));
+        const preservedLatest = existingLatest.filter((n: any) => {
+          const d = n.pubDate || '';
+          return d ? new Date(d).getTime() >= cutoff24h && !newLatestTitles.has(n.title) : false;
+        });
+        const mergedLatest = [
+          ...news.slice(0, 30).map(n => ({ ...n, title_ja: n.title_ja || null })),
+          ...preservedLatest,
+        ].slice(0, 100);
+        await setCacheValue(env.DB, 'latest_news', JSON.stringify(mergedLatest));
+      }
+
+      // 機会損失トラッキング: attention=true だがシグナルなしのペアを HOLD 記録
+      const attentionPairs = new Set<string>();
+      for (const a of result.newsAnalysis) {
+        if (a.attention) {
+          for (const p of (a.affected_pairs ?? [])) attentionPairs.add(p);
+        }
+      }
+      const holdPairs = [...attentionPairs].filter(p => !handledPairs.has(p));
+      if (holdPairs.length > 0) {
+        try {
+          const holdStmt = env.DB.prepare(
+            `INSERT INTO decisions (pair, rate, decision, tp_rate, sl_rate, reasoning, news_summary, vix, us10y, nikkei, sp500, created_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+          );
+          await env.DB.batch(holdPairs.map(pair => {
+            const reason = openPairsForPathB.has(pair)
+              ? '既存ポジションあり（機会損失候補）'
+              : 'ニュース注目・シグナルなし（機会損失候補）';
+            return holdStmt.bind(
+              pair, prices.get(pair) ?? 0, 'HOLD', null, null,
+              `[PATH_B_HOLD] ${reason}`, newsSummary,
+              indicators.vix, indicators.us10y, indicators.nikkei, indicators.sp500,
+              now.toISOString()
+            );
+          }));
+        } catch (e) {
+          console.warn(`[fx-sim] Path B HOLD記録失敗: ${String(e).slice(0, 80)}`);
+        }
       }
 
       return handledPairs;

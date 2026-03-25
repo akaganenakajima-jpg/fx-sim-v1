@@ -76,6 +76,10 @@ export function getDashboardHtml(): string {
   <div class="sec" id="wait-header">待機</div>
   <div class="wait-grid" id="wait-grid"></div>
 
+  <!-- アクティビティフィード -->
+  <div class="sec">アクティビティ</div>
+  <div id="ai-timeline"></div>
+
   <!-- クロスリンク -->
   <div style="padding:16px;text-align:center">
     <span class="cross-link" onclick="switchTab('tab-stats')">→ 学びタブで変更の効果を確認</span>
@@ -113,7 +117,7 @@ export function getDashboardHtml(): string {
 
   <!-- クロスリンク -->
   <div style="padding:16px;text-align:center">
-    <span class="cross-link" onclick="switchTab('tab-portfolio')">→ 今タブでポジション確認</span>
+    <span class="cross-link" onclick="switchTab('tab-portfolio')">→ HOMEタブでポジション確認</span>
     <span class="cross-link" style="margin-left:16px" onclick="switchTab('tab-ai')">→ AIタブで判定確認</span>
   </div>
 
@@ -203,10 +207,6 @@ export function getDashboardHtml(): string {
   <div class="sec" id="ai-news-section">ニュース分析</div>
   <div id="ai-news-cards"></div>
 
-  <!-- AI判断タイムライン -->
-  <div class="sec">アクティビティ</div>
-  <div id="ai-timeline"></div>
-
   <!-- クロスリンク -->
   <div style="padding:16px;text-align:center">
     <span class="cross-link" onclick="switchTab('tab-stats')">→ 学びタブで全体の効果を確認</span>
@@ -293,7 +293,7 @@ export function getDashboardHtml(): string {
 <nav class="tabs" id="main-tabs">
   <div class="tab on" data-tab="tab-portfolio" onclick="switchTab('tab-portfolio')">
     <svg class="tab-icon" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12l9-8 9 8"/><path d="M5 10v9a1 1 0 001 1h3v-5h6v5h3a1 1 0 001-1v-9"/></svg>
-    <span class="tab-t">今</span>
+    <span class="tab-t">HOME</span>
   </div>
   <div class="tab" data-tab="tab-news" onclick="switchTab('tab-news')">
     <svg class="tab-icon" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M7 8h4"/><path d="M7 12h10"/><path d="M7 16h10"/></svg>

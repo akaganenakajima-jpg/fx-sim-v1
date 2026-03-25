@@ -577,6 +577,13 @@ export async function newsStage1(params: {
     '- 例(BUY, rate=5.29): tp_rate=5.55(上), sl_rate=5.15(下) ← SLは必ずentryより下\n' +
     '- 例(SELL, rate=1.33): tp_rate=1.30(下), sl_rate=1.36(上) ← SLは必ずentryより上\n' +
     '- 例(USD/JPY SELL, rate=158.37): tp_rate=156.00(下), sl_rate=160.50(上) ← 大きい値でもSELLのSLは必ずentry(158.37)より上\n' +
+    '- 例(Gold BUY, rate=4550): tp_rate=4650(上), sl_rate=4490(下) ← BUYのSLはentry(4550)より必ず下。Goldは現在4000-5000台(2000-3000台の旧価格は使用禁止。SL距離最低$15)\n' +
+    '- 例(Gold SELL, rate=4545): tp_rate=4500(下), sl_rate=4575(上) ← SELLのSLはentry(4545)より必ず上。4500<4545<4575の順序を数値で確認\n' +
+    '- 例(CrudeOil BUY, rate=69.50): tp_rate=70.85(上), sl_rate=68.90(下) ← BUYのSLはentry(69.50)より必ず下。SL距離=$0.60, TP距離=$1.35\n' +
+    '- 例(CrudeOil SELL, rate=69.50): tp_rate=68.15(下), sl_rate=70.10(上) ← SELLのSLはentry(69.50)より必ず上。68.15<69.50<70.10の順序を数値で確認\n' +
+    '- 例(Silver BUY, rate=73): tp_rate=76(上), sl_rate=70(下) ← Silverは現在70-80台(20-40台の旧価格は使用禁止)\n' +
+    '- 例(GBP/USD BUY, rate=1.3376): tp_rate=1.3476(上), sl_rate=1.3226(下)\n' +
+    '- 例(EUR/USD BUY, rate=1.16): tp_rate=1.17(上), sl_rate=1.15(下) ← EUR/USDは現在1.10-1.20台(1.0-1.09台の旧価格は使用禁止)\n' +
     '- tp_rate/sl_rateは各銘柄の現在レートを起点にした絶対価格で返す\n\n' +
     'その他ルール:\n' +
     '- trade_signalsはBUYまたはSELLのみ（HOLDは含めない）\n' +
@@ -789,6 +796,13 @@ async function newsStage1GPT(params: {
     '- 例(BUY, rate=5.29): tp_rate=5.55(上), sl_rate=5.15(下) ← SLは必ずentryより下\n' +
     '- 例(SELL, rate=1.33): tp_rate=1.30(下), sl_rate=1.36(上) ← SLは必ずentryより上\n' +
     '- 例(USD/JPY SELL, rate=158.37): tp_rate=156.00(下), sl_rate=160.50(上) ← 大きい値でもSELLのSLは必ずentry(158.37)より上\n' +
+    '- 例(Gold BUY, rate=4550): tp_rate=4650(上), sl_rate=4490(下) ← BUYのSLはentry(4550)より必ず下。Goldは現在4000-5000台(2000-3000台の旧価格は使用禁止。SL距離最低$15)\n' +
+    '- 例(Gold SELL, rate=4545): tp_rate=4500(下), sl_rate=4575(上) ← SELLのSLはentry(4545)より必ず上。4500<4545<4575の順序を数値で確認\n' +
+    '- 例(CrudeOil BUY, rate=69.50): tp_rate=70.85(上), sl_rate=68.90(下) ← BUYのSLはentry(69.50)より必ず下。SL距離=$0.60, TP距離=$1.35\n' +
+    '- 例(CrudeOil SELL, rate=69.50): tp_rate=68.15(下), sl_rate=70.10(上) ← SELLのSLはentry(69.50)より必ず上。68.15<69.50<70.10の順序を数値で確認\n' +
+    '- 例(Silver BUY, rate=73): tp_rate=76(上), sl_rate=70(下) ← Silverは現在70-80台(20-40台の旧価格は使用禁止)\n' +
+    '- 例(GBP/USD BUY, rate=1.3376): tp_rate=1.3476(上), sl_rate=1.3226(下)\n' +
+    '- 例(EUR/USD BUY, rate=1.16): tp_rate=1.17(上), sl_rate=1.15(下) ← EUR/USDは現在1.10-1.20台(1.0-1.09台の旧価格は使用禁止)\n' +
     '- tp_rate/sl_rateは各銘柄の現在レートを起点にした絶対価格で返す\n\n' +
     'その他ルール:\n- trade_signalsはBUYまたはSELLのみ（HOLDは含めない）\n- [OP]マークの銘柄はtrade_signalsに含めない\n' +
     '- tp_rate/sl_rateは必ず数値で返す（nullは不可）\n' +
@@ -879,6 +893,13 @@ async function newsStage1Claude(params: {
     '- 例(BUY, rate=5.29): tp_rate=5.55(上), sl_rate=5.15(下) ← SLは必ずentryより下\n' +
     '- 例(SELL, rate=1.33): tp_rate=1.30(下), sl_rate=1.36(上) ← SLは必ずentryより上\n' +
     '- 例(USD/JPY SELL, rate=158.37): tp_rate=156.00(下), sl_rate=160.50(上) ← 大きい値でもSELLのSLは必ずentry(158.37)より上\n' +
+    '- 例(Gold BUY, rate=4550): tp_rate=4650(上), sl_rate=4490(下) ← BUYのSLはentry(4550)より必ず下。Goldは現在4000-5000台(2000-3000台の旧価格は使用禁止。SL距離最低$15)\n' +
+    '- 例(Gold SELL, rate=4545): tp_rate=4500(下), sl_rate=4575(上) ← SELLのSLはentry(4545)より必ず上。4500<4545<4575の順序を数値で確認\n' +
+    '- 例(CrudeOil BUY, rate=69.50): tp_rate=70.85(上), sl_rate=68.90(下) ← BUYのSLはentry(69.50)より必ず下。SL距離=$0.60, TP距離=$1.35\n' +
+    '- 例(CrudeOil SELL, rate=69.50): tp_rate=68.15(下), sl_rate=70.10(上) ← SELLのSLはentry(69.50)より必ず上。68.15<69.50<70.10の順序を数値で確認\n' +
+    '- 例(Silver BUY, rate=73): tp_rate=76(上), sl_rate=70(下) ← Silverは現在70-80台(20-40台の旧価格は使用禁止)\n' +
+    '- 例(GBP/USD BUY, rate=1.3376): tp_rate=1.3476(上), sl_rate=1.3226(下)\n' +
+    '- 例(EUR/USD BUY, rate=1.16): tp_rate=1.17(上), sl_rate=1.15(下) ← EUR/USDは現在1.10-1.20台(1.0-1.09台の旧価格は使用禁止)\n' +
     '- tp_rate/sl_rateは各銘柄の現在レートを起点にした絶対価格で返すこと\n' +
     '- 【RR比設定手順・必須・自動拒否回避】①SL距離を決める（最低tpSlMin以上必須・未満は即自動拒否。USD/JPYなら最低0.2円・推奨0.3〜0.8円）②RR比を計算・検証【送信前必須チェック】RR=TP距離÷SL距離を計算し1.5以上を確認してから送信（有効なRR例: 1.50✅, 1.67✅, 2.00✅ / 無効で即自動拒否: 0.60❌, 0.83❌, 0.88❌, 0.93❌, 0.99❌, 1.2❌, 1.4❌（RR<1.0はTPがSLより近い致命的エラー）。TP距離の計算: SL=0.4円→TP最低0.6円・SL=0.3円→TP最低0.45円・SL=0.5円→TP最低0.75円）③絶対価格に変換【entryレートは小数点以下を含めそのまま使う・絶対に丸めない（entry=158.396を158.4にするのは禁止）】（BUY: sl=entry-SL距離【sl<entry厳守。sl≥entryは即自動拒否・距離ゼロも拒否】, tp=entry+TP距離【tp>entry厳守】 / SELL: sl=entry+SL距離【sl>entry厳守。sl≤entryは即自動拒否・距離ゼロも拒否】, tp=entry-TP距離【tp<entry厳守】）。例BUY entry=158.396→sl=158.096(=158.396-0.3), tp=158.896(=158.396+0.5)(RR=1.67✅)。例SELL entry=158.396→sl=158.696(=158.396+0.3), tp=157.896(=158.396-0.5)(RR=1.67✅)\n' +
     '- 【SL距離の厳守・自動拒否回避】SL距離は必ずtpSlMin以上tpSlMax以下でなければならない（この範囲外は値の大小を問わず例外なく即自動拒否）。USD/JPYの場合: 0.2≤SL距離≤1.2が必須。下限違反例: 0.19, 0.16, 0.08（0.2未満）/ 上限違反例: 1.21, 1.25, 1.38, 1.50, 2.00, 2.38, 2.40（1.2超はどんな値でも拒否）。安全な推奨範囲: 0.30〜0.80（迷ったら必ずこの範囲で設定すること）\n' +
