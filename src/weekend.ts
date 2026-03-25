@@ -21,7 +21,9 @@
  *   - 新規エントリー → Phase 1でロット半減、Phase 2以降は完全禁止
  */
 
-import { getOpenPositions, insertSystemLog } from './db';
+import { getOpenPositions, closePosition, insertSystemLog } from './db';
+import { calcRealizedRR } from './position';
+import { logReturn } from './stats';
 import type { InstrumentConfig } from './instruments';
 
 // ---------------------------------------------------------------------------
@@ -267,11 +269,12 @@ export async function forceCloseAllForWeekend(
       ? (currentRate - pos.entry_rate) * multiplier
       : (pos.entry_rate - currentRate) * multiplier;
 
-    // D1で直接CLOSEする（ブローカー側は別途対応）
-    await db.prepare(
-      `UPDATE positions SET status = 'CLOSED', close_rate = ?, pnl = ?,
-       closed_at = ?, close_reason = 'WEEKEND' WHERE id = ?`
-    ).bind(currentRate, pnl, new Date().toISOString(), pos.id).run();
+    // realized_rr計算（Bロジック: 値幅ベース・方向補正・ABS分母・original_sl_rate優先）
+    const slRef = pos.original_sl_rate ?? pos.sl_rate;
+    const realizedRR = slRef != null ? calcRealizedRR(pos.direction, pos.entry_rate, currentRate, slRef) : null;
+    const lr = logReturn(pos.entry_rate, currentRate);
+
+    await closePosition(db, pos.id, currentRate, 'WEEKEND', pnl, lr, realizedRR ?? undefined);
 
     closedCount++;
     console.log(`[weekend] 週末強制決済: ${pos.pair} id=${pos.id} ${pos.direction} pnl=${pnl.toFixed(2)}`);

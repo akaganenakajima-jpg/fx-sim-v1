@@ -27,15 +27,20 @@ export interface GeminiDecision {
 }
 
 /** プロンプトバージョン: プロンプトを変更したらこの値を更新する */
-export const PROMPT_VERSION = 'v16'; // v16: RR≥1.0=勝ちの統一定義を全プロンプトにハードコード
+export const PROMPT_VERSION = 'v17'; // v17: RR定義をBロジック（値幅ベース・方向補正・ABS分母・original_sl_rate）に明確化
 
+/** プロンプトバージョン変更時にPROMPT_VERSIONも更新すること */
 /** RR定義プロンプト — 全AI共通・全プロンプトの先頭に挿入（変更禁止） */
 export const RR_DEFINITION_PROMPT =
   '【絶対原則 — RR定義（全AI共通・変更禁止）】\n' +
   '本システムにおける「勝ち」の定義:\n' +
   '  勝ち = 実現RR ≥ 1.0（リスクと同等以上のリターンを獲得した取引）\n' +
   '  負け = 実現RR < 1.0（リスクに見合うリターンを得られなかった取引）\n' +
-  '  実現RR = 実現利益 / 初期リスク（エントリー時のSL距離）\n' +
+  '  実現RR（値幅ベース）:\n' +
+  '    BUY:  (close_rate - entry_rate) / |entry_rate - original_sl_rate|\n' +
+  '    SELL: (entry_rate - close_rate) / |entry_rate - original_sl_rate|\n' +
+  '  ※分母は必ずABS（絶対値）。original_sl_rate = エントリー時のSL（trailing後のSLではない）\n' +
+  '  ※ロット数の変動は含めない。純粋な予測精度（エッジ）を測定する値幅ベースの指標である\n' +
   '\n' +
   'あなたの唯一の目的は「RRの最大化」である。\n' +
   '- TP/SL設定時: RR ≥ 2.0 を最低基準、RR ≥ 3.0 を推奨\n' +

@@ -123,7 +123,7 @@ export async function closePosition(
            pnl          = ?,
            log_return   = ?,
            realized_rr  = ?
-       WHERE id = ?`
+       WHERE id = ? AND status = 'OPEN'`
     )
     .bind(closeRate, reason, new Date().toISOString(), pnl, logReturnVal ?? null, realizedRR ?? null, id)
     .run();

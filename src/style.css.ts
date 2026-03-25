@@ -69,7 +69,7 @@ body{background:var(--bg);color:var(--text);font-size:15px;line-height:1.47;
 .badge-sm{display:inline-block;padding:2px 6px;border-radius:4px;font-size:11px;font-weight:600}
 
 /* ═══ Trade history sort toggle ═══ */
-.th-sort-btn{font-size:11px;padding:4px 10px;border-radius:12px;border:1px solid rgba(255,255,255,0.15);background:transparent;color:var(--tertiary);cursor:pointer;min-height:28px;font-weight:500;transition:all 0.15s}
+.th-sort-btn{font-size:11px;padding:4px 10px;border-radius:12px;border:1px solid rgba(255,255,255,0.15);background:transparent;color:var(--tertiary);cursor:pointer;min-height:44px;min-width:44px;font-weight:500;transition:all 0.15s;display:inline-flex;align-items:center;justify-content:center}
 .th-sort-btn.th-sort-active{background:var(--blue);color:#fff;border-color:var(--blue)}
 .th-sort-btn:active{opacity:0.7}
 

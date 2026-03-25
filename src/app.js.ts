@@ -81,7 +81,8 @@ export const JS = `
 
   function fmtYen(amount) {
     if (amount == null || isNaN(amount)) return '—';
-    return '¥' + Math.round(amount).toLocaleString('ja-JP');
+    var sign = amount < 0 ? '-' : '';
+    return sign + '¥' + Math.abs(Math.round(amount)).toLocaleString('ja-JP');
   }
 
   function fmtYenCompact(amount) {
@@ -1043,7 +1044,7 @@ export const JS = `
       if (!rrBd) {
         rrBdEl.innerHTML = '<div style="font-size:12px;color:var(--tertiary)">データ蓄積中...</div>';
       } else {
-        var bdTotal = (rrBd.wins.n || 0) + (rrBd.smallProfit.n || 0) + (rrBd.losses.n || 0);
+        var bdTotal = (rrBd.wins.n || 0) + (rrBd.smallProfit.n || 0) + (rrBd.losses.n || 0) + (rrBd.unknown ? rrBd.unknown.n : 0);
         function fmtBdRow(label, color, tier) {
           var pct = bdTotal > 0 ? (tier.n / bdTotal * 100).toFixed(0) + '%' : '0%';
           var pnlSign = tier.totalPnl >= 0 ? '+' : '';
@@ -1056,10 +1057,14 @@ export const JS = `
             '<span style="font-size:12px;color:' + color + ';min-width:56px;text-align:right">avg ' + tier.avgRr.toFixed(2) + '</span>' +
             '</div>';
         }
-        rrBdEl.innerHTML =
+        var bdHtml =
           fmtBdRow('RR≥1.0（勝ち）',   'var(--green)', rrBd.wins) +
           fmtBdRow('0≤RR<1.0（小益）', 'var(--blue)',  rrBd.smallProfit) +
           fmtBdRow('RR<0（損失）',      'var(--red)',   rrBd.losses);
+        if (rrBd.unknown && rrBd.unknown.n > 0) {
+          bdHtml += fmtBdRow('計算不能',        'var(--tertiary)', rrBd.unknown);
+        }
+        rrBdEl.innerHTML = bdHtml;
       }
     }
 
@@ -1112,6 +1117,13 @@ export const JS = `
       });
     }
 
+    // 日時フォーマット: MM/DD HH:mm（ループ外で1回だけ定義）
+    function fmtDt(s) {
+      if (!s) return '—';
+      var d = new Date(s);
+      return (d.getMonth()+1) + '/' + d.getDate() + ' ' + String(d.getHours()).padStart(2,'0') + ':' + String(d.getMinutes()).padStart(2,'0');
+    }
+
     // カード形式（スクロール可能）
     var html = '<div style="display:flex;flex-direction:column;gap:8px">';
     for (var i = 0; i < trades.length; i++) {
@@ -1127,13 +1139,6 @@ export const JS = `
       var maeStr    = t.mae != null ? (t.mae >= 0 ? '+' : '') + '¥' + Math.round(t.mae).toLocaleString() : '—';
       var closeReason = t.close_reason || '—';
       var reasonColor = closeReason === 'TP' ? 'var(--green)' : closeReason === 'SL' ? 'var(--red)' : 'var(--tertiary)';
-
-      // 日時フォーマット: MM/DD HH:mm
-      function fmtDt(s) {
-        if (!s) return '—';
-        var d = new Date(s);
-        return (d.getMonth()+1) + '/' + d.getDate() + ' ' + String(d.getHours()).padStart(2,'0') + ':' + String(d.getMinutes()).padStart(2,'0');
-      }
 
       var reasoning = t.reasoning ? escHtml(t.reasoning.slice(0, 80)) + (t.reasoning.length > 80 ? '…' : '') : '—';
 
@@ -2247,18 +2252,19 @@ export const JS = `
       var pnlF = fmtPnl(unrealized, instr ? instr.unit : '');
       var pnlColor = unrealized > 0 ? 'var(--green)' : unrealized < 0 ? 'var(--red)' : '';
 
-      // リアルタイムRR計算
+      // リアルタイムRR計算（Bロジック: 値幅ベース・方向補正・ABS分母・original_sl_rate優先）
       var sheetRR = null;
       var sheetTargetRR = null;
-      if (pos.sl_rate != null && pos.entry_rate && cr != null) {
-        var sheetSlDist = Math.abs(pos.entry_rate - pos.sl_rate);
+      var rrSlRef = pos.original_sl_rate != null ? pos.original_sl_rate : pos.sl_rate;
+      if (rrSlRef != null && pos.entry_rate && cr != null) {
+        var sheetSlDist = Math.abs(pos.entry_rate - rrSlRef);
         if (sheetSlDist > 0) {
           sheetRR = pos.direction === 'BUY' ? (cr - pos.entry_rate) / sheetSlDist : (pos.entry_rate - cr) / sheetSlDist;
         }
       }
-      if (pos.tp_rate != null && pos.sl_rate != null && pos.entry_rate) {
+      if (pos.tp_rate != null && rrSlRef != null && pos.entry_rate) {
         var sheetTpDist = Math.abs(pos.tp_rate - pos.entry_rate);
-        var sheetSlDist2 = Math.abs(pos.sl_rate - pos.entry_rate);
+        var sheetSlDist2 = Math.abs(rrSlRef - pos.entry_rate);
         if (sheetSlDist2 > 0) sheetTargetRR = sheetTpDist / sheetSlDist2;
       }
 

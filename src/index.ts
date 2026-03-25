@@ -6,7 +6,7 @@ import { getUSDJPY } from './rate';
 import { fetchNews, filterAndTranslateWithHaiku, saveRawNews, purgeOldNewsRaw, type SourceFetchStat, type NewsApiKeys } from './news';
 import { getMarketIndicators } from './indicators';
 import { fetchOgDescription, newsStage1WithHedge, newsStage2, RateLimitError, type NewsAnalysisItem, type NewsStage1Result } from './gemini';
-import { checkAndCloseAllPositions, openPosition } from './position';
+import { checkAndCloseAllPositions, openPosition, calcRealizedRR } from './position';
 import {
   insertSystemLog,
   getCacheValue,
@@ -828,13 +828,22 @@ async function run(env: Env): Promise<void> {
           if (rate == null) continue;
           try {
             const openPos = await env.DB.prepare(
-              `SELECT id, direction, entry_rate FROM positions WHERE pair = ? AND status = 'OPEN' LIMIT 1`
-            ).bind(pair).first<{ id: number; direction: string; entry_rate: number }>();
+              `SELECT id, direction, entry_rate, sl_rate, original_sl_rate FROM positions WHERE pair = ? AND status = 'OPEN' LIMIT 1`
+            ).bind(pair).first<{ id: number; direction: string; entry_rate: number; sl_rate: number | null; original_sl_rate: number | null }>();
             if (openPos) {
+              const instrForPnl = INSTRUMENTS.find(i => i.pair === pair);
+              if (!instrForPnl) {
+                console.warn(`[fx-sim] B2_REVERSE: ${pair} は INSTRUMENTS に未登録、スキップ`);
+                continue;
+              }
+              const mult = instrForPnl.pnlMultiplier;
               const pnl = openPos.direction === 'BUY'
-                ? (rate - openPos.entry_rate) * 100
-                : (openPos.entry_rate - rate) * 100;
-              await closePosition(env.DB, openPos.id, rate, 'B2_REVERSE', pnl);
+                ? (rate - openPos.entry_rate) * mult
+                : (openPos.entry_rate - rate) * mult;
+              // Bロジック: 値幅ベース・方向補正・ABS分母・original_sl_rate優先
+              const slRef = openPos.original_sl_rate ?? openPos.sl_rate;
+              const realizedRR = slRef != null ? calcRealizedRR(openPos.direction, openPos.entry_rate, rate, slRef) : undefined;
+              await closePosition(env.DB, openPos.id, rate, 'B2_REVERSE', pnl, undefined, realizedRR);
               await insertSystemLog(env.DB, 'INFO', 'PATH_B', `B2_REVERSE クローズ: ${pair} @ ${rate}`);
             }
           } catch (e) {

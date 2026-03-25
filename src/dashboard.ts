@@ -88,6 +88,9 @@ export function getDashboardHtml(): string {
   <div class="sec" id="wait-header">待機</div>
   <div class="wait-grid" id="wait-grid"></div>
 
+  <!-- 速報ニュース（attention=trueのニュースをHOMEタブに表示） -->
+  <div id="news-feed-now"></div>
+
   <!-- アクティビティフィード -->
   <div class="sec">アクティビティ</div>
   <div id="ai-timeline"></div>

@@ -208,8 +208,8 @@ export async function checkAndCloseAllPositions(
       }
 
       // original_sl_rate優先: エントリー時SL距離でRR正規化（trailing/TP1で変動したSLではなく初期リスク基準）
-      const tpSlRef = pos.original_sl_rate ?? pos.sl_rate!;
-      const tpRealizedRR = calcRealizedRR(pos.direction, pos.entry_rate, currentRate, tpSlRef);
+      const tpSlRef = pos.original_sl_rate ?? pos.sl_rate;
+      const tpRealizedRR = tpSlRef != null ? calcRealizedRR(pos.direction, pos.entry_rate, currentRate, tpSlRef) : 0;
       await closePosition(db, pos.id, currentRate, 'TP', pnl, lr, tpRealizedRR);
       // TP 通知（currentRate はこの時点で number に絞り込まれている）
       await sendNotification(webhookUrl, buildTpSlMessage({
@@ -248,8 +248,8 @@ export async function checkAndCloseAllPositions(
       }
 
       // original_sl_rate優先: エントリー時SL距離でRR正規化
-      const slSlRef = pos.original_sl_rate ?? pos.sl_rate!;
-      const slRealizedRR = calcRealizedRR(pos.direction, pos.entry_rate, currentRate, slSlRef);
+      const slSlRef = pos.original_sl_rate ?? pos.sl_rate;
+      const slRealizedRR = slSlRef != null ? calcRealizedRR(pos.direction, pos.entry_rate, currentRate, slSlRef) : 0;
       await closePosition(db, pos.id, currentRate, 'SL', pnl, lr, slRealizedRR);
       // SL 通知
       await sendNotification(webhookUrl, buildTpSlMessage({

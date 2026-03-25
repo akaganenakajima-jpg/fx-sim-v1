@@ -262,6 +262,39 @@ const MIGRATIONS: Array<{ version: number; description: string; sql: string }> =
     description: 'positions に original_sl_rate カラム追加（エントリー時SL距離でのRR計算正規化）',
     sql: 'ALTER TABLE positions ADD COLUMN original_sl_rate REAL',
   },
+  // v226: OPEN/CLOSEDポジションの original_sl_rate バックフィル
+  // v223でカラム追加前に作成されたポジションは original_sl_rate=null
+  // sl_rateがまだ変動していない（trailingでentry超えていない）ポジションのsl_rateを初期値として記録
+  {
+    version: 226,
+    description: 'original_sl_rateバックフィル: NULL既存ポジションにsl_rateをコピー',
+    sql: `UPDATE positions SET original_sl_rate = sl_rate WHERE original_sl_rate IS NULL AND sl_rate IS NOT NULL`,
+  },
+  // v225: realized_rr 全件再計算 — Bロジック（値幅ベース・方向補正・ABS分母）統一
+  // v219のバックフィルはABS未使用で trailing後SLがentry超えると負のRRになるバグがあった
+  // original_sl_rate優先、なければsl_rateを使用。ABS(entry - sl)で常に正の分母を保証
+  {
+    version: 225,
+    description: 'realized_rr全件再計算: Bロジック（ABS分母+方向補正+original_sl_rate優先）統一',
+    sql: `UPDATE positions SET realized_rr =
+            CASE direction
+              WHEN 'BUY' THEN (close_rate - entry_rate) / NULLIF(ABS(entry_rate - COALESCE(original_sl_rate, sl_rate)), 0)
+              WHEN 'SELL' THEN (entry_rate - close_rate) / NULLIF(ABS(entry_rate - COALESCE(original_sl_rate, sl_rate)), 0)
+            END
+          WHERE status = 'CLOSED' AND close_rate IS NOT NULL AND COALESCE(original_sl_rate, sl_rate) IS NOT NULL`,
+  },
+  // v227: v226バックフィル後のrealized_rr再計算（v225と同一SQL）
+  // v225が先にデプロイ済みの場合、v226でoriginal_sl_rateを埋めた後に再計算が必要
+  {
+    version: 227,
+    description: 'realized_rr再計算(v226バックフィル後): original_sl_rate充填済みで再計算',
+    sql: `UPDATE positions SET realized_rr =
+            CASE direction
+              WHEN 'BUY' THEN (close_rate - entry_rate) / NULLIF(ABS(entry_rate - COALESCE(original_sl_rate, sl_rate)), 0)
+              WHEN 'SELL' THEN (entry_rate - close_rate) / NULLIF(ABS(entry_rate - COALESCE(original_sl_rate, sl_rate)), 0)
+            END
+          WHERE status = 'CLOSED' AND close_rate IS NOT NULL AND COALESCE(original_sl_rate, sl_rate) IS NOT NULL`,
+  },
 ];
 
 export async function runMigrations(db: D1Database): Promise<void> {

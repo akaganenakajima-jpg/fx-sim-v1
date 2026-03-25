@@ -207,6 +207,7 @@ export interface StatusResponse {
     wins:        { n: number; totalPnl: number; avgRr: number; avgPnl: number };
     smallProfit: { n: number; totalPnl: number; avgRr: number; avgPnl: number };
     losses:      { n: number; totalPnl: number; avgRr: number; avgPnl: number };
+    unknown:     { n: number; totalPnl: number; avgRr: number; avgPnl: number };
   } | null;
   /** IPA品質修正: LIMITに依存しない今日の判断件数（UTC基準） */
   todayDecisionCount: number;
@@ -568,20 +569,22 @@ export async function getApiStatus(db: D1Database, tradingEnv?: { TRADING_ENABLE
       const rrLoseRows  = allPnlRows.filter(r => (r.realized_rr ?? 0) < 1.0);
       const rrValidRows = allPnlRows.filter(r => r.realized_rr != null);
 
-      // RR帯別内訳（3層）
+      // RR帯別内訳（4層: 勝ち/小益/損失/計算不能）
       const rrTierWins  = allPnlRows.filter(r => r.realized_rr != null && r.realized_rr >= 1.0);
       const rrTierSmall = allPnlRows.filter(r => r.realized_rr != null && r.realized_rr >= 0 && r.realized_rr < 1.0);
       const rrTierLoss  = allPnlRows.filter(r => r.realized_rr != null && r.realized_rr < 0);
+      const rrTierNull  = allPnlRows.filter(r => r.realized_rr == null);
       const calcTier = (rows: typeof allPnlRows) => {
         const n = rows.length;
         const totalPnl = rows.reduce((s, r) => s + (r.pnl ?? 0), 0);
-        const totalRr  = rows.reduce((s, r) => s + r.realized_rr!, 0);
+        const totalRr  = rows.reduce((s, r) => s + (r.realized_rr ?? 0), 0);
         return { n, totalPnl, avgRr: n > 0 ? totalRr / n : 0, avgPnl: n > 0 ? totalPnl / n : 0 };
       };
       rrBreakdown = {
         wins:        calcTier(rrTierWins),
         smallProfit: calcTier(rrTierSmall),
         losses:      calcTier(rrTierLoss),
+        unknown:     calcTier(rrTierNull),
       };
       // 平均実現RR（CLAUDE.md定義: 実現利益/初期リスク の全取引平均）
       const avgRR = rrValidRows.length > 0
