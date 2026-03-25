@@ -1609,7 +1609,10 @@ export const JS = `
     var indItems = (data.recentIndicatorLogs || [])
       .map(function(l) { return Object.assign({}, l, { _type: 'indicator' }); });
 
-    var allItems = decItems.concat(indItems)
+    var paramItems = (data.paramHistory || [])
+      .map(function(p) { return Object.assign({}, p, { _type: 'param', created_at: p.time || p.created_at }); });
+
+    var allItems = decItems.concat(indItems).concat(paramItems)
       .sort(function(a, b) { return new Date(b.created_at).getTime() - new Date(a.created_at).getTime(); })
       .slice(0, 60);
 
@@ -1644,6 +1647,26 @@ export const JS = `
           + '<div class="feed-row2">'
             + '<span class="feed-time">' + escHtml(timeStr) + '</span>'
             + '<span class="feed-rate">' + escHtml(rateStr) + '</span>'
+          + '</div>'
+          + '</div>';
+      } else if (item._type === 'param') {
+        // param review log
+        var pr = item;
+        var timeStrP = fmtTime(pr.created_at);
+        var pairP = pr.pair || '';
+        var reasonShort = (pr.reason || pr.change || '').slice(0, 40);
+        if ((pr.reason || pr.change || '').length > 40) reasonShort += '…';
+        var verdictLabel = pr.verdict === 'worked' ? '改善' : pr.verdict === 'worsened' ? '悪化' : '検証中';
+        var verdictCls = pr.verdict === 'worked' ? 'feed-tag-trend-up' : pr.verdict === 'worsened' ? 'feed-tag-trend-dn' : 'feed-tag-param';
+        return '<div class="feed-item">'
+          + '<div class="feed-row1">'
+            + '<span class="feed-tag feed-tag-param">調整</span>'
+            + '<span class="feed-pair">' + escHtml(pairP) + '</span>'
+            + '<span class="feed-act" style="color:var(--blue)">v' + (pr.version || '') + '</span>'
+          + '</div>'
+          + '<div class="feed-row2">'
+            + '<span class="feed-time">' + escHtml(timeStrP) + '</span>'
+            + '<span class="feed-note">' + escHtml(reasonShort) + '</span>'
           + '</div>'
           + '</div>';
       } else {
