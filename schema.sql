@@ -87,3 +87,17 @@ CREATE INDEX IF NOT EXISTS idx_positions_status ON positions(status);
 CREATE INDEX IF NOT EXISTS idx_positions_pair_status ON positions(pair, status);
 CREATE INDEX IF NOT EXISTS idx_decisions_pair_created ON decisions(pair, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_system_logs_id_desc ON system_logs(id DESC);
+
+-- アクティビティフィード: 指標変化ログ（RSI/ER変化をトリガーで記録）
+CREATE TABLE IF NOT EXISTS indicator_logs (
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  pair        TEXT    NOT NULL,          -- "S&P500", "USD/JPY" 等
+  metric      TEXT    NOT NULL,          -- "RSI", "ER", "Stoch"
+  prev_value  REAL    NOT NULL,          -- 変化前の値（例: 40.0）
+  curr_value  REAL    NOT NULL,          -- 変化後の値（例: 38.0）
+  direction   TEXT    NOT NULL,          -- "UP" | "DOWN"
+  note        TEXT,                      -- "RSI 40→38"（人間読み取り用）
+  created_at  TEXT    NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_indicator_logs_created ON indicator_logs(created_at DESC);

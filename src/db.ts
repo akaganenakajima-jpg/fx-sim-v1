@@ -214,6 +214,34 @@ export async function updateDecisionOutcome(
 }
 
 /**
+ * 指標変化ログを記録（indicator_logs テーブル）
+ * LOGICエンジンがRSI/ER変化を検出したときに呼ぶ。
+ * アクティビティフィードのトレンドエントリーとして表示される。
+ */
+export async function insertIndicatorLog(
+  db: D1Database,
+  pair: string,
+  metric: string,
+  prevValue: number,
+  currValue: number,
+  now: Date,
+): Promise<void> {
+  try {
+    const direction = currValue >= prevValue ? 'UP' : 'DOWN';
+    const note = `${metric} ${prevValue.toFixed(1)}→${currValue.toFixed(1)}`;
+    await db
+      .prepare(
+        `INSERT INTO indicator_logs (pair, metric, prev_value, curr_value, direction, note, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`
+      )
+      .bind(pair, metric, prevValue, currValue, direction, note, now.toISOString())
+      .run();
+  } catch {
+    // indicator_logs テーブル未作成（マイグレーション前）の場合は無視
+  }
+}
+
+/**
  * トークン使用量を記録（token_usage テーブル）
  * call_type: 'PATH_A_GEMINI' | 'PATH_A_GPT' | 'PATH_A_CLAUDE'
  *          | 'PATH_B1_GEMINI' | 'PATH_B1_GPT' | 'PATH_B1_CLAUDE'

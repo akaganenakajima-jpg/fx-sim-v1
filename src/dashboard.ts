@@ -88,7 +88,7 @@ export function getDashboardHtml(): string {
 
   <!-- ニュースKPI -->
   <div class="sec">ニュース概況</div>
-  <div class="kpi-grid" id="news-kpi" style="margin:0 16px 8px">
+  <div class="kpi-grid" id="news-kpi" style="margin:0 16px 8px;grid-template-columns:repeat(4,1fr)">
     <div class="kpi"><div class="kpi-val" id="nk-total">--</div><div class="kpi-lbl">取得件数</div></div>
     <div class="kpi"><div class="kpi-val" style="color:var(--blue)" id="nk-analyzed">--</div><div class="kpi-lbl">AI分析済</div></div>
     <div class="kpi"><div class="kpi-val" style="color:var(--green)" id="nk-triggered">--</div><div class="kpi-lbl">取引発動</div></div>
@@ -154,7 +154,7 @@ export function getDashboardHtml(): string {
   </div>
 
   <!-- 銘柄別 Before/After カード -->
-  <div class="sec">銘柄別: 変更 → 結果（Why×5付き）</div>
+  <div class="sec">銘柄別: 変更と結果</div>
   <div id="evo-cards"></div>
 
   <!-- クロスリンク -->
@@ -204,6 +204,7 @@ export function getDashboardHtml(): string {
   <div id="ai-news-cards"></div>
 
   <!-- AI判断タイムライン -->
+  <div class="sec">アクティビティ</div>
   <div id="ai-timeline"></div>
 
   <!-- クロスリンク -->
@@ -253,9 +254,9 @@ export function getDashboardHtml(): string {
     <div class="dd-seg" style="width:15%;background:var(--red);opacity:0.1" title="HALT"></div>
     <div class="dd-seg" style="width:10%;background:var(--red);opacity:0.05" title="STOP"></div>
   </div>
-  <div style="display:flex;justify-content:space-between;margin:0 16px 8px;font-size:11px;color:var(--tertiary)" id="dd-labels">
-    <span id="dd-current" style="color:var(--green);font-weight:600">--</span>
-    <span>NORMAL</span><span>CAUTION</span><span>WARN</span><span>HALT</span><span>STOP</span>
+  <div style="margin:0 16px 8px;font-size:11px;color:var(--tertiary)" id="dd-labels">
+    <span id="dd-current" style="color:var(--green);font-weight:600;display:block;margin-bottom:2px">--</span>
+    <div style="display:flex;justify-content:space-between"><span>NORMAL</span><span>CAUTION</span><span>WARN</span><span>HALT</span><span>STOP</span></div>
   </div>
 
   <!-- 稼働率/エラー率 -->

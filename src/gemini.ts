@@ -32,6 +32,10 @@ export const PROMPT_VERSION = 'v15'; // v15: RR無効例に0.60追加・「RR<1.
 const GEMINI_ENDPOINT =
   'https://generativelanguage.googleapis.com/v1beta/models/gemini-3.1-pro-preview:generateContent';
 
+// B2専用: 高速モデル（8sタイムアウト内に収まる）
+const GEMINI_FLASH_ENDPOINT =
+  'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent';
+
 const AI_TIMEOUT_MS = 12_000; // AI API呼び出し12秒タイムアウト
 // const NEWS_ANALYSIS_TIMEOUT_MS = 12_000; // DEPRECATED_v2: analyzeNews系で使用していたが削除
 /* --- DELETED Path A helpers (HEDGE_DELAY_MS / buildSystemInstruction / buildUserMessage)
@@ -560,12 +564,12 @@ export async function newsStage1(params: {
   ].join('\n');
 
   const systemPrompt =
-    'あなたは為替FXトレーダーのAIアシスタントです。\n' +
+    'あなたはFX・株式指数・コモディティのマルチアセットトレーダーのAIアシスタントです。\n' +
     '以下のニュース一覧（日本語翻訳済み）と市場状況を分析し、次の2つのことを返してください。\n' +
     '1. 各ニュースの注目度評価（news_analysis）\n' +
     '2. ニュースに基づいた売買シグナル（trade_signals）\n\n' +
     '必ず以下のJSON形式のみで返答してください:\n' +
-    '{"news_analysis":[{"index":0,"attention":true,"impact":"円安要因（50文字以内）","affected_pairs":["USD/JPY"]}],' +
+    '{"news_analysis":[{"index":0,"attention":true,"impact":"円安・株安要因（50文字以内）","affected_pairs":["USD/JPY","Nikkei225"]}],' +
     '"trade_signals":[{"pair":"USD/JPY","decision":"BUY","tp_rate":160.50,"sl_rate":158.00,"reasoning":"日本語100文字以内"}]}\n\n' +
     'TP/SL方向の絶対ルール（違反はシステムが自動拒否）:\n' +
     '- BUY: tp_rate は現在レートより【高い】価格 / sl_rate は現在レートより【低い】価格\n' +
@@ -582,7 +586,8 @@ export async function newsStage1(params: {
     '- 【SL距離の厳守・自動拒否回避】SL距離は必ずtpSlMin以上tpSlMax以下でなければならない（この範囲外は値の大小を問わず例外なく即自動拒否）。USD/JPYの場合: 0.2≤SL距離≤1.2が必須。下限違反例: 0.19, 0.16, 0.08（0.2未満）/ 上限違反例: 1.21, 1.25, 1.38, 1.50, 2.00, 2.38, 2.40（1.2超はどんな値でも拒否）。安全な推奨範囲: 0.30〜0.80（迷ったら必ずこの範囲で設定すること）\n' +
     '- 【方向最終チェック・送信前必須】BUY: sl_rate < entry_rate でなければ即自動拒否（sl_rate ≥ entry_rateは全て拒否。例: entry=158.337でsl=158.5はBUYとして拒否）。SELL: sl_rate > entry_rate でなければ即自動拒否（sl_rate ≤ entry_rateは全て拒否）。送信前に必ずsl_rateとentry_rateの大小を数値で確認すること\n' +
     '- 確信度が低いニュースはtrade_signalsに含めない\n' +
-    '- attention:falseのニュースはimpact/affected_pairsを空にする';
+    '- attention:falseのニュースはimpact/affected_pairsを空にする\n' +
+    '- affected_pairs選定: 直接影響だけでなく間接影響も含める。地政学リスク・原油高・米金利急変はNikkei225/S&P500/NASDAQ/DAXにも影響する。為替と株式指数は同じニュースで同時に動くことが多い';
 
   const res = await fetchWithTimeout(`${GEMINI_ENDPOINT}?key=${apiKey}`, {
     method: 'POST',
@@ -665,7 +670,7 @@ export async function newsStage2(params: {
     '- REVERSE: 反対方向に変更推奨（既存ポジションがあれば決済）\n' +
     'B1シグナルの全pairに対してcorrectionsを返すこと。';
 
-  const res = await fetchWithTimeout(`${GEMINI_ENDPOINT}?key=${apiKey}`, {
+  const res = await fetchWithTimeout(`${GEMINI_FLASH_ENDPOINT}?key=${apiKey}`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
@@ -689,7 +694,7 @@ export async function newsStage2(params: {
 
   // トークン使用量記録
   if (db && data.usageMetadata) {
-    void insertTokenUsage(db, 'gemini-3.1-pro-preview', 'PATH_B2_GEMINI',
+    void insertTokenUsage(db, 'gemini-2.5-flash', 'PATH_B2_GEMINI',
       data.usageMetadata.promptTokenCount ?? 0,
       data.usageMetadata.candidatesTokenCount ?? 0);
   }
@@ -771,12 +776,12 @@ async function newsStage1GPT(params: {
   ].join('\n');
 
   const systemPrompt =
-    'あなたは為替FXトレーダーのAIアシスタントです。\n' +
+    'あなたはFX・株式指数・コモディティのマルチアセットトレーダーのAIアシスタントです。\n' +
     '以下のニュース一覧（日本語翻訳済み）と市場状況を分析し、次の2つのことを返してください。\n' +
     '1. 各ニュースの注目度評価（news_analysis）\n' +
     '2. ニュースに基づいた売買シグナル（trade_signals）\n\n' +
     '必ず以下のJSON形式のみで返答してください:\n' +
-    '{"news_analysis":[{"index":0,"attention":true,"impact":"円安要因（50文字以内）","affected_pairs":["USD/JPY"]}],' +
+    '{"news_analysis":[{"index":0,"attention":true,"impact":"円安・株安要因（50文字以内）","affected_pairs":["USD/JPY","Nikkei225"]}],' +
     '"trade_signals":[{"pair":"USD/JPY","decision":"BUY","tp_rate":160.50,"sl_rate":158.00,"reasoning":"日本語100文字以内"}]}\n\n' +
     'TP/SL方向の絶対ルール（違反はシステムが自動拒否）:\n' +
     '- BUY → tp_rate > 現在レート かつ sl_rate < 現在レート（上が利確・下が損切）\n' +
@@ -790,13 +795,14 @@ async function newsStage1GPT(params: {
     '- 【RR比設定手順・必須・自動拒否回避】①SL距離を決める（最低tpSlMin以上必須・未満は即自動拒否。USD/JPYなら最低0.2円・推奨0.3〜0.8円）②RR比を計算・検証【送信前必須チェック】RR=TP距離÷SL距離を計算し1.5以上を確認してから送信（有効なRR例: 1.50✅, 1.67✅, 2.00✅ / 無効で即自動拒否: 0.60❌, 0.83❌, 0.88❌, 0.93❌, 0.99❌, 1.2❌, 1.4❌（RR<1.0はTPがSLより近い致命的エラー）。TP距離の計算: SL=0.4円→TP最低0.6円・SL=0.3円→TP最低0.45円・SL=0.5円→TP最低0.75円）③絶対価格に変換【entryレートは小数点以下を含めそのまま使う・絶対に丸めない（entry=158.396を158.4にするのは禁止）】（BUY: sl=entry-SL距離【sl<entry厳守。sl≥entryは即自動拒否・距離ゼロも拒否】, tp=entry+TP距離【tp>entry厳守】 / SELL: sl=entry+SL距離【sl>entry厳守。sl≤entryは即自動拒否・距離ゼロも拒否】, tp=entry-TP距離【tp<entry厳守】）。例BUY entry=158.396→sl=158.096(=158.396-0.3), tp=158.896(=158.396+0.5)(RR=1.67✅)。例SELL entry=158.396→sl=158.696(=158.396+0.3), tp=157.896(=158.396-0.5)(RR=1.67✅)\n' +
     '- 【SL距離の厳守・自動拒否回避】SL距離は必ずtpSlMin以上tpSlMax以下でなければならない（この範囲外は値の大小を問わず例外なく即自動拒否）。USD/JPYの場合: 0.2≤SL距離≤1.2が必須。下限違反例: 0.19, 0.16, 0.08（0.2未満）/ 上限違反例: 1.21, 1.25, 1.38, 1.50, 2.00, 2.38, 2.40（1.2超はどんな値でも拒否）。安全な推奨範囲: 0.30〜0.80（迷ったら必ずこの範囲で設定すること）\n' +
     '- 【方向最終チェック・送信前必須】BUY: sl_rate < entry_rate でなければ即自動拒否（sl_rate ≥ entry_rateは全て拒否。例: entry=158.337でsl=158.5はBUYとして拒否）。SELL: sl_rate > entry_rate でなければ即自動拒否（sl_rate ≤ entry_rateは全て拒否）。送信前に必ずsl_rateとentry_rateの大小を数値で確認すること\n' +
-    '- 確信度が低いニュースはtrade_signalsに含めない';
+    '- 確信度が低いニュースはtrade_signalsに含めない\n' +
+    '- affected_pairs選定: 直接影響だけでなく間接影響も含める。地政学リスク・原油高・米金利急変はNikkei225/S&P500/NASDAQ/DAXにも影響する。為替と株式指数は同じニュースで同時に動くことが多い';
 
   const res = await fetchWithTimeout('https://api.openai.com/v1/chat/completions', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` },
     body: JSON.stringify({
-      model: 'gpt-4.1-mini',
+      model: 'gpt-4.1',
       messages: [
         { role: 'system', content: systemPrompt },
         { role: 'user', content: userMessage },
@@ -820,7 +826,7 @@ async function newsStage1GPT(params: {
 
   // トークン使用量記録（newsStage1GPTはdbをparams経由で受け取る）
   if ((params as any).db && data.usage) {
-    void insertTokenUsage((params as any).db, 'gpt-4.1-mini', 'PATH_B1_GPT',
+    void insertTokenUsage((params as any).db, 'gpt-4.1', 'PATH_B1_GPT',
       data.usage.prompt_tokens ?? 0,
       data.usage.completion_tokens ?? 0);
   }
@@ -862,10 +868,10 @@ async function newsStage1Claude(params: {
   ].join('\n');
 
   const systemPrompt =
-    'あなたは為替FXトレーダーのAIアシスタントです。\n' +
+    'あなたはFX・株式指数・コモディティのマルチアセットトレーダーのAIアシスタントです。\n' +
     'ニュース一覧（日本語翻訳済み）と市場状況を分析し、news_analysisとtrade_signalsを返してください。\n' +
     '必ずJSON形式で返答:\n' +
-    '{"news_analysis":[{"index":0,"attention":true,"impact":"50文字以内","affected_pairs":["USD/JPY"]}],' +
+    '{"news_analysis":[{"index":0,"attention":true,"impact":"円安・株安要因（50文字以内）","affected_pairs":["USD/JPY","Nikkei225"]}],' +
     '"trade_signals":[{"pair":"USD/JPY","decision":"BUY","tp_rate":160.50,"sl_rate":158.00,"reasoning":"100文字以内"}]}\n\n' +
     'TP/SL方向の絶対ルール（違反はシステムが自動拒否）:\n' +
     '- BUY: tp_rate は現在レートより【高い】価格 / sl_rate は現在レートより【低い】価格\n' +
@@ -876,7 +882,8 @@ async function newsStage1Claude(params: {
     '- tp_rate/sl_rateは各銘柄の現在レートを起点にした絶対価格で返すこと\n' +
     '- 【RR比設定手順・必須・自動拒否回避】①SL距離を決める（最低tpSlMin以上必須・未満は即自動拒否。USD/JPYなら最低0.2円・推奨0.3〜0.8円）②RR比を計算・検証【送信前必須チェック】RR=TP距離÷SL距離を計算し1.5以上を確認してから送信（有効なRR例: 1.50✅, 1.67✅, 2.00✅ / 無効で即自動拒否: 0.60❌, 0.83❌, 0.88❌, 0.93❌, 0.99❌, 1.2❌, 1.4❌（RR<1.0はTPがSLより近い致命的エラー）。TP距離の計算: SL=0.4円→TP最低0.6円・SL=0.3円→TP最低0.45円・SL=0.5円→TP最低0.75円）③絶対価格に変換【entryレートは小数点以下を含めそのまま使う・絶対に丸めない（entry=158.396を158.4にするのは禁止）】（BUY: sl=entry-SL距離【sl<entry厳守。sl≥entryは即自動拒否・距離ゼロも拒否】, tp=entry+TP距離【tp>entry厳守】 / SELL: sl=entry+SL距離【sl>entry厳守。sl≤entryは即自動拒否・距離ゼロも拒否】, tp=entry-TP距離【tp<entry厳守】）。例BUY entry=158.396→sl=158.096(=158.396-0.3), tp=158.896(=158.396+0.5)(RR=1.67✅)。例SELL entry=158.396→sl=158.696(=158.396+0.3), tp=157.896(=158.396-0.5)(RR=1.67✅)\n' +
     '- 【SL距離の厳守・自動拒否回避】SL距離は必ずtpSlMin以上tpSlMax以下でなければならない（この範囲外は値の大小を問わず例外なく即自動拒否）。USD/JPYの場合: 0.2≤SL距離≤1.2が必須。下限違反例: 0.19, 0.16, 0.08（0.2未満）/ 上限違反例: 1.21, 1.25, 1.38, 1.50, 2.00, 2.38, 2.40（1.2超はどんな値でも拒否）。安全な推奨範囲: 0.30〜0.80（迷ったら必ずこの範囲で設定すること）\n' +
-    '- 【方向最終チェック・送信前必須】BUY: sl_rate < entry_rate でなければ即自動拒否（sl_rate ≥ entry_rateは全て拒否。例: entry=158.337でsl=158.5はBUYとして拒否）。SELL: sl_rate > entry_rate でなければ即自動拒否（sl_rate ≤ entry_rateは全て拒否）。送信前に必ずsl_rateとentry_rateの大小を数値で確認すること';
+    '- 【方向最終チェック・送信前必須】BUY: sl_rate < entry_rate でなければ即自動拒否（sl_rate ≥ entry_rateは全て拒否。例: entry=158.337でsl=158.5はBUYとして拒否）。SELL: sl_rate > entry_rate でなければ即自動拒否（sl_rate ≤ entry_rateは全て拒否）。送信前に必ずsl_rateとentry_rateの大小を数値で確認すること\n' +
+    '- affected_pairs選定: 直接影響だけでなく間接影響も含める。地政学リスク・原油高・米金利急変はNikkei225/S&P500/NASDAQ/DAXにも影響する。為替と株式指数は同じニュースで同時に動くことが多い';
 
   const res = await fetchWithTimeout('https://api.anthropic.com/v1/messages', {
     method: 'POST',
@@ -886,7 +893,7 @@ async function newsStage1Claude(params: {
       'anthropic-version': '2023-06-01',
     },
     body: JSON.stringify({
-      model: 'claude-sonnet-4-20250514',
+      model: 'claude-sonnet-4-6',
       max_tokens: 2048,
       system: systemPrompt,
       messages: [{ role: 'user', content: userMessage }],
@@ -907,7 +914,7 @@ async function newsStage1Claude(params: {
 
   // トークン使用量記録
   if (params.db && data.usage) {
-    void insertTokenUsage(params.db, 'claude-sonnet-4-20250514', 'PATH_B1_CLAUDE',
+    void insertTokenUsage(params.db, 'claude-sonnet-4-6', 'PATH_B1_CLAUDE',
       data.usage.input_tokens ?? 0,
       data.usage.output_tokens ?? 0);
   }

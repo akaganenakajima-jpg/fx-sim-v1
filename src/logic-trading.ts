@@ -13,7 +13,7 @@ import {
 import { checkTpSlSanity } from './sanity';
 import { checkCorrelationGuard, getDrawdownLevel, updateHWM, getCurrentBalance, applyDrawdownControl } from './risk-manager';
 import { openPosition } from './position';
-import { insertDecision, insertSystemLog } from './db';
+import { insertDecision, insertSystemLog, insertIndicatorLog, getCacheValue, setCacheValue } from './db';
 import { INSTRUMENTS } from './instruments';
 import type { MarketIndicators } from './indicators';
 import { getBroker, type BrokerEnv } from './broker';
@@ -230,6 +230,25 @@ export async function runLogicDecisions(
       : techSignal.reason;
     summary.signals.push({ pair, signal: techSignal.signal, reason: signalReason });
 
+    // ── アクティビティフィード: RSI/ER変化ログ ──────────────────────
+    // 前回値と比較し有意な変化（RSI±5以上、ER±0.1以上）があれば indicator_logs に記録
+    if (techSignal.rsi != null) {
+      const prevRsiStr = await getCacheValue(db, `logic_prev_rsi_${pair}`);
+      const prevRsi = prevRsiStr ? parseFloat(prevRsiStr) : null;
+      if (prevRsi != null && Math.abs(techSignal.rsi - prevRsi) >= 5) {
+        void insertIndicatorLog(db, pair, 'RSI', prevRsi, techSignal.rsi, now);
+      }
+      void setCacheValue(db, `logic_prev_rsi_${pair}`, techSignal.rsi.toFixed(1));
+    }
+    if (techSignal.er != null) {
+      const prevErStr = await getCacheValue(db, `logic_prev_er_${pair}`);
+      const prevEr = prevErStr ? parseFloat(prevErStr) : null;
+      if (prevEr != null && Math.abs(techSignal.er - prevEr) >= 0.1) {
+        void insertIndicatorLog(db, pair, 'ER', prevEr, techSignal.er, now);
+      }
+      void setCacheValue(db, `logic_prev_er_${pair}`, techSignal.er.toFixed(3));
+    }
+
     if (techSignal.signal === 'NEUTRAL') {
       summary.skipped++;
       continue;
@@ -326,6 +345,20 @@ export async function runLogicDecisions(
         }
         summary.signals.find(s => s.pair === pair && s.signal !== 'SKIP')
           && (summary.signals[summary.signals.length - 1].reason += ` [${scaleReason}]`);
+      }
+    }
+
+    // ── Ph.6.5: tpSlMin下限クランプ（ATR過小時の対策）──────────────
+    {
+      const isBuySignal = techSignal.signal === 'BUY';
+      const rawSlDist = Math.abs(scaledSl - currentRate);
+      if (rawSlDist < instrument.tpSlMin && instrument.tpSlMin > 0) {
+        const rawTpDist = Math.abs(scaledTp - currentRate);
+        const rrRatio = rawSlDist > 0 ? rawTpDist / rawSlDist : 1.5;
+        const clampedSlDist = instrument.tpSlMin;
+        const clampedTpDist = clampedSlDist * Math.max(rrRatio, 1.5);
+        scaledSl = parseFloat((isBuySignal ? currentRate - clampedSlDist : currentRate + clampedSlDist).toFixed(5));
+        scaledTp = parseFloat((isBuySignal ? currentRate + clampedTpDist : currentRate - clampedTpDist).toFixed(5));
       }
     }
 
