@@ -564,7 +564,7 @@ export const JS = `
       }
     });
 
-    feedEl.innerHTML = items.map(function(n) {
+    feedEl.innerHTML = items.map(function(n, i) {
       // score優先: newsAnalysis.score → news_trigger_log.news_score（タイトルマッチ）
       var rawScore = n.score;
       if (rawScore == null || rawScore <= 0) {
@@ -578,20 +578,12 @@ export const JS = `
       var borderCls = score100 >= 90 ? 'nf-emergency' : score100 >= 70 ? 'nf-trend' : '';
       var scoreStr = hasScore ? ' ' + score100 + '/100' : '';
       var headline = n.title_ja || n.title || '';
-      // impact（AI判断テキスト）がタイトルと異なる場合のみ表示
-      var aiText = n.impact || '';
-      var descText = n.desc_ja || '';
-      // desc_jaがtitle_jaと同じならimpactを使う、impactもなければ非表示
-      if (!aiText && descText && descText !== headline) aiText = descText;
-      var aiHtml = aiText && aiText !== headline
-        ? '<div class="nf-ai"><span class="nf-ai-label">AI判断</span><span class="nf-ai-text">' + escHtml(aiText) + '</span></div>'
-        : '';
 
-      return '<div class="nf-item ' + borderCls + '" onclick="switchTab(\\'tab-news\\')">' +
+      // タップでニュースタブの該当記事にスクロール（AI判断はニュースタブで詳細表示するため省略）
+      return '<div class="nf-item ' + borderCls + '" onclick="switchTab(\\'tab-news\\',\\'news-imp-' + i + '\\')">' +
         '<div class="nf-header"><span class="nf-badge ' + badgeCls + '">' + badgeText + scoreStr + '</span>' +
         '<span class="nf-time">' + fmtTimeAgo(n.analyzed_at || '') + '</span></div>' +
         '<div class="nf-headline">' + escHtml(headline) + '</div>' +
-        aiHtml +
         '</div>';
     }).join('');
   }
@@ -949,7 +941,8 @@ export const JS = `
       tradeActionHtml = '<div class="nf-action"><span style="font-size:12px;color:var(--tertiary)">\\u2192</span>' +
         '<span class="nf-action-text" style="color:var(--tertiary)">影響なし · パラメーター変更なし</span></div>';
     }
-    return '<div class="nf-item ' + borderCls + '">' +
+    var cardId = idx != null ? ' id="news-' + idx + '"' : '';
+    return '<div class="nf-item ' + borderCls + '"' + cardId + '>' +
       '<div class="nf-header"><span class="nf-badge ' + badgeCls + '">' + badgeText + '</span><span class="nf-time">' + fmtTimeAgo(n.analyzed_at || n.pubDate || '') + '</span></div>' +
       '<div class="nf-headline">' + escHtml(n.title_ja || n.title || '') + '</div>' +
       (aiText ? '<div class="nf-ai"><span class="nf-ai-label">' + (isAttention ? 'AI判断' : 'AI') + '</span><span class="nf-ai-text">' + escHtml(aiText) + '</span></div>' : '') +
