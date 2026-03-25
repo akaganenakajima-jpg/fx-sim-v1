@@ -25,13 +25,14 @@ function calcPnl(
  *  RR ≥ 1.0 = 勝ち（リスクと同等以上のリターン）
  *  RR < 1.0 = 負け */
 export function calcRealizedRR(direction: string, entryRate: number, closeRate: number, slRate: number): number {
-  if (direction === 'BUY') {
-    const risk = entryRate - slRate;
-    return risk > 0 ? (closeRate - entryRate) / risk : 0;
-  } else {
-    const risk = slRate - entryRate;
-    return risk > 0 ? (entryRate - closeRate) / risk : 0;
-  }
+  // ABS(SL距離)を使用: トレイリングストップでSLがentry超えた場合も正しく計算
+  // 旧実装: risk = entry - sl (SL>entryで負 → 0返し or 負のRR) ← 両方バグ
+  // 新実装: |entry - sl| で常に正の分母を保証
+  const risk = Math.abs(entryRate - slRate);
+  if (risk < 1e-9) return 0;
+  return direction === 'BUY'
+    ? (closeRate - entryRate) / risk
+    : (entryRate - closeRate) / risk;
 }
 
 function shouldTriggerTP(pos: Position, currentRate: number): boolean {
