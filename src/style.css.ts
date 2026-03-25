@@ -656,6 +656,8 @@ body.drawer-open .tabs, body.sheet-open .tabs { transform: translateZ(0) transla
 .feed-tag-trend-up{background:rgba(48,209,88,0.15);color:#30D158}
 .feed-tag-trend-dn{background:rgba(255,69,58,0.15);color:#FF453A}
 .feed-tag-param{background:rgba(175,130,255,0.18);color:#AF82FF}
+.feed-tag-emergency{background:rgba(255,69,58,0.25);color:#FF453A;font-weight:700}
+.feed-tag-trend-inf{background:rgba(255,214,10,0.18);color:#FFD60A}
 .feed-pair{font-weight:600;color:var(--text);white-space:nowrap;flex-shrink:0}
 .feed-act{font-weight:700;white-space:nowrap;margin-left:auto;flex-shrink:0}
 .feed-act-buy{color:#0A84FF}

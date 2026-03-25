@@ -215,6 +215,14 @@ export interface StatusResponse {
   todaySellCount: number;
   /** アクティビティフィード: 直近24時間の指標変化ログ（RSI/ER変化） */
   recentIndicatorLogs: IndicatorLog[];
+  /** アクティビティフィード: ニューストリガー発火ログ */
+  recentNewsTriggers: Array<{
+    trigger_type: string;
+    news_title: string;
+    news_score: number;
+    affected_pairs: string | null;
+    created_at: string;
+  }>;
   /** Ph.6: 因果サマリー — ナラティブ+キードライバー+ヒートマップ */
   causalSummary: {
     narrative: string;
@@ -307,7 +315,7 @@ export interface StatusResponse {
 }
 
 export async function getApiStatus(db: D1Database, tradingEnv?: { TRADING_ENABLED?: string; OANDA_LIVE?: string; RISK_MAX_DAILY_LOSS?: string; RISK_MAX_LIVE_POSITIONS?: string; RISK_MAX_LOT_SIZE?: string; RISK_ANOMALY_THRESHOLD?: string }): Promise<StatusResponse> {
-  const [rateRow, openPositions, perf, latest, recent, sysRow, sparkRaw, perfByPairRaw, recentClosesRaw, acceptedNewsRaw, sysLogsRaw, logStatsRaw, instrScoresRaw, rrSummaryRow, slPatternsRow, cronTimingsRow, todayDecisionCountRow, paramReviewLogRaw, indicatorLogsRaw, tradeHistoryRaw] =
+  const [rateRow, openPositions, perf, latest, recent, sysRow, sparkRaw, perfByPairRaw, recentClosesRaw, acceptedNewsRaw, sysLogsRaw, logStatsRaw, instrScoresRaw, rrSummaryRow, slPatternsRow, cronTimingsRow, todayDecisionCountRow, paramReviewLogRaw, indicatorLogsRaw, newsTriggerLogRaw, tradeHistoryRaw] =
     await Promise.all([
       db
         .prepare("SELECT value FROM market_cache WHERE key = 'prev_rate_USD/JPY'")
@@ -451,6 +459,15 @@ export async function getApiStatus(db: D1Database, tradingEnv?: { TRADING_ENABLE
         )
         .all<IndicatorLog>()
         .catch(() => ({ results: [] as IndicatorLog[] })),
+
+      // アクティビティフィード: ニューストリガー発火ログ（直近30件）
+      db
+        .prepare(
+          `SELECT trigger_type, news_title, news_score, affected_pairs, created_at
+           FROM news_trigger_log ORDER BY id DESC LIMIT 30`
+        )
+        .all<{ trigger_type: string; news_title: string; news_score: number; affected_pairs: string | null; created_at: string }>()
+        .catch(() => ({ results: [] as Array<{ trigger_type: string; news_title: string; news_score: number; affected_pairs: string | null; created_at: string }> })),
 
       // 取引履歴: 直近50件クローズ済みポジション + 最近接のエントリー根拠
       db
@@ -754,6 +771,7 @@ export async function getApiStatus(db: D1Database, tradingEnv?: { TRADING_ENABLE
       : null,
     paramHistory: buildParamHistory(paramReviewLogRaw as unknown as { results: Array<{ pair: string; param_version: number; reason: string; win_rate: number | null; actual_rr: number | null; profit_factor: number | null; trades_eval: number | null; created_at: string }> }),
     recentIndicatorLogs: (indicatorLogsRaw as unknown as { results: IndicatorLog[] }).results ?? [],
+    recentNewsTriggers: (newsTriggerLogRaw as unknown as { results: StatusResponse['recentNewsTriggers'] }).results ?? [],
     tradeHistory: (tradeHistoryRaw as unknown as { results: StatusResponse['tradeHistory'] }).results ?? [],
   };
 }

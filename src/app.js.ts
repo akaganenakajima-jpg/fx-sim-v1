@@ -1612,9 +1612,12 @@ export const JS = `
     var paramItems = (data.paramHistory || [])
       .map(function(p) { return Object.assign({}, p, { _type: 'param', created_at: p.time || p.created_at }); });
 
-    // パラメーター調整と売買判定は重要イベント → 全件保証（最終sliceで切らない）
+    var newsTriItems = (data.recentNewsTriggers || [])
+      .map(function(nt) { return Object.assign({}, nt, { _type: 'news_trigger' }); });
+
+    // パラメーター調整・売買判定・ニューストリガーは重要イベント → 全件保証（最終sliceで切らない）
     // indicator_logsは大量発生するため、残り枠に割り当て
-    var importantItems = decItems.concat(paramItems);
+    var importantItems = decItems.concat(paramItems).concat(newsTriItems);
     var maxTotal = Math.max(60, importantItems.length);
     var indSlots = Math.max(0, maxTotal - importantItems.length);
     var trimmedInd = indItems
@@ -1654,6 +1657,28 @@ export const JS = `
           + '<div class="feed-row2">'
             + '<span class="feed-time">' + escHtml(timeStr) + '</span>'
             + '<span class="feed-rate">' + escHtml(rateStr) + '</span>'
+          + '</div>'
+          + '</div>';
+      } else if (item._type === 'news_trigger') {
+        // ニューストリガー発火
+        var nt = item;
+        var isEmg = nt.trigger_type === 'EMERGENCY';
+        var ntTagCls = isEmg ? 'feed-tag-emergency' : 'feed-tag-trend-inf';
+        var ntTagTxt = isEmg ? '緊急発火' : 'トレンド';
+        var ntTimeStr = fmtTime(nt.created_at);
+        var ntTitle = (nt.news_title || '').slice(0, 35);
+        if ((nt.news_title || '').length > 35) ntTitle += '…';
+        var ntPairs = nt.affected_pairs || '全銘柄';
+        var ntScore = nt.news_score != null ? nt.news_score.toFixed(1) : '';
+        return '<div class="feed-item">'
+          + '<div class="feed-row1">'
+            + '<span class="feed-tag ' + ntTagCls + '">' + ntTagTxt + '</span>'
+            + '<span class="feed-pair" style="font-size:12px">' + escHtml(ntPairs) + '</span>'
+            + '<span class="feed-act" style="color:var(--tertiary);font-size:11px">sc ' + ntScore + '</span>'
+          + '</div>'
+          + '<div class="feed-row2">'
+            + '<span class="feed-time">' + escHtml(ntTimeStr) + '</span>'
+            + '<span class="feed-note">' + escHtml(ntTitle) + '</span>'
           + '</div>'
           + '</div>';
       } else if (item._type === 'param') {
