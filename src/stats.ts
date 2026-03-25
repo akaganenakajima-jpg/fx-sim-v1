@@ -79,22 +79,27 @@ export function maxDrawdown(pnls: number[], initialBalance = 10000): {
 export function rollingReturns(
   pnls: number[],
   windows: number[],
-  initialBalance = 10000
+  initialBalance = 10000,
+  /** RR≥1.0 基準の勝敗配列（pnls と同じ長さ）。省略時は pnl > 0 で判定（後方互換） */
+  rrOutcomes?: boolean[],
 ): Record<number, { roi: number; sharpe: number; winRate: number; count: number }> {
   const result: Record<number, { roi: number; sharpe: number; winRate: number; count: number }> = {};
   for (const w of windows) {
     const slice = pnls.slice(-w);
+    // RR≥1.0 基準の勝率を使用（プロジェクト統一定義）
+    const outcomeSlice = rrOutcomes ? rrOutcomes.slice(-w) : null;
     if (slice.length === 0) {
       result[w] = { roi: 0, sharpe: 0, winRate: 0, count: 0 };
       continue;
     }
     const sum = slice.reduce((s, v) => s + v, 0);
-    const wins = slice.filter(v => v > 0).length;
+    const wins = outcomeSlice
+      ? outcomeSlice.filter(v => v).length
+      : slice.filter(v => v > 0).length;
     const sh = sharpeWithSE(slice);
     result[w] = {
       roi: (sum / initialBalance) * 100,
       sharpe: sh.sharpe,
-      // NOTE: wins は呼び出し元で realized_rr >= 1.0 基準でカウントすること（RR勝率統一）
       winRate: slice.length > 0 ? (wins / slice.length) * 100 : 0,
       count: slice.length,
     };

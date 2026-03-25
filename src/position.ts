@@ -277,11 +277,11 @@ export async function checkAndCloseAllPositions(
  */
 export async function getConsecutiveLosses(db: D1Database): Promise<number> {
   const recent = await db
-    .prepare(`SELECT pnl FROM positions WHERE status = 'CLOSED' ORDER BY closed_at DESC LIMIT 10`)
-    .all<{ pnl: number }>();
+    .prepare(`SELECT pnl, realized_rr FROM positions WHERE status = 'CLOSED' ORDER BY closed_at DESC LIMIT 10`)
+    .all<{ pnl: number; realized_rr: number | null }>();
   let streak = 0;
   for (const row of (recent.results ?? [])) {
-    if (row.pnl <= 0) streak++;
+    if ((row.realized_rr ?? 0) < 1.0) streak++;
     else break;
   }
   return streak;
@@ -342,9 +342,9 @@ export async function openPosition(
   const perfRow = await db
     .prepare(`SELECT
       COUNT(*) as total,
-      COALESCE(SUM(CASE WHEN pnl > 0 THEN 1 ELSE 0 END), 0) as wins,
-      COALESCE(AVG(CASE WHEN pnl > 0 THEN pnl ELSE NULL END), 0) as avgWin,
-      COALESCE(AVG(CASE WHEN pnl <= 0 THEN ABS(pnl) ELSE NULL END), 1) as avgLoss
+      COALESCE(SUM(CASE WHEN realized_rr >= 1.0 THEN 1 ELSE 0 END), 0) as wins,
+      COALESCE(AVG(CASE WHEN realized_rr >= 1.0 THEN pnl ELSE NULL END), 0) as avgWin,
+      COALESCE(AVG(CASE WHEN realized_rr IS NULL OR realized_rr < 1.0 THEN ABS(pnl) ELSE NULL END), 1) as avgLoss
       FROM positions WHERE pair = ? AND status = 'CLOSED'`)
     .bind(pair)
     .first<{ total: number; wins: number; avgWin: number; avgLoss: number }>();

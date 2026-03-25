@@ -78,21 +78,22 @@ async function calcTradeStats(db: D1Database, pair: string): Promise<TradeStats>
   // 直近50件の決済済みポジション
   const trades = await db
     .prepare(
-      `SELECT direction, pnl, close_reason, entry_rate, close_rate
+      `SELECT direction, pnl, close_reason, entry_rate, close_rate, realized_rr
        FROM positions
        WHERE pair = ? AND status = 'CLOSED' AND pnl IS NOT NULL
        ORDER BY closed_at DESC LIMIT 50`
     )
     .bind(pair)
-    .all<{ direction: string; pnl: number; close_reason: string; entry_rate: number; close_rate: number }>();
+    .all<{ direction: string; pnl: number; close_reason: string; entry_rate: number; close_rate: number; realized_rr: number | null }>();
 
   const rows = trades.results ?? [];
   if (rows.length === 0) {
     return { winRate: 0, actualRr: 0, profitFactor: 0, maxLossStreak: 0, totalTrades: 0, recentTrades: [] };
   }
 
-  const wins  = rows.filter(r => r.pnl > 0);
-  const losses = rows.filter(r => r.pnl <= 0);
+  // RR≥1.0 = 勝ち（プロジェクト統一定義）
+  const wins  = rows.filter(r => (r.realized_rr ?? 0) >= 1.0);
+  const losses = rows.filter(r => (r.realized_rr ?? 0) < 1.0);
 
   const winRate = wins.length / rows.length;
   const avgWin  = wins.length > 0 ? wins.reduce((s, r) => s + r.pnl, 0) / wins.length : 0;
@@ -105,7 +106,7 @@ async function calcTradeStats(db: D1Database, pair: string): Promise<TradeStats>
   // 最大連敗
   let maxStreak = 0, streak = 0;
   for (const r of rows) {
-    if (r.pnl <= 0) { streak++; maxStreak = Math.max(maxStreak, streak); }
+    if ((r.realized_rr ?? 0) < 1.0) { streak++; maxStreak = Math.max(maxStreak, streak); }
     else streak = 0;
   }
 
@@ -198,7 +199,7 @@ function buildReviewPrompt(
     `  er_upper_limit: ${params.er_upper_limit}（mean_reversion時のER上限）`,
     ``,
     `【直近${stats.totalTrades}件の実績】`,
-    `  勝率: ${(stats.winRate * 100).toFixed(1)}%`,
+    `  勝率(RR≥1.0): ${(stats.winRate * 100).toFixed(1)}%`,
     `  実績RR（平均利益÷平均損失）: ${stats.actualRr.toFixed(2)}`,
     `  Profit Factor: ${stats.profitFactor.toFixed(2)}`,
     `  最大連敗: ${stats.maxLossStreak}`,
@@ -208,7 +209,7 @@ function buildReviewPrompt(
     ``,
     `【改善指針】`,
     `  - 実績RR < 2.0 → TPを広げる（atr_tp_multiplier増加）またはSLを狭める（atr_sl_multiplier減少）`,
-    `  - 勝率 < 35% → RSI閾値を厳格化（oversoldを下げる / overboughtを上げる）`,
+    `  - 勝率(RR≥1.0) < 35% → RSI閾値を厳格化（oversoldを下げる / overboughtを上げる）`,
     `  - 連敗多発 → ADX閾値を上げてトレンド弱い場面をフィルター`,
     `  - VIX警戒時に損失多発 → vix_tp_scale/vix_sl_scaleを縮小（例: 0.8）`,
     `  - マクロストレス時に大損失 → macro_sl_scaleを縮小（例: 0.85）でSLを狭める`,

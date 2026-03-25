@@ -576,7 +576,7 @@ export async function getApiStatus(db: D1Database, tradingEnv?: { TRADING_ENABLE
         kellyFraction: kellyFraction(wins / totalClosed, avgRR),
         markov: markovTransition(outcomes),
         drawdown: maxDrawdown(allPnls),
-        rolling: rollingReturns(allPnls, [7, 14, 30]),
+        rolling: rollingReturns(allPnls, [7, 14, 30], 10000, outcomes),
         volatility: pnlVolatility(allPnls),
         profitFactor: profitFactor(allPnls),
         randomBaseline: allPnls.length >= 10 ? randomBaselineComparison(allPnls) : null,

@@ -1099,7 +1099,7 @@ async function runDailyTasks(env: Env, _now: Date): Promise<void> {
     const balance = 10000 + (dailyPerf?.totalPnl ?? 0);
     const wr = dailyPerf && dailyPerf.total > 0 ? (dailyPerf.wins / dailyPerf.total * 100).toFixed(1) : '0';
     await insertSystemLog(env.DB, 'INFO', 'DAILY',
-      `日次サマリー: ¥${Math.round(balance).toLocaleString()} ROI ${((balance - 10000) / 100).toFixed(1)}% 勝率${wr}% ${dailyPerf?.total ?? 0}件 OP${openCount}`);
+      `日次サマリー: ¥${Math.round(balance).toLocaleString()} ROI ${((balance - 10000) / 100).toFixed(1)}% 勝率(RR≥1.0)${wr}% ${dailyPerf?.total ?? 0}件 OP${openCount}`);
   } catch {}
 
   // 銘柄スコア更新
@@ -1234,8 +1234,8 @@ async function updateInstrumentScores(db: D1Database): Promise<void> {
     `SELECT pair,
        COUNT(*) AS total_trades,
        COALESCE(SUM(CASE WHEN realized_rr >= 1.0 THEN 1 ELSE 0 END), 0) AS wins,
-       COALESCE(SUM(CASE WHEN pnl > 0 THEN pnl ELSE 0 END), 0) AS total_win_pnl,
-       COALESCE(SUM(CASE WHEN pnl <= 0 THEN ABS(pnl) ELSE 0 END), 0) AS total_loss_pnl,
+       COALESCE(SUM(CASE WHEN pnl > 0 THEN pnl ELSE 0 END), 0) AS total_win_pnl,  -- 金額ベース（勝敗判定ではない）
+       COALESCE(SUM(CASE WHEN pnl <= 0 THEN ABS(pnl) ELSE 0 END), 0) AS total_loss_pnl,  -- 金額ベース（勝敗判定ではない）
        COALESCE(AVG(pnl), 0) AS avg_pnl,
        COALESCE(SUM(pnl), 0) AS total_pnl
      FROM positions WHERE status = 'CLOSED'
