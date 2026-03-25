@@ -421,7 +421,7 @@ export const JS = `
       var st = data.statistics;
       var ar = st && st.avgRR;
       avgRrEl.textContent = ar != null ? ar.toFixed(2) : '—';
-      if (ar != null) avgRrEl.style.color = ar >= 1.0 ? 'var(--green)' : 'var(--red)';
+      if (ar != null) avgRrEl.style.color = ar >= 2.0 ? 'var(--green)' : ar >= 1.0 ? 'var(--blue)' : 'var(--red)';
     }
 
     var wrEl = el('m-winrate');
