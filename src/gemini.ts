@@ -579,8 +579,8 @@ export async function newsStage1(params: {
     '- 例(USD/JPY SELL, rate=158.37): tp_rate=156.00(下), sl_rate=160.50(上) ← 大きい値でもSELLのSLは必ずentry(158.37)より上\n' +
     '- 例(Gold BUY, rate=4550): tp_rate=4650(上), sl_rate=4490(下) ← BUYのSLはentry(4550)より必ず下。Goldは現在4000-5000台(2000-3000台の旧価格は使用禁止。SL距離最低$15)\n' +
     '- 例(Gold SELL, rate=4545): tp_rate=4500(下), sl_rate=4575(上) ← SELLのSLはentry(4545)より必ず上。4500<4545<4575の順序を数値で確認\n' +
-    '- 例(CrudeOil BUY, rate=69.50): tp_rate=70.85(上), sl_rate=68.90(下) ← BUYのSLはentry(69.50)より必ず下。SL距離=$0.60, TP距離=$1.35\n' +
-    '- 例(CrudeOil SELL, rate=69.50): tp_rate=68.15(下), sl_rate=70.10(上) ← SELLのSLはentry(69.50)より必ず上。68.15<69.50<70.10の順序を数値で確認\n' +
+    '- 例(CrudeOil BUY, rate=89.00): tp_rate=90.40(上), sl_rate=88.40(下) ← BUYのSLはentry(89.00)より必ず下。88.40<89.00<90.40の順序を数値で確認\n' +
+    '- 例(CrudeOil SELL, rate=89.00): tp_rate=87.60(下), sl_rate=89.60(上) ← SELLのSLはentry(89.00)より必ず上。87.60<89.00<89.60の順序を数値で確認\n' +
     '- 例(Silver BUY, rate=73): tp_rate=76(上), sl_rate=70(下) ← Silverは現在70-80台(20-40台の旧価格は使用禁止)\n' +
     '- 例(GBP/USD BUY, rate=1.3376): tp_rate=1.3476(上), sl_rate=1.3226(下)\n' +
     '- 例(EUR/USD BUY, rate=1.16): tp_rate=1.17(上), sl_rate=1.15(下) ← EUR/USDは現在1.10-1.20台(1.0-1.09台の旧価格は使用禁止)\n' +
@@ -593,6 +593,7 @@ export async function newsStage1(params: {
     '- 【SL距離の厳守・自動拒否回避】SL距離は必ずtpSlMin以上tpSlMax以下でなければならない（この範囲外は値の大小を問わず例外なく即自動拒否）。USD/JPYの場合: 0.2≤SL距離≤1.2が必須。下限違反例: 0.19, 0.16, 0.08（0.2未満）/ 上限違反例: 1.21, 1.25, 1.38, 1.50, 2.00, 2.38, 2.40（1.2超はどんな値でも拒否）。安全な推奨範囲: 0.30〜0.80（迷ったら必ずこの範囲で設定すること）\n' +
     '- 【方向最終チェック・送信前必須】BUY: sl_rate < entry_rate でなければ即自動拒否（sl_rate ≥ entry_rateは全て拒否。例: entry=158.337でsl=158.5はBUYとして拒否）。SELL: sl_rate > entry_rate でなければ即自動拒否（sl_rate ≤ entry_rateは全て拒否）。送信前に必ずsl_rateとentry_rateの大小を数値で確認すること\n' +
     '- 確信度が低いニュースはtrade_signalsに含めない\n' +
+    '- 【送信前絶対検証・省略禁止】各シグナルを送信する前に必ず: (1)BUYなら tp_rate > entry_rate を確認 / (2)SELLなら tp_rate < entry_rate を確認 / 条件を満たさないシグナルは送信せず削除する\n' +
     '- attention:falseのニュースはimpact/affected_pairsを空にする\n' +
     '- affected_pairs選定: 直接影響だけでなく間接影響も含める。地政学リスク・原油高・米金利急変はNikkei225/S&P500/NASDAQ/DAXにも影響する。為替と株式指数は同じニュースで同時に動くことが多い';
 
@@ -798,8 +799,8 @@ async function newsStage1GPT(params: {
     '- 例(USD/JPY SELL, rate=158.37): tp_rate=156.00(下), sl_rate=160.50(上) ← 大きい値でもSELLのSLは必ずentry(158.37)より上\n' +
     '- 例(Gold BUY, rate=4550): tp_rate=4650(上), sl_rate=4490(下) ← BUYのSLはentry(4550)より必ず下。Goldは現在4000-5000台(2000-3000台の旧価格は使用禁止。SL距離最低$15)\n' +
     '- 例(Gold SELL, rate=4545): tp_rate=4500(下), sl_rate=4575(上) ← SELLのSLはentry(4545)より必ず上。4500<4545<4575の順序を数値で確認\n' +
-    '- 例(CrudeOil BUY, rate=69.50): tp_rate=70.85(上), sl_rate=68.90(下) ← BUYのSLはentry(69.50)より必ず下。SL距離=$0.60, TP距離=$1.35\n' +
-    '- 例(CrudeOil SELL, rate=69.50): tp_rate=68.15(下), sl_rate=70.10(上) ← SELLのSLはentry(69.50)より必ず上。68.15<69.50<70.10の順序を数値で確認\n' +
+    '- 例(CrudeOil BUY, rate=89.00): tp_rate=90.40(上), sl_rate=88.40(下) ← BUYのSLはentry(89.00)より必ず下。88.40<89.00<90.40の順序を数値で確認\n' +
+    '- 例(CrudeOil SELL, rate=89.00): tp_rate=87.60(下), sl_rate=89.60(上) ← SELLのSLはentry(89.00)より必ず上。87.60<89.00<89.60の順序を数値で確認\n' +
     '- 例(Silver BUY, rate=73): tp_rate=76(上), sl_rate=70(下) ← Silverは現在70-80台(20-40台の旧価格は使用禁止)\n' +
     '- 例(GBP/USD BUY, rate=1.3376): tp_rate=1.3476(上), sl_rate=1.3226(下)\n' +
     '- 例(EUR/USD BUY, rate=1.16): tp_rate=1.17(上), sl_rate=1.15(下) ← EUR/USDは現在1.10-1.20台(1.0-1.09台の旧価格は使用禁止)\n' +
@@ -895,8 +896,8 @@ async function newsStage1Claude(params: {
     '- 例(USD/JPY SELL, rate=158.37): tp_rate=156.00(下), sl_rate=160.50(上) ← 大きい値でもSELLのSLは必ずentry(158.37)より上\n' +
     '- 例(Gold BUY, rate=4550): tp_rate=4650(上), sl_rate=4490(下) ← BUYのSLはentry(4550)より必ず下。Goldは現在4000-5000台(2000-3000台の旧価格は使用禁止。SL距離最低$15)\n' +
     '- 例(Gold SELL, rate=4545): tp_rate=4500(下), sl_rate=4575(上) ← SELLのSLはentry(4545)より必ず上。4500<4545<4575の順序を数値で確認\n' +
-    '- 例(CrudeOil BUY, rate=69.50): tp_rate=70.85(上), sl_rate=68.90(下) ← BUYのSLはentry(69.50)より必ず下。SL距離=$0.60, TP距離=$1.35\n' +
-    '- 例(CrudeOil SELL, rate=69.50): tp_rate=68.15(下), sl_rate=70.10(上) ← SELLのSLはentry(69.50)より必ず上。68.15<69.50<70.10の順序を数値で確認\n' +
+    '- 例(CrudeOil BUY, rate=89.00): tp_rate=90.40(上), sl_rate=88.40(下) ← BUYのSLはentry(89.00)より必ず下。88.40<89.00<90.40の順序を数値で確認\n' +
+    '- 例(CrudeOil SELL, rate=89.00): tp_rate=87.60(下), sl_rate=89.60(上) ← SELLのSLはentry(89.00)より必ず上。87.60<89.00<89.60の順序を数値で確認\n' +
     '- 例(Silver BUY, rate=73): tp_rate=76(上), sl_rate=70(下) ← Silverは現在70-80台(20-40台の旧価格は使用禁止)\n' +
     '- 例(GBP/USD BUY, rate=1.3376): tp_rate=1.3476(上), sl_rate=1.3226(下)\n' +
     '- 例(EUR/USD BUY, rate=1.16): tp_rate=1.17(上), sl_rate=1.15(下) ← EUR/USDは現在1.10-1.20台(1.0-1.09台の旧価格は使用禁止)\n' +
