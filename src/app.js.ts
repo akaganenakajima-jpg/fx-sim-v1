@@ -570,7 +570,9 @@ export const JS = `
       if (val > 0) return 'rgba(48,209,88,' + Math.min(Math.abs(val) / 500, 0.6) + ')';
       if (val < 0) return 'rgba(255,69,58,' + Math.min(Math.abs(val) / 500, 0.6) + ')';
     }
-    if (key === 'vix_effect' && val > 0) return 'rgba(255,159,10,' + Math.min(val, 0.6) + ')';
+    // vix_effectは0.65以上で警告オレンジ、0.4-0.65は薄いオレンジ、0.4未満は無色（情報ノイズを減らす）
+    if (key === 'vix_effect' && val >= 0.65) return 'rgba(255,159,10,' + Math.min(val, 0.6) + ')';
+    if (key === 'vix_effect' && val >= 0.4) return 'rgba(255,159,10,0.18)';
     if (key === 'param_changed' && val > 0) return 'rgba(10,132,255,0.3)';
     if (key === 'news_impact' && val > 0) return 'rgba(255,69,58,' + Math.min(val / 100 * 0.6, 0.6) + ')';
     return 'transparent';
@@ -789,10 +791,22 @@ export const JS = `
     var impacted = el('news-feed-impacted');
     if (impacted) {
       var opens = data.openPositions || [];
+      var recentDecs = (data.recentDecisions || []).filter(function(d) { return d.decision === 'BUY' || d.decision === 'SELL'; });
       var impactedItems = analysis.filter(function(n) { return n.attention; }).map(function(n) {
-        // affected_pairsと一致するOPENポジションをlinked_tradeとして付与
+        var pairs = n.affected_pairs || [];
+        // recentDecisionsからaffected_pairsに一致する取引を取得（pairsが空の場合はマッチしない）
+        var matched = pairs.length > 0 ? recentDecs.filter(function(d) {
+          return pairs.indexOf(d.pair) >= 0;
+        }).slice(0, 3) : [];
+        if (matched.length > 0) {
+          return Object.assign({}, n, {
+            trade_decisions: matched.map(function(d) {
+              return { pair: d.pair, decision: d.decision, reasoning: d.reasoning, rate: d.rate, tp_rate: d.tp_rate, sl_rate: d.sl_rate, created_at: d.created_at };
+            })
+          });
+        }
+        // フォールバック: OPENポジションにリンク
         if (!n.linked_trade && opens.length > 0) {
-          var pairs = n.affected_pairs || [];
           for (var pi = 0; pi < opens.length; pi++) {
             if (pairs.length === 0 || pairs.indexOf(opens[pi].pair) >= 0) {
               var op = opens[pi];
@@ -896,10 +910,14 @@ export const JS = `
         var dec = td.decision || '';
         var decColor = dec === 'BUY' ? 'var(--green)' : dec === 'SELL' ? 'var(--red)' : 'var(--secondary)';
         var decLabel = dec === 'BUY' ? '買い' : dec === 'SELL' ? '売り' : 'HOLD';
-        return '<div style="display:flex;align-items:baseline;gap:6px;margin-bottom:2px">' +
-          '<span style="font-size:11px;color:var(--tertiary);flex-shrink:0">AI判断</span>' +
+        var timeStr = td.created_at ? fmtTimeAgo(td.created_at) : '';
+        var rateStr = td.rate ? fmtPrice(td.pair, td.rate) : '';
+        return '<div style="display:flex;align-items:center;gap:6px;margin-bottom:4px;flex-wrap:wrap">' +
+          (timeStr ? '<span style="font-size:11px;color:var(--tertiary);flex-shrink:0">' + timeStr + '</span>' : '') +
           '<b style="font-size:13px;color:' + decColor + '">' + escHtml(td.pair) + ' ' + decLabel + '</b>' +
-          (td.reasoning ? '<span style="font-size:11px;color:var(--tertiary)">— ' + escHtml(td.reasoning) + '</span>' : '') +
+          (rateStr ? '<span style="font-size:12px;color:var(--secondary)">' + rateStr + '</span>' : '') +
+          (td.tp_rate ? '<span style="font-size:11px;color:var(--tertiary)">TP ' + fmtPrice(td.pair, td.tp_rate) + '</span>' : '') +
+          (td.reasoning ? '<span style="font-size:11px;color:var(--tertiary);width:100%">— ' + escHtml(td.reasoning.substring(0, 50)) + '</span>' : '') +
         '</div>';
       }).join('');
       tradeActionHtml = '<div style="margin-top:6px;padding:8px 12px;background:rgba(255,255,255,0.04);border-radius:var(--rs)">' + tdRows + '</div>';
@@ -1017,12 +1035,14 @@ export const JS = `
       if (!t) return;
       var ratio = Math.max(0, Math.min(1, (t - tMin) / tRange));
       var mx = Math.round(pad + ratio * (w - pad * 2));
-      if (usedX[mx]) mx = mx + 8; // 重複回避
+      while (usedX[mx] || usedX[mx + 1] || usedX[mx - 1]) mx = mx + 16; // 重複回避（ラベル幅分確保）
       usedX[mx] = true;
       var col = markerColors[mi % markerColors.length];
-      var label = mi === 0 ? 'v2開始' : 'PR#' + (mi + 1);
+      var label = mi === 0 ? 'v2' : 'PR#' + (mi + 1);
+      // 偶数マーカー=上部(y=9)、奇数マーカー=下部(y=h-2)で交互配置し重なりを防ぐ
+      var labelY = (mi % 2 === 0) ? 9 : (h - 2);
       markerHtml += '<line x1="' + mx + '" y1="0" x2="' + mx + '" y2="' + h + '" stroke="' + col + '" stroke-width="1" stroke-dasharray="3"/>';
-      markerHtml += '<text x="' + (mx + 2) + '" y="10" fill="' + col + '" font-size="8">' + label + '</text>';
+      markerHtml += '<text x="' + (mx + 2) + '" y="' + labelY + '" fill="' + col + '" font-size="9">' + label + '</text>';
     });
 
     svg.innerHTML = '<polyline points="' + pts + '" fill="none" stroke="' + color + '" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>' + markerHtml;

@@ -643,8 +643,8 @@ body.drawer-open .tabs, body.sheet-open .tabs { transform: translateZ(0) transla
 /* ═══ アクティビティフィード ═══ */
 .feed-item{display:flex;align-items:center;gap:6px;padding:8px 16px;border-bottom:1px solid rgba(255,255,255,0.04);font-size:12px;flex-wrap:nowrap;overflow:hidden}
 .feed-item-ind{opacity:0.8}
-.feed-tag{flex-shrink:0;padding:2px 6px;border-radius:4px;font-size:10px;font-weight:600;letter-spacing:0.2px}
-.feed-tag-buy{background:rgba(10,132,255,0.18);color:#0A84FF}
+.feed-tag{flex-shrink:0;padding:2px 6px;border-radius:4px;font-size:11px;font-weight:600;letter-spacing:0.2px}
+.feed-tag-buy{background:rgba(48,209,88,0.18);color:#30D158}
 .feed-tag-sell{background:rgba(255,69,58,0.18);color:#FF453A}
 .feed-tag-loss{background:rgba(255,159,10,0.18);color:#FF9F0A}
 .feed-tag-trend-up{background:rgba(48,209,88,0.15);color:#30D158}
@@ -654,7 +654,7 @@ body.drawer-open .tabs, body.sheet-open .tabs { transform: translateZ(0) transla
 .feed-rate{flex-shrink:0;font-variant-numeric:tabular-nums;color:var(--text)}
 .feed-note{flex:1;color:var(--secondary);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .feed-act{flex-shrink:0;font-weight:700}
-.feed-act-buy{color:#0A84FF}
+.feed-act-buy{color:#30D158}
 .feed-act-sell{color:#FF453A}
 .feed-act-hold{color:var(--tertiary)}
 `;
