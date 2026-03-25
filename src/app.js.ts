@@ -578,13 +578,20 @@ export const JS = `
       var borderCls = score100 >= 90 ? 'nf-emergency' : score100 >= 70 ? 'nf-trend' : '';
       var scoreStr = hasScore ? ' ' + score100 + '/100' : '';
       var headline = n.title_ja || n.title || '';
-      var aiText = n.desc_ja || n.title_ja || n.title || '';
+      // impact（AI判断テキスト）がタイトルと異なる場合のみ表示
+      var aiText = n.impact || '';
+      var descText = n.desc_ja || '';
+      // desc_jaがtitle_jaと同じならimpactを使う、impactもなければ非表示
+      if (!aiText && descText && descText !== headline) aiText = descText;
+      var aiHtml = aiText && aiText !== headline
+        ? '<div class="nf-ai"><span class="nf-ai-label">AI判断</span><span class="nf-ai-text">' + escHtml(aiText) + '</span></div>'
+        : '';
 
       return '<div class="nf-item ' + borderCls + '" onclick="switchTab(\\'tab-news\\')">' +
         '<div class="nf-header"><span class="nf-badge ' + badgeCls + '">' + badgeText + scoreStr + '</span>' +
         '<span class="nf-time">' + fmtTimeAgo(n.analyzed_at || '') + '</span></div>' +
         '<div class="nf-headline">' + escHtml(headline) + '</div>' +
-        '<div class="nf-ai"><span class="nf-ai-label">AI判断</span><span class="nf-ai-text">' + escHtml(aiText) + '</span></div>' +
+        aiHtml +
         '</div>';
     }).join('');
   }
