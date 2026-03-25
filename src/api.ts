@@ -1095,7 +1095,7 @@ function synthesizeParamWhyChain(reason: string, winRate: number | null, rr: num
   return [
     `AIが直近取引の${what}の必要性を検出`,
     `根拠: ${shortR}`,
-    `統計: 勝率=${wrStr}, RR=${rrStr} → 閾値と比較`,
+    `統計: 的中率=${wrStr}, RR=${rrStr} → 閾値と比較`,
     `最適化アルゴリズムが新パラメーターを算出`,
     `更新適用 → 次トレードから有効`,
   ];
@@ -1122,7 +1122,7 @@ function buildParamHistory(
     const change = r.reason || '';
     const wrPct = r.win_rate != null ? `${(r.win_rate * 100).toFixed(0)}%` : '—';
     const rrStr = r.actual_rr != null ? r.actual_rr.toFixed(2) : '—';
-    const result_text = `勝率 ${wrPct}, RR ${rrStr}${r.trades_eval ? `（${r.trades_eval}件評価）` : ''}`;
+    const result_text = `的中率 ${wrPct}, RR ${rrStr}${r.trades_eval ? `（${r.trades_eval}件評価）` : ''}`;
 
     return {
       pair: r.pair,
