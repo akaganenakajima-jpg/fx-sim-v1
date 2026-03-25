@@ -1612,9 +1612,16 @@ export const JS = `
     var paramItems = (data.paramHistory || [])
       .map(function(p) { return Object.assign({}, p, { _type: 'param', created_at: p.time || p.created_at }); });
 
-    var allItems = decItems.concat(indItems).concat(paramItems)
+    // パラメーター調整と売買判定は重要イベント → 全件保証（最終sliceで切らない）
+    // indicator_logsは大量発生するため、残り枠に割り当て
+    var importantItems = decItems.concat(paramItems);
+    var maxTotal = Math.max(60, importantItems.length);
+    var indSlots = Math.max(0, maxTotal - importantItems.length);
+    var trimmedInd = indItems
       .sort(function(a, b) { return new Date(b.created_at).getTime() - new Date(a.created_at).getTime(); })
-      .slice(0, 60);
+      .slice(0, indSlots);
+    var allItems = importantItems.concat(trimmedInd)
+      .sort(function(a, b) { return new Date(b.created_at).getTime() - new Date(a.created_at).getTime(); });
 
     if (allItems.length === 0) {
       container.innerHTML = '<div style="padding:12px 16px;font-size:12px;color:var(--tertiary)">アクティビティなし（BUY/SELL実行後または指標変化後に表示されます）</div>';
