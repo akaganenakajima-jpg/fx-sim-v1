@@ -159,7 +159,7 @@ export async function getDecisionGPT(params: {
       'Authorization': `Bearer ${apiKey}`,
     },
     body: JSON.stringify({
-      model: 'gpt-4.1-mini',
+      model: 'gpt-4.1',
       messages: [
         { role: 'system', content: systemPrompt },
         { role: 'user', content: userMessage },
@@ -183,7 +183,7 @@ export async function getDecisionGPT(params: {
 
   // トークン使用量記録
   if (db && data.usage) {
-    void insertTokenUsage(db, 'gpt-4.1-mini', 'PATH_A_GPT',
+    void insertTokenUsage(db, 'gpt-4.1', 'PATH_A_GPT',
       data.usage.prompt_tokens ?? 0,
       data.usage.completion_tokens ?? 0,
       instrument.pair);
@@ -223,7 +223,7 @@ export async function getDecisionClaude(params: {
       'anthropic-version': '2023-06-01',
     },
     body: JSON.stringify({
-      model: 'claude-sonnet-4-20250514',
+      model: 'claude-sonnet-4-6',
       max_tokens: 256,
       system: systemPrompt,
       messages: [
@@ -246,7 +246,7 @@ export async function getDecisionClaude(params: {
 
   // トークン使用量記録
   if (db && data.usage) {
-    void insertTokenUsage(db, 'claude-sonnet-4-20250514', 'PATH_A_CLAUDE',
+    void insertTokenUsage(db, 'claude-sonnet-4-6', 'PATH_A_CLAUDE',
       data.usage.input_tokens ?? 0,
       data.usage.output_tokens ?? 0,
       instrument.pair);
