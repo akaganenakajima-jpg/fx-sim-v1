@@ -1687,19 +1687,23 @@ export const JS = `
         var ntTitle = (nt.news_title || '').slice(0, 35);
         if ((nt.news_title || '').length > 35) ntTitle += '…';
         // トリガー後15分以内の売買判定を集計して結果表示
-        var ntTime = new Date(nt.created_at).getTime();
-        var resultBuy = 0, resultSell = 0;
-        decItems.forEach(function(dec) {
-          var decTime = new Date(dec.created_at).getTime();
-          if (decTime >= ntTime && decTime <= ntTime + 15 * 60 * 1000) {
-            if (dec.decision === 'BUY') resultBuy++;
-            else if (dec.decision === 'SELL') resultSell++;
-          }
-        });
-        var resultParts = [];
-        if (resultBuy > 0) resultParts.push(resultBuy + '買');
-        if (resultSell > 0) resultParts.push(resultSell + '売');
-        var ntResult = resultParts.length > 0 ? '→' + resultParts.join('/') : '';
+        // EMERGENCYのみ: 強制発火後15分以内の売買結果を集計
+        var ntResult = '';
+        if (isEmg) {
+          var ntTime = new Date(nt.created_at).getTime();
+          var resultBuy = 0, resultSell = 0;
+          decItems.forEach(function(dec) {
+            var decTime = new Date(dec.created_at).getTime();
+            if (decTime >= ntTime && decTime <= ntTime + 15 * 60 * 1000) {
+              if (dec.decision === 'BUY') resultBuy++;
+              else if (dec.decision === 'SELL') resultSell++;
+            }
+          });
+          var resultParts = [];
+          if (resultBuy > 0) resultParts.push(resultBuy + '買');
+          if (resultSell > 0) resultParts.push(resultSell + '売');
+          ntResult = resultParts.length > 0 ? '→' + resultParts.join('/') : '';
+        }
         var ntAction = isEmg ? '再判定' : '調整';
         return '<div class="feed-item">'
           + '<div class="feed-row1">'
