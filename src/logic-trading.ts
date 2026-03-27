@@ -14,11 +14,12 @@ import { checkTpSlSanity } from './sanity';
 import { checkCorrelationGuard, getDrawdownLevel, updateHWM, getCurrentBalance, applyDrawdownControl } from './risk-manager';
 import { openPosition } from './position';
 import { insertDecision, insertSystemLog, insertIndicatorLog, getCacheValue, setCacheValue } from './db';
-import { INSTRUMENTS } from './instruments';
+import { INSTRUMENTS, getDefaultParams, getYahooSymbol } from './instruments';
 import type { MarketIndicators } from './indicators';
 import { getBroker, type BrokerEnv } from './broker';
 import { getActiveTempParams } from './news-trigger';
 import { isNakaneWindow } from './session'; // 施策19: 東京仲値ウィンドウ
+import { fetchYahooCandles } from './candles';
 
 export interface LogicDecisionSummary {
   entered: number;
@@ -36,6 +37,31 @@ async function loadAllParams(db: D1Database): Promise<Map<string, InstrumentPara
   for (const row of rows.results ?? []) {
     map.set(row.pair, row);
   }
+
+  // ── 自動ブートストラップ: INSTRUMENTS にあるが instrument_params にない銘柄を自動登録 ──
+  const missing = INSTRUMENTS.filter(inst => !map.has(inst.pair));
+  for (const inst of missing) {
+    const defaults = getDefaultParams(inst);
+    const cols = Object.keys(defaults);
+    const vals = Object.values(defaults);
+    const placeholders = cols.map(() => '?').join(',');
+    try {
+      await db.prepare(
+        `INSERT OR IGNORE INTO instrument_params (${cols.join(',')}) VALUES (${placeholders})`
+      ).bind(...vals).run();
+      // 再読み込みして map に追加
+      const newRow = await db.prepare(
+        `SELECT * FROM instrument_params WHERE pair = ?`
+      ).bind(inst.pair).first<InstrumentParamsRow>();
+      if (newRow) {
+        map.set(inst.pair, newRow);
+        console.log(`[logic] Auto-bootstrap: ${inst.pair} instrument_params 自動初期化`);
+      }
+    } catch (e) {
+      console.warn(`[logic] Auto-bootstrap failed for ${inst.pair}:`, String(e).slice(0, 100));
+    }
+  }
+
   return map;
 }
 
@@ -74,6 +100,62 @@ async function loadPriceHistory(
   for (const [pair, rates] of map) {
     map.set(pair, rates.reverse());
   }
+
+  // ── フォールバック: decisions履歴が不足する銘柄は自動補完 ──
+  // Step 1: candle cache（H1）のclose列を試す
+  // Step 2: キャッシュもなければ Yahoo Finance から H1 candle を直接取得
+  const minRequired = 15; // RSI14 + 1
+  const insufficientPairs = pairs.filter(p => (map.get(p)?.length ?? 0) < minRequired);
+  if (insufficientPairs.length > 0) {
+    const pairToCacheKey = new Map<string, string>();
+    const pairToYahooSymbol = new Map<string, string>();
+    for (const inst of INSTRUMENTS) {
+      if (inst.stockSymbol) {
+        pairToCacheKey.set(inst.pair, `candle_stock_${inst.stockSymbol}_H1`);
+      } else if (inst.oandaSymbol) {
+        pairToCacheKey.set(inst.pair, `candle_${inst.oandaSymbol}_H1`);
+      }
+      const ySym = getYahooSymbol(inst);
+      if (ySym) pairToYahooSymbol.set(inst.pair, ySym);
+    }
+
+    const stillInsufficient: string[] = [];
+    for (const pair of insufficientPairs) {
+      const cacheKey = pairToCacheKey.get(pair);
+      if (!cacheKey) { stillInsufficient.push(pair); continue; }
+      try {
+        const row = await db
+          .prepare('SELECT value FROM market_cache WHERE key = ?')
+          .bind(cacheKey)
+          .first<{ value: string }>();
+        if (row) {
+          const cached = JSON.parse(row.value) as { candles?: Array<{ close: number }> };
+          if (cached.candles && cached.candles.length >= minRequired) {
+            map.set(pair, cached.candles.map(c => c.close));
+            continue;
+          }
+        }
+      } catch { /* ignore */ }
+      stillInsufficient.push(pair);
+    }
+
+    // Step 2: Yahoo Finance H1 candle 直接取得（並列、最大5銘柄ずつ）
+    if (stillInsufficient.length > 0) {
+      const batch = stillInsufficient.slice(0, 5); // cron時間制約対策: 最大5銘柄
+      const fetches = batch.map(async (pair) => {
+        const sym = pairToYahooSymbol.get(pair);
+        if (!sym) return;
+        try {
+          const candles = await fetchYahooCandles(sym, 'H1');
+          if (candles.length >= minRequired) {
+            map.set(pair, candles.map(c => c.close));
+          }
+        } catch { /* ignore */ }
+      });
+      await Promise.all(fetches);
+    }
+  }
+
   return map;
 }
 

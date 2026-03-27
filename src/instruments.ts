@@ -755,3 +755,75 @@ export const INSTRUMENTS: InstrumentConfig[] = [
     tradingHoursET: { open: 9.5, close: 16 },
   },
 ];
+
+// ─── 自動ブートストラップ用デフォルトパラメータ ───────────────────
+// instruments.ts に銘柄を追加するだけで instrument_params が自動初期化される
+// assetClass に応じた保守的なデフォルト値を返す
+
+export function getDefaultParams(inst: InstrumentConfig): Record<string, number | string> {
+  const isStock = inst.assetClass === 'stock';
+  return {
+    pair:                     inst.pair,
+    rsi_period:               14,
+    rsi_oversold:             isStock ? 30 : 35,
+    rsi_overbought:           isStock ? 70 : 65,
+    adx_period:               14,
+    adx_min:                  isStock ? 28 : 25,
+    atr_period:               14,
+    atr_tp_multiplier:        3.0,
+    atr_sl_multiplier:        1.5,
+    vix_max:                  isStock ? 40 : 35,
+    require_trend_align:      0,
+    regime_allow:             'trending,ranging',
+    review_trade_count:       30,
+    trades_since_review:      0,
+    param_version:            1,
+    reviewed_by:              'AUTO_BOOTSTRAP',
+    updated_at:               new Date().toISOString(),
+    vix_tp_scale:             1,
+    vix_sl_scale:             1,
+    strategy_primary:         'mean_reversion',
+    min_signal_strength:      0,
+    macro_sl_scale:           1,
+    w_rsi:                    0.35,
+    w_er:                     0.25,
+    w_mtf:                    0.2,
+    w_sr:                     0.1,
+    w_pa:                     0.1,
+    entry_score_min:          isStock ? 0.3 : 0.25,
+    min_rr_ratio:             2.0,
+    max_hold_minutes:         isStock ? 360 : 480,
+    cooldown_after_sl:        10,
+    consecutive_loss_shrink:  3,
+    daily_max_entries:        isStock ? 3 : 5,
+    trailing_activation_atr:  1.5,
+    trailing_distance_atr:    1.0,
+    tp1_ratio:                0.5,
+    session_start_utc:        0,
+    session_end_utc:           24,
+    review_min_trades:        50,
+    bb_period:                20,
+    bb_squeeze_threshold:     0.4,
+    w_bb:                     0.1,
+    w_div:                    0.05,
+    divergence_lookback:      14,
+    min_confirm_signals:      2,
+    er_upper_limit:           0.85,
+  };
+}
+
+/** Yahoo Finance シンボルを返す（FXはXX=X形式、株式は.T/ティッカーそのまま） */
+export function getYahooSymbol(inst: InstrumentConfig): string | null {
+  if (inst.stockSymbol) return inst.stockSymbol;
+  // FX/CFD: pair名 → Yahoo Financeシンボルへの変換マップ
+  const map: Record<string, string> = {
+    'USD/JPY': 'USDJPY=X', 'EUR/USD': 'EURUSD=X', 'GBP/USD': 'GBPUSD=X',
+    'AUD/USD': 'AUDUSD=X', 'EUR/JPY': 'EURJPY=X', 'GBP/JPY': 'GBPJPY=X',
+    'AUD/JPY': 'AUDJPY=X', 'Gold': 'GC=F', 'Silver': 'SI=F',
+    'CrudeOil': 'CL=F', 'NatGas': 'NG=F', 'Copper': 'HG=F',
+    'Nikkei225': '^N225', 'S&P500': '^GSPC', 'DAX': '^GDAXI',
+    'NASDAQ': '^IXIC', 'UK100': '^FTSE', 'HK33': '^HSI',
+    'BTC/USD': 'BTC-USD', 'ETH/USD': 'ETH-USD', 'SOL/USD': 'SOL-USD',
+  };
+  return map[inst.pair] ?? null;
+}
