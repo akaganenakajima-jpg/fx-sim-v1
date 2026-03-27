@@ -3,6 +3,7 @@
 import type { Position } from './db';
 // fetchNewsはcron側の責務。API側はlatest_newsキャッシュのみ参照
 import { getRiskStatus, type RiskEnv } from './risk-guard';
+import { INSTRUMENTS } from './instruments';
 import { getSessionStats, getPairStats, type SessionStats, type PairStats } from './trade-journal';
 import { wilsonCI, sharpeWithSE, varCvar, kellyFraction, markovTransition, maxDrawdown, rollingReturns, pnlVolatility, profitFactor, bootstrapROI, aiAccuracy, randomBaselineComparison, pairCorrelation, logReturnStats, powerAnalysis, ewmaVolatility, engleGrangerCointegration, hierarchicalWinRate } from './stats';
 
@@ -291,6 +292,16 @@ export interface StatusResponse {
   sessionStats: SessionStats[];
   /** テスタ施策14: 銘柄別統計 */
   pairStats: PairStats[];
+  /** 全銘柄定義（instruments.tsから動的生成） */
+  instruments: Array<{
+    pair: string;
+    label: string;
+    unit: string;
+    multiplier: number;
+    category: string;
+    broker: string;
+    assetClass: string;
+  }>;
 }
 
 export async function getApiStatus(db: D1Database, tradingEnv?: { TRADING_ENABLED?: string; OANDA_LIVE?: string; RISK_MAX_DAILY_LOSS?: string; RISK_MAX_LIVE_POSITIONS?: string; RISK_MAX_LOT_SIZE?: string; RISK_ANOMALY_THRESHOLD?: string }): Promise<StatusResponse> {
@@ -337,13 +348,12 @@ export async function getApiStatus(db: D1Database, tradingEnv?: { TRADING_ENABLE
         .prepare(`SELECT COUNT(*) AS cnt, MAX(created_at) AS lastRun FROM decisions`)
         .first<{ cnt: number; lastRun: string }>(),
 
-      // スパークライン: 銘柄ごとの直近レート推移（ペア別最新20件）
+      // スパークライン: 銘柄ごとの直近レート推移（全銘柄・ペア別最新20件）
       db
         .prepare(
           `SELECT pair, rate, created_at FROM (
              SELECT pair, rate, created_at, ROW_NUMBER() OVER (PARTITION BY pair ORDER BY id DESC) AS rn
              FROM decisions
-             WHERE pair IN ('USD/JPY','Nikkei225','S&P500','US10Y','BTC/USD','Gold','EUR/USD','ETH/USD','CrudeOil','NatGas','Copper','Silver','GBP/USD','AUD/USD','SOL/USD','DAX','NASDAQ','HK33','Silver','Copper')
            ) WHERE rn <= 20`
         )
         .all<{ pair: string; rate: number; created_at: string }>(),
@@ -716,6 +726,33 @@ export async function getApiStatus(db: D1Database, tradingEnv?: { TRADING_ENABLE
     strategyMap: await getStrategyMapData(db),
     sessionStats: await getSessionStats(db).catch(() => []),
     pairStats: await getPairStats(db).catch(() => []),
+    instruments: INSTRUMENTS.map(inst => {
+      let category: string;
+      if (inst.assetClass === 'stock') {
+        const jpGroups = ['jp_semi', 'jp_shipping', 'jp_conglomerate', 'jp_value'];
+        category = jpGroups.includes(inst.correlationGroup) ? '日本株' : '米国株';
+      } else if (['precious', 'energy', 'industrial'].includes(inst.correlationGroup)) {
+        category = '商品';
+      } else if (['usd_strong', 'jpy_cross'].includes(inst.correlationGroup)) {
+        category = '為替';
+      } else if (inst.correlationGroup === 'standalone') {
+        category = '暗号資産';
+      } else if (['europe', 'risk_on'].includes(inst.correlationGroup)) {
+        // EUR/USD, GBP/USD, AUD/USD などペアは '為替'、指数は '株式指数'
+        category = inst.pair.includes('/') ? '為替' : '株式指数';
+      } else {
+        category = '為替';
+      }
+      return {
+        pair: inst.pair,
+        label: inst.pair.replace('/', ' / '),
+        unit: inst.pnlUnit,
+        multiplier: inst.pnlMultiplier,
+        category,
+        broker: inst.broker,
+        assetClass: inst.assetClass ?? 'forex',
+      };
+    }),
     tradeContext: (openPositions.results ?? []).length > 0
       ? await buildTradeContext(db, openPositions.results ?? [])
       : null,

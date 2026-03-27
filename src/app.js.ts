@@ -40,29 +40,11 @@ export const JS = `
   window.toggleWhyTree  = toggleWhyTree;
   window.setThSort      = setThSort;
 
-  var CATEGORY_ORDER = ['為替', '株式指数', '暗号資産', 'コモディティ', '債券'];
+  var CATEGORY_ORDER = ['為替', '株式指数', '日本株', '米国株', '暗号資産', '商品', '債券'];
 
-  var INSTRUMENTS = [
-    { pair: 'USD/JPY',   label: 'USD / JPY', unit: '円', multiplier: 100,   category: '為替',       broker: 'oanda' },
-    { pair: 'EUR/USD',   label: 'EUR / USD', unit: '円', multiplier: 10000, category: '為替',       broker: 'oanda' },
-    { pair: 'GBP/USD',   label: 'GBP / USD', unit: '円', multiplier: 10000, category: '為替',       broker: 'oanda' },
-    { pair: 'AUD/USD',   label: 'AUD / USD', unit: '円', multiplier: 10000, category: '為替',       broker: 'oanda' },
-    { pair: 'S&P500',    label: 'S&P 500',   unit: '円', multiplier: 10,    category: '株式指数',   broker: 'oanda' },
-    { pair: 'NASDAQ',    label: 'NASDAQ',    unit: '円', multiplier: 1,     category: '株式指数',   broker: 'oanda' },
-    { pair: 'Nikkei225', label: '日経225',    unit: '円', multiplier: 1,     category: '株式指数',   broker: 'oanda' },
-    { pair: 'DAX',       label: 'DAX',       unit: '円', multiplier: 1,     category: '株式指数',   broker: 'oanda' },
-    { pair: 'BTC/USD',   label: 'BTC',       unit: '円', multiplier: 1,     category: '暗号資産',   broker: 'paper' },
-    { pair: 'ETH/USD',   label: 'ETH',       unit: '円', multiplier: 1,     category: '暗号資産',   broker: 'paper' },
-    { pair: 'SOL/USD',   label: 'SOL',       unit: '円', multiplier: 10,    category: '暗号資産',   broker: 'paper' },
-    { pair: 'Gold',      label: 'Gold',      unit: '円', multiplier: 10,    category: 'コモディティ', broker: 'oanda' },
-    { pair: 'Silver',    label: 'Silver',    unit: '円', multiplier: 100,   category: 'コモディティ', broker: 'oanda' },
-    { pair: 'Copper',    label: '銅',        unit: '円', multiplier: 1000,  category: 'コモディティ', broker: 'oanda' },
-    { pair: 'CrudeOil',  label: '原油',      unit: '円', multiplier: 100,   category: 'コモディティ', broker: 'oanda' },
-    { pair: 'NatGas',    label: '天然ガス',   unit: '円', multiplier: 1000,  category: 'コモディティ', broker: 'oanda' },
-    { pair: 'US10Y',     label: '米10年債',   unit: '円', multiplier: 5000,  category: '債券',       broker: 'oanda' },
-  ].sort(function(a, b) {
-    return CATEGORY_ORDER.indexOf(a.category) - CATEGORY_ORDER.indexOf(b.category);
-  });
+  // INSTRUMENTS はAPIレスポンスの data.instruments から動的に初期化される
+  // render(data) の冒頭で上書きされるため、初期値は空配列
+  var INSTRUMENTS = [];
 
   var INITIAL_CAPITAL = 10000;
 
@@ -297,6 +279,15 @@ export const JS = `
   // ══════════════════════════════════════════
 
   function render(data) {
+    // APIから銘柄一覧を動的取得（instruments.tsが唯一の真実のソース）
+    if (data.instruments && data.instruments.length > 0) {
+      INSTRUMENTS = data.instruments.slice().sort(function(a, b) {
+        var ai = CATEGORY_ORDER.indexOf(a.category);
+        var bi = CATEGORY_ORDER.indexOf(b.category);
+        if (ai !== bi) return ai - bi;
+        return a.pair < b.pair ? -1 : a.pair > b.pair ? 1 : 0;
+      });
+    }
     lastData = data;
     renderHeader(data);
     renderAlertBanner(data);
