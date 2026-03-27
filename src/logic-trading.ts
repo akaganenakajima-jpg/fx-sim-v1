@@ -472,12 +472,10 @@ export async function runLogicDecisions(
     const slDist = Math.abs(scaledSl - currentRate);
     const actualRR = slDist > 0 ? tpDist / slDist : 0;
 
-    // テスタ式: RR≥1.5ハードフロア（「勝率よりリスク・リターンが大事」）
-    const effectiveMinRR = Math.max(params.min_rr_ratio, 1.5);
-    if (actualRR < effectiveMinRR) {
+    if (actualRR < params.min_rr_ratio) {
       summary.skipped++;
       summary.signals.push({ pair, signal: 'SKIP',
-        reason: `RR=${actualRR.toFixed(2)}<${effectiveMinRR}(min)` });
+        reason: `RR=${actualRR.toFixed(2)}<${params.min_rr_ratio}(min)` });
       continue;
     }
 
