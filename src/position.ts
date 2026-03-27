@@ -9,6 +9,7 @@ import { kellyFraction, logReturn } from './stats';
 import { sendNotification, buildTpSlMessage, buildDrawdownMessage } from './notify';
 import { updateThompsonParams } from './thompson';
 import { logTradeJournal } from './trade-journal';
+import { getCurrentBalance } from './risk-manager';
 
 function calcPnl(
   direction: 'BUY' | 'SELL',
@@ -374,17 +375,34 @@ export async function openPosition(
     console.log(`[position] Kelly: ${pair} wr=${(winRate*100).toFixed(0)}% rr=${avgRR.toFixed(2)} f=${kelly.toFixed(3)} → lot=${lot.toFixed(2)}`);
   }
 
-  // テスタ施策9: SL幅ベースポジションサイズ（1%ルール）
+  // テスタ式: SL幅ベースポジションサイズ（複利 + RR傾斜配分）
+  // ① 実残高ベースで複利効果を有効化（テスタ「利益は口座に残して複利で増やす」）
+  // ② 銘柄RR実績で傾斜配分（テスタ「確信度に応じてサイズを変える」）
   if (slRate != null) {
     const slPips = Math.abs(entryRate - slRate);
-    const multiplier = extra?.pnlMultiplier ?? 1;  // フォールバックは安全側（×1）
+    const multiplier = extra?.pnlMultiplier ?? 1;
     const riskPerLot = slPips * multiplier;
-    // balance 取得は高コストなので初期資産10000で近似
-    const maxRisk = 10000 * 0.01; // 1%ルール
+    const balance = await getCurrentBalance(db);
+
+    // RR傾斜: 直近5取引のavg_rrで銘柄ごとにリスク率を調整
+    const recentRr = await db.prepare(
+      `SELECT AVG(realized_rr) as avg_rr FROM (
+        SELECT realized_rr FROM positions
+        WHERE pair=? AND status='CLOSED' AND realized_rr IS NOT NULL
+        ORDER BY id DESC LIMIT 5
+      )`
+    ).bind(pair).first<{avg_rr: number | null}>();
+    const avgRr = recentRr?.avg_rr ?? 0;
+    let riskMultiplier = 1.0;
+    if (avgRr >= 1.0) riskMultiplier = 1.5;       // 勝者: リスク拡大
+    else if (avgRr >= 0.5) riskMultiplier = 1.25;  // 好調: やや拡大
+    else if (avgRr < 0) riskMultiplier = 0.5;      // 不調: リスク半減
+
+    const maxRisk = balance * 0.01 * riskMultiplier;
     if (riskPerLot > 0) {
       const slBasedLot = maxRisk / riskPerLot;
       if (slBasedLot < lot) {
-        console.log(`[position] SL-based lot: ${pair} kelly=${lot.toFixed(2)} sl_lot=${slBasedLot.toFixed(2)} → ${slBasedLot.toFixed(2)}`);
+        console.log(`[position] テスタ式lot: ${pair} kelly=${lot.toFixed(2)} sl_lot=${slBasedLot.toFixed(2)} bal=${balance.toFixed(0)} riskMult=${riskMultiplier} avgRR=${avgRr.toFixed(2)}`);
         lot = slBasedLot;
       }
     }

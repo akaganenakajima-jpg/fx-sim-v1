@@ -129,6 +129,34 @@ export async function runLogicDecisions(
     return summary;
   }
 
+  // テスタ式: 日次損失キャップ（残高の2%超で当日全停止）
+  const todayLossRow = await db.prepare(
+    `SELECT COALESCE(SUM(pnl), 0) AS loss FROM positions
+     WHERE status='CLOSED' AND pnl < 0 AND closed_at >= datetime('now','start of day')`
+  ).first<{loss: number}>();
+  const todayLoss = todayLossRow?.loss ?? 0;
+  const dailyCap = balance * 0.02;
+  if (todayLoss <= -dailyCap) {
+    await insertSystemLog(db, 'WARN', 'RISK',
+      'テスタ日次キャップ2%超過: 全銘柄エントリー停止',
+      `todayLoss=${todayLoss.toFixed(0)} cap=-${dailyCap.toFixed(0)} bal=${balance.toFixed(0)}`);
+    return summary;
+  }
+
+  // テスタ式: 週次損失キャップ（残高の5%超で当週全停止）
+  const weekLossRow = await db.prepare(
+    `SELECT COALESCE(SUM(pnl), 0) AS loss FROM positions
+     WHERE status='CLOSED' AND pnl < 0 AND closed_at >= datetime('now','-7 days')`
+  ).first<{loss: number}>();
+  const weekLoss = weekLossRow?.loss ?? 0;
+  const weeklyCap = balance * 0.05;
+  if (weekLoss <= -weeklyCap) {
+    await insertSystemLog(db, 'WARN', 'RISK',
+      'テスタ週次キャップ5%超過: 全銘柄エントリー停止',
+      `weekLoss=${weekLoss.toFixed(0)} cap=-${weeklyCap.toFixed(0)} bal=${balance.toFixed(0)}`);
+    return summary;
+  }
+
   let logicNewEntries = 0; // このtickで新規開設したロジックポジション数
 
   for (const instrument of INSTRUMENTS) {
@@ -389,10 +417,12 @@ export async function runLogicDecisions(
     const slDist = Math.abs(scaledSl - currentRate);
     const actualRR = slDist > 0 ? tpDist / slDist : 0;
 
-    if (actualRR < params.min_rr_ratio) {
+    // テスタ式: RR≥1.5ハードフロア（「勝率よりリスク・リターンが大事」）
+    const effectiveMinRR = Math.max(params.min_rr_ratio, 1.5);
+    if (actualRR < effectiveMinRR) {
       summary.skipped++;
       summary.signals.push({ pair, signal: 'SKIP',
-        reason: `RR=${actualRR.toFixed(2)}<${params.min_rr_ratio}(min)` });
+        reason: `RR=${actualRR.toFixed(2)}<${effectiveMinRR}(min)` });
       continue;
     }
 
