@@ -9,6 +9,7 @@ export const JS = `
   var lastRecentCloseIds = [];
   var sheetPos = null;
   var lastPnlMap = {};
+  var thSortMode = 'closed';  // 取引履歴ソート: 'closed' | 'entry'
 
   // ── 展開パネルの状態管理（DOM ではなく JS が状態を持つ）──
   var openJcParams  = {};   // { 'jcp-usd-jpy': true, ... }
@@ -1047,6 +1048,83 @@ export const JS = `
 
     // 銘柄別 evoカード
     renderEvoCards(data);
+
+    // 取引履歴
+    renderTradeHistory(data);
+  }
+
+  function setThSort(mode) {
+    thSortMode = mode;
+    var btns = document.querySelectorAll('.th-sort-btn');
+    for (var i = 0; i < btns.length; i++) {
+      var b = btns[i];
+      if (b.getAttribute('data-sort') === mode) b.classList.add('th-sort-active');
+      else b.classList.remove('th-sort-active');
+    }
+    if (lastData) renderTradeHistory(lastData);
+  }
+
+  function renderTradeHistory(data) {
+    var container = el('trade-history');
+    if (!container) return;
+    var trades = (data.recentCloses || []).slice();
+    if (trades.length === 0) {
+      container.innerHTML = '<div style="font-size:12px;color:var(--tertiary);text-align:center;padding:16px">データ蓄積中...</div>';
+      return;
+    }
+
+    if (thSortMode === 'entry') {
+      trades.sort(function(a, b) {
+        return (new Date(b.entry_at).getTime() || 0) - (new Date(a.entry_at).getTime() || 0);
+      });
+    } else {
+      trades.sort(function(a, b) {
+        return (new Date(b.closed_at || 0).getTime() || 0) - (new Date(a.closed_at || 0).getTime() || 0);
+      });
+    }
+
+    function fmtDt(s) {
+      if (!s) return '—';
+      var d = new Date(s);
+      return (d.getMonth()+1) + '/' + d.getDate() + ' ' + String(d.getHours()).padStart(2,'0') + ':' + String(d.getMinutes()).padStart(2,'0');
+    }
+
+    var html = '<div style="display:flex;flex-direction:column;gap:8px">';
+    for (var i = 0; i < trades.length; i++) {
+      var t = trades[i];
+      var dirLabel  = t.direction === 'BUY' ? '買い' : '売り';
+      var dirColor  = t.direction === 'BUY' ? 'var(--blue)' : 'var(--orange, #FF9F0A)';
+      var pnlColor  = (t.pnl || 0) >= 0 ? 'var(--green)' : 'var(--red)';
+      var pnlStr    = t.pnl != null ? ((t.pnl >= 0 ? '+' : '') + '¥' + Math.round(t.pnl).toLocaleString()) : '—';
+      var rrStr     = t.realized_rr != null ? t.realized_rr.toFixed(2) : '—';
+      var rrColor   = t.realized_rr == null ? 'var(--tertiary)' : t.realized_rr >= 1.0 ? 'var(--green)' : t.realized_rr > 0 ? 'var(--blue)' : 'var(--red)';
+      var mfeStr    = t.mfe != null ? (t.mfe >= 0 ? '+' : '') + '¥' + Math.round(t.mfe).toLocaleString() : '—';
+      var maeStr    = t.mae != null ? (t.mae >= 0 ? '+' : '') + '¥' + Math.round(t.mae).toLocaleString() : '—';
+      var closeReason  = t.close_reason || '—';
+      var reasonColor  = closeReason === 'TP' ? 'var(--green)' : closeReason === 'SL' ? 'var(--red)' : 'var(--tertiary)';
+
+      html +=
+        '<div style="background:var(--surface);border-radius:10px;padding:10px 12px;border-left:3px solid ' + dirColor + '">' +
+          '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px">' +
+            '<span style="font-size:13px;font-weight:700;color:var(--primary)">' + escHtml(t.pair) + '</span>' +
+            '<span style="font-size:11px;font-weight:600;color:' + dirColor + '">' + dirLabel + '</span>' +
+            '<span style="font-size:11px;color:var(--tertiary)">' + (t.lot != null ? (t.lot < 1 ? t.lot.toFixed(3) : t.lot.toFixed(1)) : '—') + 'lot</span>' +
+            '<span style="font-size:12px;font-weight:700;color:' + pnlColor + '">' + pnlStr + '</span>' +
+          '</div>' +
+          '<div style="display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:4px;margin-bottom:6px">' +
+            '<div style="font-size:10px;color:var(--tertiary)">エントリー<div style="color:var(--secondary);font-size:11px">' + fmtDt(t.entry_at) + '</div></div>' +
+            '<div style="font-size:10px;color:var(--tertiary)">決済<div style="color:var(--secondary);font-size:11px">' + fmtDt(t.closed_at) + '</div></div>' +
+            '<div style="font-size:10px;color:var(--tertiary)">理由<div style="color:' + reasonColor + ';font-size:11px;font-weight:600">' + escHtml(closeReason) + '</div></div>' +
+            '<div style="font-size:10px;color:var(--tertiary)">実現RR<div style="color:' + rrColor + ';font-size:11px;font-weight:600">' + rrStr + '</div></div>' +
+          '</div>' +
+          '<div style="display:grid;grid-template-columns:1fr 1fr;gap:4px">' +
+            '<div style="font-size:10px;color:var(--tertiary)">最大含み益(MFE)<div style="color:var(--green);font-size:11px">' + mfeStr + '</div></div>' +
+            '<div style="font-size:10px;color:var(--tertiary)">最大含み損(MAE)<div style="color:var(--red);font-size:11px">' + maeStr + '</div></div>' +
+          '</div>' +
+        '</div>';
+    }
+    html += '</div>';
+    container.innerHTML = html;
   }
 
   function renderEquityChart(data) {

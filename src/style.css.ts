@@ -168,6 +168,9 @@ body{background:var(--bg);color:var(--text);font-size:15px;line-height:1.47;
 .wait-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:4px;margin:8px 16px 0}.wt{padding:8px;background:var(--surface);border-radius:var(--rs)}.wt-pair{font-size:12px;font-weight:500}.wt-price{font-size:11px;color:var(--secondary);font-variant-numeric:tabular-nums;margin-top:2px}
 
 /* ═══ TAB 2: 学び ═══ */
+.th-sort-btn{font-size:11px;padding:4px 10px;border-radius:12px;border:1px solid rgba(255,255,255,0.15);background:transparent;color:var(--tertiary);cursor:pointer;min-height:28px;font-weight:500;transition:all 0.15s}
+.th-sort-btn.th-sort-active{background:var(--blue);color:#fff;border-color:var(--blue)}
+.th-sort-btn:active{opacity:0.7}
 .evo-card{margin:0 16px 8px;padding:16px;background:var(--surface);border-radius:var(--r)}
 .evo-header{display:flex;justify-content:space-between;align-items:center;margin-bottom:8px}
 .evo-pair{font-size:17px;font-weight:700}.evo-verdict{font-size:13px;font-weight:600}

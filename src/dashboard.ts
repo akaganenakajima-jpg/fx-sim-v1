@@ -178,6 +178,16 @@ export function getDashboardHtml(): string {
     <span class="cross-link" onclick="switchTab('tab-ai')">→ AIタブで全判断の正解率を確認</span>
   </div>
 
+  <!-- 取引履歴 -->
+  <div class="sec" style="display:flex;align-items:center;justify-content:space-between;padding-right:16px">
+    <span>取引履歴</span>
+    <div id="th-sort-toggle" style="display:flex;gap:4px">
+      <button class="th-sort-btn th-sort-active" data-sort="closed" onclick="setThSort('closed')">決済順</button>
+      <button class="th-sort-btn" data-sort="entry" onclick="setThSort('entry')">エントリー順</button>
+    </div>
+  </div>
+  <div id="trade-history" style="padding:0 16px 16px"></div>
+
 </div>
 
 <!-- ═══════════ TAB 4: AI (tab-ai) ═══════════ -->
