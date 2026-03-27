@@ -197,6 +197,11 @@ export interface StatusResponse {
     aiLoopMs: number;
     totalMs: number;
   } | null;
+  /** 成績Era分割: RR目標移行前(〜3/24) / 移行後(3/25〜) */
+  eraStats: {
+    pre:  { total: number; wins: number; pnl: number; avg_rr: number; win_rate: number; label: string };
+    post: { total: number; wins: number; pnl: number; avg_rr: number; win_rate: number; label: string };
+  } | null;
   /** RR≥1.0基準の期間別サマリー */
   rrSummary: {
     daily:   { total: number; wins: number; avg_rr: number; win_rate: number };
@@ -284,7 +289,7 @@ export interface StatusResponse {
 }
 
 export async function getApiStatus(db: D1Database, tradingEnv?: { TRADING_ENABLED?: string; OANDA_LIVE?: string; RISK_MAX_DAILY_LOSS?: string; RISK_MAX_LIVE_POSITIONS?: string; RISK_MAX_LOT_SIZE?: string; RISK_ANOMALY_THRESHOLD?: string }): Promise<StatusResponse> {
-  const [rateRow, openPositions, perf, latest, recent, sysRow, sparkRaw, perfByPairRaw, recentClosesRaw, acceptedNewsRaw, sysLogsRaw, logStatsRaw, instrScoresRaw, rrSummaryRow, slPatternsRow, cronTimingsRow, todayDecisionCountRow, paramReviewLogRaw, indicatorLogsRaw] =
+  const [rateRow, openPositions, perf, latest, recent, sysRow, sparkRaw, perfByPairRaw, recentClosesRaw, acceptedNewsRaw, sysLogsRaw, logStatsRaw, instrScoresRaw, rrSummaryRow, slPatternsRow, cronTimingsRow, todayDecisionCountRow, paramReviewLogRaw, indicatorLogsRaw, eraBatchRaw] =
     await Promise.all([
       db
         .prepare("SELECT value FROM market_cache WHERE key = 'prev_rate_USD/JPY'")
@@ -429,11 +434,45 @@ export async function getApiStatus(db: D1Database, tradingEnv?: { TRADING_ENABLE
         )
         .all<IndicatorLog>()
         .catch(() => ({ results: [] as IndicatorLog[] })),
+
+      // Era分割統計: RR目標移行前(〜3/24) / 移行後(3/25〜)
+      db.batch([
+        db.prepare(
+          `SELECT COUNT(*) AS total,
+             COALESCE(SUM(CASE WHEN realized_rr >= 1.0 THEN 1 ELSE 0 END), 0) AS wins,
+             COALESCE(SUM(pnl), 0) AS pnl,
+             AVG(CASE WHEN realized_rr IS NOT NULL THEN realized_rr END) AS avg_rr
+           FROM positions WHERE status='CLOSED' AND entry_at < '2026-03-25T00:00:00Z'`
+        ),
+        db.prepare(
+          `SELECT COUNT(*) AS total,
+             COALESCE(SUM(CASE WHEN realized_rr >= 1.0 THEN 1 ELSE 0 END), 0) AS wins,
+             COALESCE(SUM(pnl), 0) AS pnl,
+             AVG(CASE WHEN realized_rr IS NOT NULL THEN realized_rr END) AS avg_rr
+           FROM positions WHERE status='CLOSED' AND entry_at >= '2026-03-25T00:00:00Z'`
+        ),
+      ]).catch(() => [{ results: [] }, { results: [] }]),
     ]);
 
   const rate = rateRow ? parseFloat(rateRow.value) : null;
   const totalClosed = perf?.totalClosed ?? 0;
   const wins = perf?.wins ?? 0;
+
+  // Era分割統計を組み立て
+  type EraRow = { total: number; wins: number; pnl: number; avg_rr: number | null };
+  const eraBatch = eraBatchRaw as unknown as Array<{ results: EraRow[] }>;
+  const preEra  = eraBatch?.[0]?.results?.[0] as EraRow | undefined;
+  const postEra = eraBatch?.[1]?.results?.[0] as EraRow | undefined;
+  const eraStats = (preEra && postEra) ? {
+    pre:  { total: preEra.total,  wins: preEra.wins,  pnl: Math.round(preEra.pnl),
+            avg_rr: parseFloat((preEra.avg_rr ?? 0).toFixed(3)),
+            win_rate: preEra.total > 0 ? parseFloat((preEra.wins / preEra.total * 100).toFixed(1)) : 0,
+            label: '旧基準(〜3/24)' },
+    post: { total: postEra.total, wins: postEra.wins, pnl: Math.round(postEra.pnl),
+            avg_rr: parseFloat((postEra.avg_rr ?? 0).toFixed(3)),
+            win_rate: postEra.total > 0 ? parseFloat((postEra.wins / postEra.total * 100).toFixed(1)) : 0,
+            label: 'RR基準(3/25〜)' },
+  } : null;
 
   const cronTimings = cronTimingsRow
     ? (() => { try { return JSON.parse(cronTimingsRow.value); } catch { return null; } })()
@@ -664,6 +703,7 @@ export async function getApiStatus(db: D1Database, tradingEnv?: { TRADING_ENABLE
       try { return slPatternsRow ? JSON.parse(slPatternsRow.value) : []; } catch { return []; }
     })(),
     cronTimings,
+    eraStats,
     todayDecisionCount: todayDecisionCountRow?.total ?? 0,
     todayBuyCount:      todayDecisionCountRow?.buyCount ?? 0,
     todaySellCount:     todayDecisionCountRow?.sellCount ?? 0,
