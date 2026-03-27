@@ -18,6 +18,7 @@ import { INSTRUMENTS } from './instruments';
 import type { MarketIndicators } from './indicators';
 import { getBroker, type BrokerEnv } from './broker';
 import { getActiveTempParams } from './news-trigger';
+import { isNakaneWindow } from './session'; // 施策19: 東京仲値ウィンドウ
 
 export interface LogicDecisionSummary {
   entered: number;
@@ -469,15 +470,24 @@ export async function runLogicDecisions(
         consecutiveLossMult = 0.5;
       }
     }
-    const requestedLot = 1 * ddLotMult * tierMult * consecutiveLossMult;
+    // 施策18: confidence乗数（0.7〜1.3倍）— スコアが高いほど大きいロット
+    const confidenceScore = techSignal.scores?.total ?? null;
+    const confidenceMult = confidenceScore != null
+      ? 0.7 + Math.min(confidenceScore, 1.0) * 0.6
+      : 1.0;
+    const requestedLot = 1 * ddLotMult * tierMult * consecutiveLossMult * confidenceMult;
 
     if (requestedLot <= 0) {
       summary.skipped++;
       continue;
     }
 
+    // 施策19: 東京仲値ウィンドウ中は reasoning に付記（ドル買い実需増加の傾向）
+    const nakaneNote = (isNakaneWindow(now) && pair === 'USD/JPY')
+      ? ' [仲値ウィンドウ: ドル買い実需増]'
+      : '';
     // decisions テーブルに記録
-    const reasoning = `[LOGIC] ${techSignal.reason} score=${techSignal.scores?.total.toFixed(2) ?? '-'} [${techSignal.scores?.breakdown ?? ''}] RR=${actualRR.toFixed(2)}`;
+    const reasoning = `[LOGIC] ${techSignal.reason} score=${techSignal.scores?.total.toFixed(2) ?? '-'} [${techSignal.scores?.breakdown ?? ''}] RR=${actualRR.toFixed(2)}${nakaneNote}`;
     await insertDecision(db, {
       pair,
       rate: currentRate,
@@ -495,7 +505,10 @@ export async function runLogicDecisions(
       news_sources: null,
       prompt_version: 'LOGIC_v1',
       strategy: techSignal.signal === 'BUY' ? 'mean_reversion' : 'mean_reversion',
-      confidence: null,
+      // 施策18: TechnicalSignal.scores.total を [0,1]→[0,100] に変換してconfidenceに記録
+      confidence: confidenceScore != null
+        ? Math.round(Math.min(confidenceScore, 1.0) * 100)
+        : null,
     });
 
     // ポジション開設

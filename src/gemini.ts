@@ -549,8 +549,12 @@ export async function newsStage1(params: {
   instruments: Array<{ pair: string; hasOpenPosition: boolean; tpSlHint?: string }>;
   apiKey: string;
   db?: D1Database;
+  // 施策6: テクニカル環境認識テキスト（ADX/ATR/RSI/レジーム分類）
+  regimeText?: string;
+  // 施策20: レジーム別禁止行動（レンジ時→順張り禁止 等）
+  regimeProhibitions?: string;
 }): Promise<NewsStage1Result> {
-  const { news, indicators, instruments, apiKey, db } = params;
+  const { news, indicators, instruments, apiKey, db, regimeText, regimeProhibitions } = params;
 
   const newsList = news.slice(0, 20).map((n, i) =>
     `[${i}] ${n.title_ja || n.title}${(n as any).source ? ` (${(n as any).source})` : ''}`
@@ -573,6 +577,10 @@ export async function newsStage1(params: {
     ...(indicators.fearGreed != null ? [`暗号資産Fear&Greed指数: ${indicators.fearGreed} (${indicators.fearGreedLabel ?? ''}) ※0=極度の恐怖〜100=極度の強欲`] : []),
     ...(indicators.cftcJpyNetLong != null ? [`CFTC円先物大口投機筋: ${indicators.cftcJpyNetLong > 0 ? '+' : ''}${indicators.cftcJpyNetLong.toLocaleString()}枚 (正=円買い超, 負=円売り超)`] : []),
     ``,
+    // 施策6: テクニカル環境認識（ADX/ATR/RSI/レジーム）
+    ...(regimeText ? [`【テクニカル環境認識（施策6）】`, regimeText, ``] : []),
+    // 施策20: 現在のレジームで禁止される行動（AIへの絶対指示）
+    ...(regimeProhibitions ? [`【現在の禁止行動（施策20）】`, regimeProhibitions, ``] : []),
     `【対象銘柄】（[OP]=既存ポジションあり、trade_signalsに含めない）`,
     instrumentList,
   ].join('\n');
@@ -742,6 +750,9 @@ export async function newsStage1WithHedge(params: {
   openaiApiKey?: string;
   anthropicApiKey?: string;
   db?: D1Database;
+  // 施策6+20: テクニカル環境認識・禁止行動（Gemini/GPT/Claude 全プロバイダーに伝播）
+  regimeText?: string;
+  regimeProhibitions?: string;
 }): Promise<NewsStage1Result & { provider: string }> {
   const { openaiApiKey, anthropicApiKey, db, ...geminiParams } = params;
 
@@ -782,8 +793,10 @@ async function newsStage1GPT(params: {
   indicators: MarketIndicators;
   instruments: Array<{ pair: string; hasOpenPosition: boolean; tpSlHint?: string }>;
   apiKey: string;
+  regimeText?: string;
+  regimeProhibitions?: string;
 }): Promise<NewsStage1Result> {
-  const { news, indicators, instruments, apiKey } = params;
+  const { news, indicators, instruments, apiKey, regimeText, regimeProhibitions } = params;
 
   const newsList = news.slice(0, 20).map((n, i) =>
     `[${i}] ${n.title_ja || n.title}${(n as any).source ? ` (${(n as any).source})` : ''}`
@@ -801,7 +814,10 @@ async function newsStage1GPT(params: {
     `VIX: ${indicators.vix != null ? indicators.vix.toFixed(2) : 'N/A'}`,
     `日経平均: ${indicators.nikkei != null ? indicators.nikkei.toFixed(0) : 'N/A'}`,
     `S&P500: ${indicators.sp500 != null ? indicators.sp500.toFixed(0) : 'N/A'}`,
-    ``, `【対象銘柄】（[OP]=既存ポジションあり、trade_signalsに含めない）`, instrumentList,
+    ``,
+    ...(regimeText ? [`【テクニカル環境認識（施策6）】`, regimeText, ``] : []),
+    ...(regimeProhibitions ? [`【現在の禁止行動（施策20）】`, regimeProhibitions, ``] : []),
+    `【対象銘柄】（[OP]=既存ポジションあり、trade_signalsに含めない）`, instrumentList,
   ].join('\n');
 
   const systemPrompt =
@@ -887,8 +903,10 @@ async function newsStage1Claude(params: {
   instruments: Array<{ pair: string; hasOpenPosition: boolean; tpSlHint?: string }>;
   apiKey: string;
   db?: D1Database;
+  regimeText?: string;
+  regimeProhibitions?: string;
 }): Promise<NewsStage1Result> {
-  const { news, indicators, instruments, apiKey } = params;
+  const { news, indicators, instruments, apiKey, regimeText, regimeProhibitions } = params;
 
   const newsList = news.slice(0, 20).map((n, i) =>
     `[${i}] ${n.title_ja || n.title}${(n as any).source ? ` (${(n as any).source})` : ''}`
@@ -906,7 +924,10 @@ async function newsStage1Claude(params: {
     `VIX: ${indicators.vix != null ? indicators.vix.toFixed(2) : 'N/A'}`,
     `日経平均: ${indicators.nikkei != null ? indicators.nikkei.toFixed(0) : 'N/A'}`,
     `S&P500: ${indicators.sp500 != null ? indicators.sp500.toFixed(0) : 'N/A'}`,
-    ``, `【対象銘柄】（[OP]=既存ポジションあり、trade_signalsに含めない）`, instrumentList,
+    ``,
+    ...(regimeText ? [`【テクニカル環境認識（施策6）】`, regimeText, ``] : []),
+    ...(regimeProhibitions ? [`【現在の禁止行動（施策20）】`, regimeProhibitions, ``] : []),
+    `【対象銘柄】（[OP]=既存ポジションあり、trade_signalsに含めない）`, instrumentList,
   ].join('\n');
 
   const systemPrompt =

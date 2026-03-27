@@ -166,6 +166,13 @@ export function getDashboardHtml(): string {
   <div class="sec">手法 × 環境マトリクス</div>
   <div class="matrix-grid" id="strategy-matrix"></div>
 
+  <!-- セッション別・銘柄別統計（施策14+21） -->
+  <div class="sec">セッション別統計</div>
+  <div id="session-stats-table" style="padding:0 16px 8px"></div>
+
+  <div class="sec" style="margin-top:4px">銘柄別統計（Top10）</div>
+  <div id="pair-stats-table" style="padding:0 16px 8px"></div>
+
   <!-- 結論 -->
   <div class="sec">全体の結論</div>
   <div class="verdict-strip" id="stats-verdict">
@@ -361,7 +368,7 @@ export function getDashboardHtml(): string {
   <div id="news-drawer-body" class="news-drawer-body"></div>
 </div>
 
-<script src="/app.js?v=15"></script>
+<script src="/app.js?v=16"></script>
 </body>
 </html>`;
 }

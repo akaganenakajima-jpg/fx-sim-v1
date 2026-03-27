@@ -282,7 +282,81 @@ export async function generateWeeklyReview(db: D1Database): Promise<string> {
 }
 
 // ----------------------------------------------------------
+// セッション別・銘柄別統計（施策14）
+// ----------------------------------------------------------
+
+export interface SessionStats {
+  session: string;
+  count: number;
+  wins: number;
+  winRate: number;
+  avgPnl: number;
+  avgRR: number | null;
+}
+
+export async function getSessionStats(db: D1Database): Promise<SessionStats[]> {
+  const result = await db
+    .prepare(
+      `SELECT
+        session,
+        COUNT(*) as count,
+        SUM(CASE WHEN rr_ratio >= 1.0 THEN 1 ELSE 0 END) as wins,
+        ROUND(AVG(pnl), 2) as avg_pnl,
+        ROUND(AVG(rr_ratio), 2) as avg_rr
+      FROM trade_logs
+      WHERE session IS NOT NULL AND closed_at IS NOT NULL
+      GROUP BY session
+      ORDER BY count DESC`
+    )
+    .all<{ session: string; count: number; wins: number; avg_pnl: number; avg_rr: number | null }>();
+
+  return (result.results ?? []).map((r) => ({
+    session: r.session,
+    count: r.count,
+    wins: r.wins,
+    winRate: r.count > 0 ? Math.round((r.wins / r.count) * 10000) / 100 : 0,
+    avgPnl: r.avg_pnl,
+    avgRR: r.avg_rr,
+  }));
+}
+
+export interface PairStats {
+  pair: string;
+  count: number;
+  wins: number;
+  winRate: number;
+  avgPnl: number;
+  avgRR: number | null;
+}
+
+export async function getPairStats(db: D1Database): Promise<PairStats[]> {
+  const result = await db
+    .prepare(
+      `SELECT
+        pair,
+        COUNT(*) as count,
+        SUM(CASE WHEN rr_ratio >= 1.0 THEN 1 ELSE 0 END) as wins,
+        ROUND(AVG(pnl), 2) as avg_pnl,
+        ROUND(AVG(rr_ratio), 2) as avg_rr
+      FROM trade_logs
+      WHERE pair IS NOT NULL AND closed_at IS NOT NULL
+      GROUP BY pair
+      ORDER BY count DESC`
+    )
+    .all<{ pair: string; count: number; wins: number; avg_pnl: number; avg_rr: number | null }>();
+
+  return (result.results ?? []).map((r) => ({
+    pair: r.pair,
+    count: r.count,
+    wins: r.wins,
+    winRate: r.count > 0 ? Math.round((r.wins / r.count) * 10000) / 100 : 0,
+    avgPnl: r.avg_pnl,
+    avgRR: r.avg_rr,
+  }));
+}
+// ----------------------------------------------------------
 // 月次レビュー（施策15）
+
 // ----------------------------------------------------------
 
 interface MatrixRow {

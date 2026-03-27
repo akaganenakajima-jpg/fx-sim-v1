@@ -28,8 +28,8 @@ import { sendNotification, getWebhookUrl, buildDailySummaryMessage } from './not
 import { updateAllCandles } from './candles';
 import { fetchEconomicCalendar, getUpcomingHighImpactEvents } from './calendar';
 import { generateWeeklyReview, generateMonthlyReview } from './trade-journal';
-// detectBreakout は candle データがキャッシュに保存されるPhase 7以降で統合予定
-// import { detectBreakout } from './breakout';
+import { detectBreakout } from './breakout';
+import { determineRegime, formatRegimeForPrompt, getRegimeProhibitions } from './regime';
 import { getWeekendStatus, lockProfitsForWeekend, forceCloseAllForWeekend } from './weekend';
 import { runLogicDecisions } from './logic-trading';
 import { runParamReview } from './param-review';
@@ -398,6 +398,7 @@ async function runPathB(
   openPairs: Set<string>,
   apiKey: string,
   hedgeKeys?: { openaiApiKey?: string; anthropicApiKey?: string },
+  regimeContext?: { text: string; prohibitions: string },
 ): Promise<PathBResult> {
   const news = sharedNewsStore.items;
   if (news.length === 0) return { decisions: [], reversals: [], newsAnalysis: [] };
@@ -446,6 +447,9 @@ async function runPathB(
         openaiApiKey: hedgeKeys?.openaiApiKey,
         anthropicApiKey: hedgeKeys?.anthropicApiKey,
         db: env.DB,
+        // 施策6+20: テクニカル環境認識・禁止行動をAIプロンプトに注入
+        regimeText: regimeContext?.text,
+        regimeProhibitions: regimeContext?.prohibitions,
       });
       stage1 = b1Result;
       if (b1Result.provider !== 'gemini') {
@@ -809,6 +813,29 @@ async function run(env: Env): Promise<void> {
     // Path B はニュースハッシュ変化かつ最小間隔OKの場合のみ実行
     const shouldRunPathB = sharedNewsStore.hasChanged && pathBIntervalOk;
 
+    // 施策17: ブレイクアウト検知（ログ記録）
+    // candles.tsのキャッシュにcandles[]が含まれている場合のみ動作
+    for (const instr of INSTRUMENTS) {
+      if (openPairsForPathB.has(instr.pair)) continue;
+      const currentRate = prices.get(instr.pair);
+      if (!currentRate) continue;
+      const candleKey = `candle_${(instr as any).oandaSymbol ?? instr.pair.replace('/', '_')}_H1`;
+      const cacheRaw = await getCacheValue(env.DB, candleKey).catch(() => null);
+      if (!cacheRaw) continue;
+      try {
+        const cached = JSON.parse(cacheRaw) as { indicators?: Record<string, unknown>; candles?: unknown[] };
+        if (!cached.candles || cached.candles.length < 20 || !cached.indicators) continue;
+        const bk = detectBreakout(cached.candles as any, cached.indicators as any, currentRate);
+        if (bk.detected && bk.genuine && bk.confidence >= 70) {
+          console.log(`[fx-sim] BREAKOUT ${instr.pair} ${bk.type} conf=${bk.confidence}%`);
+          void insertSystemLog(env.DB, 'INFO', 'BREAKOUT',
+            `ブレイクアウト検知: ${instr.pair} ${bk.type} conf=${bk.confidence}%`,
+            JSON.stringify({ rangeHigh: bk.rangeHigh, rangeLow: bk.rangeLow, rate: currentRate })
+          ).catch(() => {});
+        }
+      } catch { /* キャッシュ破損無視 */ }
+    }
+
     if (sharedNewsStore.hasChanged && !pathBIntervalOk) {
       const elapsedSec = Math.round((Date.now() - lastPathBAt) / 1000);
       console.log(`[fx-sim] Path B: 最小間隔未達（${elapsedSec}s < 300s）→スキップ`);
@@ -1042,10 +1069,26 @@ async function run(env: Env): Promise<void> {
       // Path B: ニュースハッシュ変化時のみ実行（緊急/トレンドニュース専用AI）
       // ═══════════════════════════════════════════════════════════════
       try {
+        // 施策6+20: USD/JPYのH1キャッシュからレジーム計算（失敗時は無視）
+        let regimeContext: { text: string; prohibitions: string } | undefined;
+        try {
+          const cacheRaw = await getCacheValue(env.DB, 'candle_USD_JPY_H1');
+          if (cacheRaw) {
+            const cached = JSON.parse(cacheRaw) as { indicators?: Record<string, unknown> };
+            if (cached.indicators) {
+              const regimeResult = determineRegime(cached.indicators as any);
+              regimeContext = {
+                text: formatRegimeForPrompt(regimeResult, cached.indicators as any),
+                prohibitions: getRegimeProhibitions(regimeResult.regime),
+              };
+            }
+          }
+        } catch { /* regime計算失敗は従来動作を維持 */ }
+
         pathBResult = await runPathB(env, sharedNewsStore, indicators, openPairsForPathB, getApiKey(env), {
           openaiApiKey: env.OPENAI_API_KEY,
           anthropicApiKey: env.ANTHROPIC_API_KEY,
-        });
+        }, regimeContext);
         await setCacheValue(env.DB, 'last_path_b_at', String(Date.now()));
         console.log(`[fx-sim] Path B: ${pathBResult.decisions.length}件シグナル, ${pathBResult.reversals.length}件REVERSE`);
       } catch (e) {
