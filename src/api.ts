@@ -73,6 +73,7 @@ export interface PairPerf {
   total: number;
   wins: number;
   totalPnl: number;
+  avgRR: number | null;
 }
 
 export interface StatusResponse {
@@ -343,11 +344,12 @@ export async function getApiStatus(db: D1Database, tradingEnv?: { TRADING_ENABLE
           `SELECT pair,
              COUNT(*) AS total,
              COALESCE(SUM(CASE WHEN realized_rr >= 1.0 THEN 1 ELSE 0 END), 0) AS wins,
-             COALESCE(SUM(pnl), 0) AS totalPnl
+             COALESCE(SUM(pnl), 0) AS totalPnl,
+             AVG(CASE WHEN realized_rr IS NOT NULL THEN realized_rr END) AS avgRR
            FROM positions WHERE status = 'CLOSED'
            GROUP BY pair`
         )
-        .all<{ pair: string; total: number; wins: number; totalPnl: number }>(),
+        .all<{ pair: string; total: number; wins: number; totalPnl: number; avgRR: number | null }>(),
 
       // 直近クローズ（TP祝福検出 + 銘柄別履歴用）
       db
@@ -451,7 +453,7 @@ export async function getApiStatus(db: D1Database, tradingEnv?: { TRADING_ENABLE
   // 銘柄別パフォーマンスをRecord化
   const performanceByPair: Record<string, PairPerf> = {};
   for (const row of (perfByPairRaw.results ?? [])) {
-    performanceByPair[row.pair] = { total: row.total, wins: row.wins, totalPnl: row.totalPnl };
+    performanceByPair[row.pair] = { total: row.total, wins: row.wins, totalPnl: row.totalPnl, avgRR: row.avgRR ?? null };
   }
 
   const sysLogs = sysLogsRaw.results ?? [];
