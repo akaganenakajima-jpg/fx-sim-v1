@@ -233,6 +233,18 @@ const MIGRATIONS: Array<{ version: number; description: string; sql: string }> =
     description: 'instrument_scores に期間別RR集計カラム追加（rr_30t/wr_30t/rr_daily/rr_weekly/rr_monthly/rr_trend）',
     sql: `CREATE TABLE IF NOT EXISTS _dummy_v220 (id INTEGER PRIMARY KEY)`,
   },
+  // v221: トレイリングストップ後SL決済でrealized_rr=0になるバグ修正（バックフィル）
+  // BUY: SL決済でpnl>0 → SLがentry上方に移動済み → realized_rr=1.0が正しい
+  // SELL: SL決済でpnl>0 → SLがentry下方に移動済み → realized_rr=1.0が正しい
+  {
+    version: 221,
+    description: 'トレイリングSL後realized_rr=0バグ修正バックフィル（SL決済でpnl>0ならrealized_rr=1.0）',
+    sql: `UPDATE positions SET realized_rr = 1.0
+          WHERE status = 'CLOSED'
+            AND close_reason = 'SL'
+            AND pnl > 0
+            AND (realized_rr IS NULL OR realized_rr < 1.0)`,
+  },
 ];
 
 export async function runMigrations(db: D1Database): Promise<void> {
@@ -502,6 +514,21 @@ export async function runMigrations(db: D1Database): Promise<void> {
         "ALTER TABLE instrument_scores ADD COLUMN rr_trend TEXT DEFAULT 'STABLE'",
       ]) {
         try { await db.prepare(col).run(); } catch {}
+      }
+      await db.prepare(
+        'INSERT OR IGNORE INTO schema_version (version, description, applied_at) VALUES (?, ?, ?)'
+      ).bind(m.version, m.description, new Date().toISOString()).run();
+      console.log(`[migration] Applied v${m.version}: ${m.description}`);
+      continue;
+    }
+
+    // version 221: トレイリングSL後realized_rr=0バグ修正バックフィル
+    if (m.version === 221) {
+      try {
+        await db.prepare(m.sql).run();
+        console.log('[migration] v221: trailing-stop realized_rr backfill complete');
+      } catch (e) {
+        console.warn('[migration] v221 backfill warning:', e);
       }
       await db.prepare(
         'INSERT OR IGNORE INTO schema_version (version, description, applied_at) VALUES (?, ?, ?)'

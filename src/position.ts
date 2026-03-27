@@ -27,10 +27,18 @@ function calcPnl(
 export function calcRealizedRR(direction: string, entryRate: number, closeRate: number, slRate: number): number {
   if (direction === 'BUY') {
     const risk = entryRate - slRate;
-    return risk > 0 ? (closeRate - entryRate) / risk : 0;
+    if (risk <= 0) {
+      // トレイリングストップでSLがentry上方に移動済み → SL決済でも利益確定 → 勝ち(≥1.0)
+      return 1.0;
+    }
+    return (closeRate - entryRate) / risk;
   } else {
     const risk = slRate - entryRate;
-    return risk > 0 ? (entryRate - closeRate) / risk : 0;
+    if (risk <= 0) {
+      // トレイリングストップでSLがentry下方に移動済み → SL決済でも利益確定 → 勝ち(≥1.0)
+      return 1.0;
+    }
+    return (entryRate - closeRate) / risk;
   }
 }
 
