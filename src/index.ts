@@ -303,7 +303,7 @@ async function fetchMarketData(env: Env, now: Date): Promise<MarketData | null> 
   // Haiku でフィルタ + タイトル・概要の日本語化を一括処理（title_ja・desc_ja付与）
   const news = await filterAndTranslateWithHaiku(newsData.items, env.ANTHROPIC_API_KEY, env.DB);
   const activeNewsSources = [...new Set(news.map(n => n.source))].join(',');
-  const indicators = indicatorsResult.status === 'fulfilled' ? indicatorsResult.value : { vix: null, us10y: null, nikkei: null, sp500: null, usdjpy: null, btcusd: null, gold: null, eurusd: null, ethusd: null, crudeoil: null, natgas: null, copper: null, silver: null, gbpusd: null, audusd: null, solusd: null, dax: null, nasdaq: null, uk100: null, hk33: null, fearGreed: null, fearGreedLabel: null, cftcJpyNetLong: null };
+  const indicators = indicatorsResult.status === 'fulfilled' ? indicatorsResult.value : { vix: null, us10y: null, nikkei: null, sp500: null, usdjpy: null, btcusd: null, gold: null, eurusd: null, ethusd: null, crudeoil: null, natgas: null, copper: null, silver: null, gbpusd: null, audusd: null, solusd: null, dax: null, nasdaq: null, uk100: null, hk33: null, eurjpy: null, gbpjpy: null, audjpy: null, kawasaki_kisen: null, nippon_yusen: null, softbank_g: null, lasertec: null, tokyo_electron: null, disco: null, advantest: null, fast_retailing: null, nippon_steel: null, mufg: null, nvda: null, tsla: null, aapl: null, amzn: null, amd: null, meta: null, msft: null, googl: null, fearGreed: null, fearGreedLabel: null, cftcJpyNetLong: null };
   const frankfurterRate = frankfurterResult.status === 'fulfilled' ? frankfurterResult.value : null;
 
   const usdJpyRate = indicators.usdjpy ?? frankfurterRate;
@@ -333,6 +333,30 @@ async function fetchMarketData(env: Env, now: Date): Promise<MarketData | null> 
     ['NASDAQ',    indicators.nasdaq],
     ['UK100',     indicators.uk100],
     ['HK33',      indicators.hk33],
+    // 円クロス
+    ['EUR/JPY',   indicators.eurjpy],
+    ['GBP/JPY',   indicators.gbpjpy],
+    ['AUD/JPY',   indicators.audjpy],
+    // 日本個別株
+    ['川崎汽船',        indicators.kawasaki_kisen],
+    ['日本郵船',        indicators.nippon_yusen],
+    ['ソフトバンクG',    indicators.softbank_g],
+    ['レーザーテック',    indicators.lasertec],
+    ['東京エレクトロン',  indicators.tokyo_electron],
+    ['ディスコ',        indicators.disco],
+    ['アドバンテスト',    indicators.advantest],
+    ['ファーストリテイリング', indicators.fast_retailing],
+    ['日本製鉄',        indicators.nippon_steel],
+    ['三菱UFJ',        indicators.mufg],
+    // 米国個別株
+    ['NVDA',      indicators.nvda],
+    ['TSLA',      indicators.tsla],
+    ['AAPL',      indicators.aapl],
+    ['AMZN',      indicators.amzn],
+    ['AMD',       indicators.amd],
+    ['META',      indicators.meta],
+    ['MSFT',      indicators.msft],
+    ['GOOGL',     indicators.googl],
   ];
 
   const fallbackPairs: string[] = [];

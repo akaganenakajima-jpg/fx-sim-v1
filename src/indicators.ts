@@ -34,6 +34,30 @@ export interface MarketIndicators {
   nasdaq: number | null;
   uk100: number | null;
   hk33: number | null;
+  // 円クロス
+  eurjpy: number | null;
+  gbpjpy: number | null;
+  audjpy: number | null;
+  // 日本個別株
+  kawasaki_kisen: number | null;   // 川崎汽船 9107.T
+  nippon_yusen: number | null;     // 日本郵船 9101.T
+  softbank_g: number | null;       // ソフトバンクG 9984.T
+  lasertec: number | null;         // レーザーテック 6920.T
+  tokyo_electron: number | null;   // 東京エレクトロン 8035.T
+  disco: number | null;            // ディスコ 6146.T
+  advantest: number | null;        // アドバンテスト 6857.T
+  fast_retailing: number | null;   // ファーストリテイリング 9983.T
+  nippon_steel: number | null;     // 日本製鉄 5401.T
+  mufg: number | null;             // 三菱UFJ 8306.T
+  // 米国個別株
+  nvda: number | null;
+  tsla: number | null;
+  aapl: number | null;
+  amzn: number | null;
+  amd: number | null;
+  meta: number | null;
+  msft: number | null;
+  googl: number | null;
   /** Crypto Fear & Greed Index（0=Extreme Fear〜100=Extreme Greed） */
   fearGreed: number | null;
   /** Fear & Greed ラベル（"Extreme Fear" / "Fear" / "Neutral" / "Greed" / "Extreme Greed"） */
@@ -161,6 +185,13 @@ export async function getMarketIndicators(twelveDataApiKey?: string): Promise<Ma
   const [
     vix, nikkei, sp500, us10y, usdjpy, btcusd, gold, eurusd, ethusd,
     crudeoil, natgas, copper, silver, gbpusd, audusd, solusd, dax, nasdaq, uk100, hk33,
+    // 円クロス
+    eurjpy, gbpjpy, audjpy,
+    // 日本個別株
+    kawasaki_kisen, nippon_yusen, softbank_g, lasertec, tokyo_electron,
+    disco, advantest, fast_retailing, nippon_steel, mufg,
+    // 米国個別株
+    nvda, tsla, aapl, amzn, amd, meta, msft, googl,
     fearGreedData,
     cftcJpyNetLong,
   ] = await Promise.all([
@@ -184,6 +215,30 @@ export async function getMarketIndicators(twelveDataApiKey?: string): Promise<Ma
     fetchYahoo('^IXIC'),      // NASDAQ
     fetchYahoo('^FTSE'),      // UK100 (FTSE 100)
     fetchYahoo('^HSI'),       // HK33 (ハンセン指数)
+    // 円クロス
+    fetchYahoo('EURJPY=X'),
+    fetchYahoo('GBPJPY=X'),
+    fetchYahoo('AUDJPY=X'),
+    // 日本個別株（TSE .Tサフィックス）
+    fetchYahoo('9107.T'),     // 川崎汽船
+    fetchYahoo('9101.T'),     // 日本郵船
+    fetchYahoo('9984.T'),     // ソフトバンクG
+    fetchYahoo('6920.T'),     // レーザーテック
+    fetchYahoo('8035.T'),     // 東京エレクトロン
+    fetchYahoo('6146.T'),     // ディスコ
+    fetchYahoo('6857.T'),     // アドバンテスト
+    fetchYahoo('9983.T'),     // ファーストリテイリング
+    fetchYahoo('5401.T'),     // 日本製鉄
+    fetchYahoo('8306.T'),     // 三菱UFJ
+    // 米国個別株
+    fetchYahoo('NVDA'),
+    fetchYahoo('TSLA'),
+    fetchYahoo('AAPL'),
+    fetchYahoo('AMZN'),
+    fetchYahoo('AMD'),
+    fetchYahoo('META'),
+    fetchYahoo('MSFT'),
+    fetchYahoo('GOOGL'),
     // 追加指標（EXTRA_INDICATOR_CONFIG で ON/OFF）
     EXTRA_INDICATOR_CONFIG.fearGreed  ? fetchFearGreed()        : Promise.resolve({ value: null, label: null }),
     EXTRA_INDICATOR_CONFIG.cftcJpyCot ? fetchCftcJpyNetLong()   : Promise.resolve(null),
@@ -192,6 +247,10 @@ export async function getMarketIndicators(twelveDataApiKey?: string): Promise<Ma
   const result: MarketIndicators = {
     vix, us10y, nikkei, sp500, usdjpy, btcusd, gold, eurusd, ethusd,
     crudeoil, natgas, copper, silver, gbpusd, audusd, solusd, dax, nasdaq, uk100, hk33,
+    eurjpy, gbpjpy, audjpy,
+    kawasaki_kisen, nippon_yusen, softbank_g, lasertec, tokyo_electron,
+    disco, advantest, fast_retailing, nippon_steel, mufg,
+    nvda, tsla, aapl, amzn, amd, meta, msft, googl,
     fearGreed: fearGreedData.value,
     fearGreedLabel: fearGreedData.label,
     cftcJpyNetLong,

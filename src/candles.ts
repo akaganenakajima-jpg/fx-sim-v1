@@ -319,6 +319,81 @@ export function calcAllIndicators(candles: CandleData[]): TechnicalIndicators {
   };
 }
 
+// ── Yahoo Finance ローソク足取得（日本株・米国株用） ──
+
+interface YahooCandleResponse {
+  chart: {
+    result: Array<{
+      timestamp: number[];
+      indicators: {
+        quote: Array<{
+          open: (number | null)[];
+          high: (number | null)[];
+          low: (number | null)[];
+          close: (number | null)[];
+          volume: (number | null)[];
+        }>;
+      };
+    }> | null;
+    error: unknown;
+  };
+}
+
+/** granularity → Yahoo Finance interval/range パラメータ */
+function yahooParams(granularity: 'H1' | 'H4' | 'D'): { interval: string; range: string } {
+  switch (granularity) {
+    case 'H1': return { interval: '1h', range: '7d' };    // 7日≈50本+
+    case 'H4': return { interval: '1d', range: '3mo' };   // H4はYahoo未対応→日足で代用
+    case 'D':  return { interval: '1d', range: '3mo' };   // 3ヶ月≈60本+
+  }
+}
+
+export async function fetchYahooCandles(
+  symbol: string,
+  granularity: 'H1' | 'H4' | 'D'
+): Promise<CandleData[]> {
+  const { interval, range } = yahooParams(granularity);
+  const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(symbol)}?interval=${interval}&range=${range}`;
+
+  try {
+    const res = await fetch(url, {
+      headers: { 'User-Agent': 'fx-sim-v1/1.0' },
+      signal: AbortSignal.timeout(8_000),
+    });
+
+    if (!res.ok) {
+      console.warn(`[candles] Yahoo candle error: ${res.status} (${symbol} ${granularity})`);
+      return [];
+    }
+
+    const data = await res.json() as YahooCandleResponse;
+    const result = data.chart?.result?.[0];
+    if (!result?.timestamp || !result.indicators?.quote?.[0]) return [];
+
+    const { timestamp } = result;
+    const q = result.indicators.quote[0];
+    const candles: CandleData[] = [];
+
+    for (let i = 0; i < timestamp.length; i++) {
+      const o = q.open[i], h = q.high[i], l = q.low[i], c = q.close[i];
+      if (o == null || h == null || l == null || c == null) continue;
+      candles.push({
+        time: new Date(timestamp[i] * 1000).toISOString(),
+        open: o,
+        high: h,
+        low: l,
+        close: c,
+        volume: q.volume[i] ?? 0,
+      });
+    }
+
+    return candles;
+  } catch (e) {
+    console.warn(`[candles] Yahoo candle fetch failed (${symbol} ${granularity}):`, String(e).slice(0, 120));
+    return [];
+  }
+}
+
 // ── キャッシュ付きメイン関数 ──
 
 /** キャッシュTTL (ミリ秒) */
@@ -430,6 +505,79 @@ export async function getTechnicalIndicators(
   return { h1, h4, daily };
 }
 
+// ── Yahoo Finance ローソク足 キャッシュ付き取得（株式用） ──
+
+async function getStockIndicatorsWithCache(
+  db: D1Database,
+  stockSymbol: string,
+  granularity: 'H1' | 'H4' | 'D'
+): Promise<TechnicalIndicators> {
+  const cacheKey = `candle_stock_${stockSymbol}_${granularity}`;
+  const ttl = CACHE_TTL[granularity];
+
+  // キャッシュ読み出し
+  try {
+    const row = await db
+      .prepare('SELECT value, updated_at FROM market_cache WHERE key = ?')
+      .bind(cacheKey)
+      .first<{ value: string; updated_at: string }>();
+
+    if (row) {
+      const age = Date.now() - new Date(row.updated_at).getTime();
+      if (age < ttl) {
+        const cached = JSON.parse(row.value) as CachedIndicator;
+        return cached.indicators;
+      }
+    }
+  } catch {
+    // キャッシュ読み出し失敗は無視して取得に進む
+  }
+
+  // Yahoo Finance からキャンドル取得
+  const candles = await fetchYahooCandles(stockSymbol, granularity);
+
+  if (candles.length === 0) {
+    return { ...EMPTY_INDICATORS };
+  }
+
+  // テクニカル指標算出
+  const indicators = calcAllIndicators(candles);
+
+  // キャッシュ保存
+  try {
+    const cacheValue: CachedIndicator = {
+      indicators,
+      updatedAt: new Date().toISOString(),
+      candles: candles.slice(-30),
+    };
+    await db
+      .prepare(
+        `INSERT INTO market_cache (key, value, updated_at) VALUES (?, ?, ?)
+         ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`
+      )
+      .bind(cacheKey, JSON.stringify(cacheValue), new Date().toISOString())
+      .run();
+  } catch (e) {
+    console.warn(`[candles] Stock cache write failed (${cacheKey}):`, String(e).slice(0, 100));
+  }
+
+  return indicators;
+}
+
+/** 株式銘柄のテクニカル指標取得（Yahoo Finance ローソク足使用） */
+export async function getStockTechnicalIndicators(
+  db: D1Database,
+  stockSymbol: string
+): Promise<{ h1: TechnicalIndicators; h4: TechnicalIndicators; daily: TechnicalIndicators }> {
+  const [h1, h4, daily] = await Promise.all([
+    getStockIndicatorsWithCache(db, stockSymbol, 'H1'),
+    getStockIndicatorsWithCache(db, stockSymbol, 'H4'),
+    getStockIndicatorsWithCache(db, stockSymbol, 'D'),
+  ]);
+
+  return { h1, h4, daily };
+}
+
 // ── バッチ更新（日次タスク用） ──
 
 export async function updateAllCandles(
@@ -437,33 +585,38 @@ export async function updateAllCandles(
   oandaToken: string,
   accountId: string,
   isLive: boolean,
-  instruments: Array<{ oandaSymbol: string | null }>
+  instruments: Array<{ oandaSymbol: string | null; stockSymbol?: string }>
 ): Promise<void> {
-  // oandaSymbol == null の銘柄をスキップ
-  const targets = instruments.filter(
-    (i): i is { oandaSymbol: string } => i.oandaSymbol != null
-  );
-
-  if (targets.length === 0) return;
-
   const granularities: Array<'H1' | 'H4' | 'D'> = ['D', 'H4', 'H1'];
 
   // 全タスクを生成
   const tasks: Array<() => Promise<void>> = [];
-  for (const inst of targets) {
+
+  // OANDA銘柄（FX/CFD）
+  const oandaTargets = instruments.filter(
+    (i): i is { oandaSymbol: string; stockSymbol?: string } => i.oandaSymbol != null
+  );
+  for (const inst of oandaTargets) {
     for (const g of granularities) {
       tasks.push(async () => {
-        await getIndicatorsWithCache(
-          db,
-          oandaToken,
-          accountId,
-          isLive,
-          inst.oandaSymbol,
-          g
-        );
+        await getIndicatorsWithCache(db, oandaToken, accountId, isLive, inst.oandaSymbol, g);
       });
     }
   }
+
+  // Yahoo Finance銘柄（日本株・米国株）
+  const stockTargets = instruments.filter(
+    (i): i is { oandaSymbol: string | null; stockSymbol: string } => i.stockSymbol != null
+  );
+  for (const inst of stockTargets) {
+    for (const g of granularities) {
+      tasks.push(async () => {
+        await getStockIndicatorsWithCache(db, inst.stockSymbol, g);
+      });
+    }
+  }
+
+  if (tasks.length === 0) return;
 
   // 最大5並列で実行
   const concurrency = 5;
