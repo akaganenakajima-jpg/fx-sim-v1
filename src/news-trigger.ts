@@ -182,12 +182,19 @@ async function callGptForTempParams(
       }),
       signal: AbortSignal.timeout(15000),
     });
-    if (!res.ok) return null;
+    if (!res.ok) {
+      console.warn(`[news-trigger] GPT HTTP error: ${res.status} ${res.statusText}`);
+      return null;
+    }
     const data = await res.json() as { choices?: Array<{ message: { content: string } }> };
     const text = data.choices?.[0]?.message?.content;
-    if (!text) return null;
+    if (!text) {
+      console.warn(`[news-trigger] GPT empty response`);
+      return null;
+    }
     return JSON.parse(text) as { pairs: TempParamEntry[]; reason: string; expiresInHours: number };
-  } catch {
+  } catch (e) {
+    console.warn(`[news-trigger] GPT call failed: ${String(e).slice(0, 100)}`);
     return null;
   }
 }
@@ -349,7 +356,30 @@ export async function runNewsTrigger(
 
     const gptResult = await callGptForTempParams(title, row.composite_score ?? 7.5, openaiApiKey);
 
-    if (!gptResult || gptResult.pairs.length === 0) {
+    if (!gptResult) {
+      // GPT呼び出し失敗（APIエラー・タイムアウト）— APIキー有効だが呼び出しに失敗
+      await db
+        .prepare(
+          `INSERT INTO news_trigger_log (trigger_type, news_title, news_score, affected_pairs, detail, created_at)
+           VALUES ('TREND_INFLUENCE', ?, ?, NULL, 'GPT呼び出し失敗', ?)`
+        )
+        .bind(title, row.composite_score, new Date().toISOString())
+        .run();
+      await insertSystemLog(db, 'WARN', 'NEWS_TRIGGER',
+        `GPT呼び出し失敗でTREND_INFLUENCEスキップ: ${title.slice(0, 60)}`,
+        `score=${row.composite_score}`);
+      return { triggerType: 'TREND_INFLUENCE', newsTitle: title, emergencyForced: false, affectedPairs: [] };
+    }
+
+    if (gptResult.pairs.length === 0) {
+      // GPTが「影響軽微・変更不要」と判断した場合
+      await db
+        .prepare(
+          `INSERT INTO news_trigger_log (trigger_type, news_title, news_score, affected_pairs, detail, created_at)
+           VALUES ('TREND_INFLUENCE', ?, ?, NULL, '影響軽微・パラメーター変更なし', ?)`
+        )
+        .bind(title, row.composite_score, new Date().toISOString())
+        .run();
       return { triggerType: 'TREND_INFLUENCE', newsTitle: title, emergencyForced: false, affectedPairs: [] };
     }
 
