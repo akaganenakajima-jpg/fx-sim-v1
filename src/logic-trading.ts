@@ -487,9 +487,17 @@ export async function runLogicDecisions(
   }
 
   if (summary.entered > 0 || summary.signals.some(s => s.signal !== 'SKIP')) {
+    // BUY/SELLシグナルが出ているのにエントリーゼロの場合はSKIP理由も記録（デバッグ用）
+    const hasBuySellSignal = summary.signals.some(s => s.signal === 'BUY' || s.signal === 'SELL');
+    const skipReasons = hasBuySellSignal && summary.entered === 0
+      ? summary.signals.filter(s => s.signal === 'SKIP').map(s => `${s.pair}:${s.reason ?? 'SKIP'}`).slice(0, 5)
+      : [];
     await insertSystemLog(db, 'INFO', 'FLOW',
       `LOGIC完了: ${summary.entered}件エントリー / ${summary.skipped}件スキップ`,
-      JSON.stringify(summary.signals.filter(s => s.signal !== 'SKIP').map(s => `${s.pair}:${s.signal}`)));
+      JSON.stringify([
+        ...summary.signals.filter(s => s.signal !== 'SKIP').map(s => `${s.pair}:${s.signal}`),
+        ...(skipReasons.length > 0 ? [`SKIP理由:${skipReasons.join(',')}`.slice(0, 200)] : []),
+      ]));
   }
 
   return summary;
