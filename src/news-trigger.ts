@@ -148,11 +148,23 @@ async function callGptForTempParams(
     `【ニュースタイトル】${newsTitle}`,
     `【スコア】${newsScore.toFixed(1)}/10`,
     ``,
-    `【判断基準】`,
-    `- ドル円に大きく影響するなら pair=USD/JPY を含める`,
-    `- 株価インデックスに影響するなら Nikkei225, S&P500, DAX 等を含める`,
-    `- コモディティに影響するなら Gold, CrudeOil 等を含める`,
-    `- 影響が不明・軽微な場合は pairs=[] で返すこと`,
+    `【判断基準（キーワードベース自動マッピング）】`,
+    `タイトルに以下のキーワードが含まれる場合、対応するpairを必ず含めること:`,
+    `- USD/JPY・ドル円・円安・円高・介入・BOJ・日銀・円 → pair="USD/JPY"`,
+    `- 原油・石油・CrudeOil・WTI・OPEC・タンカー → pair="CrudeOil"`,
+    `- 金（ゴールド）・Gold → pair="Gold"`,
+    `- 日経・Nikkei・東証・TOPIX → pair="Nikkei225"`,
+    `- EUR/USD・ユーロ・Euro → pair="EUR/USD"`,
+    `- GBP/USD・ポンド・Pound・Sterling → pair="GBP/USD"`,
+    `- AUD・豪ドル・RBA → pair="AUD/USD"`,
+    `- 銀・Silver → pair="Silver"`,
+    `- S&P500・ダウ → pair="S&P500"`,
+    `- NASDAQ・ナスダック → pair="NASDAQ"`,
+    `- 天然ガス・NatGas → pair="NatGas"`,
+    `- 銅・Copper → pair="Copper"`,
+    `- 債券・長期金利・米国債・国債 → pair="USD/JPY"（金利はドル円に最も直結）`,
+    `- インフレ・CPI・FOMC・FRB・Fed → pair="USD/JPY"（米金融政策はドル円に影響）`,
+    `- 上記キーワードが全くない場合のみ pairs=[] で返すこと`,
     ``,
     `【パラメーター調整方針】`,
     `- ボラティリティ上昇が予想される → atr_tp_multiplierを大きく（最大1.5倍）、adx_minを下げる`,
@@ -182,12 +194,19 @@ async function callGptForTempParams(
       }),
       signal: AbortSignal.timeout(15000),
     });
-    if (!res.ok) return null;
+    if (!res.ok) {
+      console.warn(`[news-trigger] GPT HTTP error: ${res.status} ${res.statusText}`);
+      return null;
+    }
     const data = await res.json() as { choices?: Array<{ message: { content: string } }> };
     const text = data.choices?.[0]?.message?.content;
-    if (!text) return null;
+    if (!text) {
+      console.warn(`[news-trigger] GPT empty response`);
+      return null;
+    }
     return JSON.parse(text) as { pairs: TempParamEntry[]; reason: string; expiresInHours: number };
-  } catch {
+  } catch (e) {
+    console.warn(`[news-trigger] GPT call failed: ${String(e).slice(0, 100)}`);
     return null;
   }
 }
@@ -349,7 +368,30 @@ export async function runNewsTrigger(
 
     const gptResult = await callGptForTempParams(title, row.composite_score ?? 7.5, openaiApiKey);
 
-    if (!gptResult || gptResult.pairs.length === 0) {
+    if (!gptResult) {
+      // GPT呼び出し失敗（APIエラー・タイムアウト）— APIキー有効だが呼び出しに失敗
+      await db
+        .prepare(
+          `INSERT INTO news_trigger_log (trigger_type, news_title, news_score, affected_pairs, detail, created_at)
+           VALUES ('TREND_INFLUENCE', ?, ?, NULL, 'GPT呼び出し失敗', ?)`
+        )
+        .bind(title, row.composite_score, new Date().toISOString())
+        .run();
+      await insertSystemLog(db, 'WARN', 'NEWS_TRIGGER',
+        `GPT呼び出し失敗でTREND_INFLUENCEスキップ: ${title.slice(0, 60)}`,
+        `score=${row.composite_score}`);
+      return { triggerType: 'TREND_INFLUENCE', newsTitle: title, emergencyForced: false, affectedPairs: [] };
+    }
+
+    if (gptResult.pairs.length === 0) {
+      // GPTが「影響軽微・変更不要」と判断した場合
+      await db
+        .prepare(
+          `INSERT INTO news_trigger_log (trigger_type, news_title, news_score, affected_pairs, detail, created_at)
+           VALUES ('TREND_INFLUENCE', ?, ?, NULL, '影響軽微・パラメーター変更なし', ?)`
+        )
+        .bind(title, row.composite_score, new Date().toISOString())
+        .run();
       return { triggerType: 'TREND_INFLUENCE', newsTitle: title, emergencyForced: false, affectedPairs: [] };
     }
 
