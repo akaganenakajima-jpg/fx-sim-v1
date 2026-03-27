@@ -275,3 +275,34 @@ export async function insertTokenUsage(
     // token_usage テーブル未作成（マイグレーション前）の場合は無視
   }
 }
+
+/**
+ * 全銘柄の現在価格を price_history テーブルに一括記録（db.batch）
+ * RSI/ATR計算が decisions テーブルに循環依存しないよう専用テーブルへ蓄積する
+ * 2時間超のレコードを自動削除してテーブルサイズを抑制
+ */
+export async function insertPriceHistory(
+  db: D1Database,
+  prices: Map<string, number | null>,
+  now: Date,
+): Promise<void> {
+  try {
+    const ts = now.toISOString();
+    const stmts: D1PreparedStatement[] = [];
+    for (const [pair, rate] of prices) {
+      if (rate == null) continue;
+      stmts.push(
+        db.prepare(`INSERT INTO price_history (pair, rate, recorded_at) VALUES (?, ?, ?)`)
+          .bind(pair, rate, ts)
+      );
+    }
+    // 2時間超の古いレコードを削除（テーブル肥大化防止）
+    const cutoff = new Date(now.getTime() - 2 * 60 * 60 * 1000).toISOString();
+    stmts.push(
+      db.prepare(`DELETE FROM price_history WHERE recorded_at < ?`).bind(cutoff)
+    );
+    if (stmts.length > 0) await db.batch(stmts);
+  } catch {
+    // price_history テーブル未作成の場合は無視
+  }
+}

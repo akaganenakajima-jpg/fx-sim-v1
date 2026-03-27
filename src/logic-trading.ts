@@ -38,7 +38,10 @@ async function loadAllParams(db: D1Database): Promise<Map<string, InstrumentPara
   return map;
 }
 
-// ─── 価格履歴取得（RSI/ATR計算用: 最大50件）──────────────────────────────
+// ─── 価格履歴取得（RSI/ATR計算用: 最大120件）─────────────────────────────
+// price_history テーブル（毎分積み上げ）を参照することで
+// decisions への循環依存（NEUTRAL=保存なし→履歴枯渇→常にNEUTRAL）を解消
+// fallback: price_history が空の場合（初期起動直後）は decisions から取得
 
 async function loadPriceHistory(
   db: D1Database,
@@ -47,16 +50,24 @@ async function loadPriceHistory(
   const map = new Map<string, number[]>();
   if (pairs.length === 0) return map;
 
-  // 銘柄ごとに個別クエリ: 単一LIMITだとGold等の高頻度銘柄が枠を占有して
-  // 他銘柄が「価格履歴不足」になる問題を防ぐ
   await Promise.all(pairs.map(async (pair) => {
+    // まず price_history から取得（最大120件 = 約2時間分）
     const rows = await db
+      .prepare(`SELECT rate FROM price_history WHERE pair = ? ORDER BY id DESC LIMIT 120`)
+      .bind(pair)
+      .all<{ rate: number }>();
+    if (rows.results && rows.results.length >= 10) {
+      // DESC取得を正順（最古→最新）に並び替え
+      map.set(pair, rows.results.map(r => r.rate).reverse());
+      return;
+    }
+    // fallback: price_history が不足している場合（初期起動直後）
+    const fallback = await db
       .prepare(`SELECT rate FROM decisions WHERE pair = ? ORDER BY id DESC LIMIT 50`)
       .bind(pair)
       .all<{ rate: number }>();
-    if (rows.results && rows.results.length > 0) {
-      // DESC取得を正順（最古→最新）に並び替え
-      map.set(pair, rows.results.map(r => r.rate).reverse());
+    if (fallback.results && fallback.results.length > 0) {
+      map.set(pair, fallback.results.map(r => r.rate).reverse());
     }
   }));
 

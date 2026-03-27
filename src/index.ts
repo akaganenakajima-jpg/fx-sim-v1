@@ -13,6 +13,7 @@ import {
   setCacheValue,
   closePosition,
   getOpenPositions,
+  insertPriceHistory,
 } from './db';
 import { slPatternAnalysis } from './stats';
 import { getDashboardHtml } from './dashboard';
@@ -352,7 +353,12 @@ async function fetchMarketData(env: Env, now: Date): Promise<MarketData | null> 
   if (fallbackPairs.length > 0) {
     console.warn(`[fx-sim] Yahoo失敗→キャッシュ使用: ${fallbackPairs.join(', ')}`);
     if (fallbackPairs.length >= 3) {
-      await insertSystemLog(env.DB, 'WARN', 'RATE', `Yahoo障害: ${fallbackPairs.length}銘柄キャッシュフォールバック`, fallbackPairs.join(', '));
+      // NYSE閉場時間帯（UTC 20:00〜13:30）はキャッシュフォールバックが正常動作のためINFO
+      const utcHour = now.getUTCHours();
+      const utcMin = now.getUTCMinutes();
+      const isMarketOpen = (utcHour > 13 || (utcHour === 13 && utcMin >= 30)) && utcHour < 20;
+      const level = isMarketOpen ? 'WARN' : 'INFO';
+      await insertSystemLog(env.DB, level, 'RATE', `Yahoo障害: ${fallbackPairs.length}銘柄キャッシュフォールバック`, fallbackPairs.join(', '));
     }
   }
 
@@ -675,6 +681,8 @@ async function run(env: Env): Promise<void> {
       prices: [...prices.values()].filter(v => v != null).length,
       sources: activeNewsSources || 'none',
     }));
+    // 全銘柄価格を price_history に記録（RSI/ATR循環依存を断ち切る）
+    await insertPriceHistory(env.DB, prices, now);
 
     // ブローカー環境（TP/SL・ポジション開設で使用）
     const brokerEnv: BrokerEnv = {
