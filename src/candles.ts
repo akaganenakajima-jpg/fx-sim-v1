@@ -342,6 +342,8 @@ const EMPTY_INDICATORS: TechnicalIndicators = {
 interface CachedIndicator {
   indicators: TechnicalIndicators;
   updatedAt: string;
+  // 施策17: ブレイクアウト検知用に直近30本のローソク足を保存
+  candles?: CandleData[];
 }
 
 async function getIndicatorsWithCache(
@@ -395,6 +397,8 @@ async function getIndicatorsWithCache(
     const cacheValue: CachedIndicator = {
       indicators,
       updatedAt: new Date().toISOString(),
+      // 施策17: ブレイクアウト検知用に直近30本保存
+      candles: candles.slice(-30),
     };
     await db
       .prepare(

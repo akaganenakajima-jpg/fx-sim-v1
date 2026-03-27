@@ -210,6 +210,11 @@ export async function checkAndCloseAllPositions(
         pnl,
         entryRate: pos.entry_rate,
         closeRate: currentRate,
+        // 施策22: 手法・レジーム・確信度・実現RRを通知に追加
+        strategy: pos.strategy ?? undefined,
+        regime: pos.regime ?? undefined,
+        confidence: pos.confidence ?? null,
+        realizedRR: tpRealizedRR,
       }));
       await updateDecisionOutcome(db, pos.pair, pos.direction, pos.entry_at, tpRealizedRR >= 1.0 ? 'WIN' : 'LOSE');
       // トンプソン・サンプリングパラメータ更新
@@ -248,6 +253,11 @@ export async function checkAndCloseAllPositions(
         pnl,
         entryRate: pos.entry_rate,
         closeRate: currentRate,
+        // 施策22: 手法・レジーム・確信度・実現RRを通知に追加
+        strategy: pos.strategy ?? undefined,
+        regime: pos.regime ?? undefined,
+        confidence: pos.confidence ?? null,
+        realizedRR: slRealizedRR,
       }));
       await updateDecisionOutcome(db, pos.pair, pos.direction, pos.entry_at, slRealizedRR >= 1.0 ? 'WIN' : 'LOSE');
       // トンプソン・サンプリングパラメータ更新

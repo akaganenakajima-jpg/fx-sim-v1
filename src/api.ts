@@ -3,6 +3,7 @@
 import type { Position } from './db';
 // fetchNewsはcron側の責務。API側はlatest_newsキャッシュのみ参照
 import { getRiskStatus, type RiskEnv } from './risk-guard';
+import { getSessionStats, getPairStats, type SessionStats, type PairStats } from './trade-journal';
 import { wilsonCI, sharpeWithSE, varCvar, kellyFraction, markovTransition, maxDrawdown, rollingReturns, pnlVolatility, profitFactor, bootstrapROI, aiAccuracy, randomBaselineComparison, pairCorrelation, logReturnStats, powerAnalysis, ewmaVolatility, engleGrangerCointegration, hierarchicalWinRate } from './stats';
 
 export interface LatestDecision {
@@ -286,6 +287,10 @@ export interface StatusResponse {
     }>;
     instrumentTiers: Array<{ pair: string; tier: string; multiplier: number }>;
   } | null;
+  /** テスタ施策14: セッション別統計 */
+  sessionStats: SessionStats[];
+  /** テスタ施策14: 銘柄別統計 */
+  pairStats: PairStats[];
 }
 
 export async function getApiStatus(db: D1Database, tradingEnv?: { TRADING_ENABLED?: string; OANDA_LIVE?: string; RISK_MAX_DAILY_LOSS?: string; RISK_MAX_LIVE_POSITIONS?: string; RISK_MAX_LOT_SIZE?: string; RISK_ANOMALY_THRESHOLD?: string }): Promise<StatusResponse> {
@@ -709,6 +714,8 @@ export async function getApiStatus(db: D1Database, tradingEnv?: { TRADING_ENABLE
     todaySellCount:     todayDecisionCountRow?.sellCount ?? 0,
     causalSummary: await buildCausalSummary(db),
     strategyMap: await getStrategyMapData(db),
+    sessionStats: await getSessionStats(db).catch(() => []),
+    pairStats: await getPairStats(db).catch(() => []),
     tradeContext: (openPositions.results ?? []).length > 0
       ? await buildTradeContext(db, openPositions.results ?? [])
       : null,

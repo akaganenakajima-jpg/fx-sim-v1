@@ -61,11 +61,22 @@ export function buildTpSlMessage(params: {
   pnl: number;
   entryRate: number;
   closeRate: number;
+  // 施策22: 追加情報（オプション）
+  strategy?: string;
+  regime?: string;
+  confidence?: number | null;
+  realizedRR?: number | null;
 }): string {
-  const { pair, direction, reason, pnl, entryRate, closeRate } = params;
+  const { pair, direction, reason, pnl, entryRate, closeRate, strategy, regime, confidence, realizedRR } = params;
   const emoji = reason === 'TP' ? '✅' : '❌';
   const sign = pnl >= 0 ? '+' : '';
-  return `${emoji} [fx-sim] ${pair} ${direction} ${reason} | エントリー:${entryRate} → クローズ:${closeRate} | PnL: ${sign}${pnl.toFixed(1)} pip`;
+  // 施策22: confidence バッジ（高確信度はポジティブ強調）
+  const confBadge = confidence != null
+    ? (confidence >= 75 ? '🔥' : confidence >= 50 ? '⚡' : '')
+    : '';
+  const stratStr = strategy ? ` [${strategy}${regime ? '/' + regime : ''}]` : '';
+  const rrStr = realizedRR != null ? ` RR=${realizedRR.toFixed(2)}` : '';
+  return `${confBadge}${emoji} [fx-sim] ${pair} ${direction}${stratStr} ${reason} | エントリー:${entryRate} → クローズ:${closeRate} | PnL: ${sign}${pnl.toFixed(1)} pip${rrStr}`;
 }
 
 export function buildDailySummaryMessage(params: {

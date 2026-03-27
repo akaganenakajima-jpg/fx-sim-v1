@@ -1047,6 +1047,9 @@ export const JS = `
     // 手法×環境マトリクス
     renderStrategyMatrix(data);
 
+    // セッション別・銘柄別統計（施策14+21）
+    renderSessionPairStats(data);
+
     // 結論ストリップ
     renderStatsVerdict(data);
 
@@ -1314,6 +1317,45 @@ export const JS = `
       vixCols.forEach(function(v) { fb += matrixCell(tier, v); });
     });
     matrixEl.innerHTML = fb;
+  }
+
+  function renderSessionPairStats(data) {
+    var sessEl = el('session-stats-table');
+    var pairEl = el('pair-stats-table');
+    var sessList = data.sessionStats || [];
+    var pairList = data.pairStats || [];
+
+    function statsTable(rows, labelKey) {
+      if (!rows || rows.length === 0) {
+        return '<div style="color:var(--tertiary);font-size:12px;padding:8px 0">データ蓄積中...</div>';
+      }
+      var h = '<table style="width:100%;font-size:12px;border-collapse:collapse">';
+      h += '<tr style="color:var(--tertiary)">';
+      h += '<th style="text-align:left;padding:4px 6px;font-weight:600">' + (labelKey === 'session' ? 'セッション' : '銘柄') + '</th>';
+      h += '<th style="text-align:right;padding:4px 6px;font-weight:600">件数</th>';
+      h += '<th style="text-align:right;padding:4px 6px;font-weight:600">勝率(RR≥1.0)</th>';
+      h += '<th style="text-align:right;padding:4px 6px;font-weight:600">avg PnL</th>';
+      h += '<th style="text-align:right;padding:4px 6px;font-weight:600">avg RR</th>';
+      h += '</tr>';
+      rows.forEach(function(r, i) {
+        var label = escHtml(r[labelKey] || '—');
+        var wrColor = r.winRate >= 40 ? 'var(--green)' : r.winRate >= 30 ? 'var(--label)' : 'var(--red)';
+        var pnlColor = r.avgPnl >= 0 ? 'var(--green)' : 'var(--red)';
+        var bg = i % 2 === 1 ? 'background:rgba(255,255,255,0.03)' : '';
+        h += '<tr style="' + bg + '">';
+        h += '<td style="padding:4px 6px;color:var(--label)">' + label + '</td>';
+        h += '<td style="text-align:right;padding:4px 6px;color:var(--tertiary)">' + r.count + '</td>';
+        h += '<td style="text-align:right;padding:4px 6px;color:' + wrColor + '">' + (r.winRate != null ? r.winRate.toFixed(1) + '%' : '—') + '</td>';
+        h += '<td style="text-align:right;padding:4px 6px;color:' + pnlColor + '">' + (r.avgPnl != null ? (r.avgPnl >= 0 ? '+' : '') + r.avgPnl.toFixed(1) : '—') + '</td>';
+        h += '<td style="text-align:right;padding:4px 6px;color:var(--tertiary)">' + (r.avgRR != null ? r.avgRR.toFixed(2) : '—') + '</td>';
+        h += '</tr>';
+      });
+      h += '</table>';
+      return h;
+    }
+
+    if (sessEl) sessEl.innerHTML = statsTable(sessList, 'session');
+    if (pairEl) pairEl.innerHTML = statsTable(pairList.slice(0, 10), 'pair');
   }
 
   function renderStatsVerdict(data) {
