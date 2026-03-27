@@ -56,8 +56,9 @@ async function loadPriceHistory(
       .prepare(`SELECT rate FROM price_history WHERE pair = ? ORDER BY id DESC LIMIT 120`)
       .bind(pair)
       .all<{ rate: number }>();
-    if (rows.results && rows.results.length >= 10) {
+    if (rows.results && rows.results.length >= 20) {
       // DESC取得を正順（最古→最新）に並び替え
+      // 閾値20: rsi_period(最大14)+1=15を確実に超えてからprice_historyを使用
       map.set(pair, rows.results.map(r => r.rate).reverse());
       return;
     }
