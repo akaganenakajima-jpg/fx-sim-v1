@@ -1038,6 +1038,9 @@ export const JS = `
     }
     var skTotal = el('sk-total'); if (skTotal) skTotal.textContent = perf.totalClosed != null ? String(perf.totalClosed) : '—';
 
+    // Era分割統計
+    renderEraStats(data);
+
     // エクイティカーブ
     renderEquityChart(data);
 
@@ -1126,6 +1129,39 @@ export const JS = `
     }
     html += '</div>';
     container.innerHTML = html;
+  }
+
+  function renderEraStats(data) {
+    var sec = el('era-stats-section');
+    var cards = el('era-stats-cards');
+    if (!sec || !cards) return;
+    var era = data.eraStats;
+    if (!era) { sec.style.display = 'none'; return; }
+    sec.style.display = 'block';
+    var html = '';
+    [era.pre, era.post].forEach(function(e) {
+      var isPost = e.label.indexOf('RR') >= 0;
+      var border = isPost ? 'rgba(48,209,88,0.3)' : 'rgba(142,142,147,0.2)';
+      var badge = isPost ? '<span style="font-size:9px;background:var(--green);color:#000;border-radius:4px;padding:1px 5px;margin-left:4px;font-weight:700">現行</span>' : '';
+      var pnlColor = e.pnl >= 0 ? 'var(--green)' : 'var(--red)';
+      var wrColor = e.win_rate >= 35 ? 'var(--green)' : 'var(--red)';
+      html += '<div style="flex:1;background:var(--surface);border-radius:var(--rs);padding:10px;border:1px solid ' + border + '">'
+        + '<div style="font-size:10px;color:var(--tertiary);font-weight:600;margin-bottom:6px">' + e.label + badge + '</div>'
+        + '<div style="display:flex;justify-content:space-between;margin-bottom:4px">'
+        + '<span style="font-size:11px;color:var(--secondary)">PnL</span>'
+        + '<span style="font-size:13px;font-weight:700;color:' + pnlColor + '">' + (e.pnl >= 0 ? '+' : '') + e.pnl.toLocaleString() + '円</span></div>'
+        + '<div style="display:flex;justify-content:space-between;margin-bottom:4px">'
+        + '<span style="font-size:11px;color:var(--secondary)">勝率</span>'
+        + '<span style="font-size:13px;font-weight:700;color:' + wrColor + '">' + e.win_rate.toFixed(1) + '%</span></div>'
+        + '<div style="display:flex;justify-content:space-between;margin-bottom:4px">'
+        + '<span style="font-size:11px;color:var(--secondary)">avgRR</span>'
+        + '<span style="font-size:13px;font-weight:700">' + e.avg_rr.toFixed(3) + '</span></div>'
+        + '<div style="display:flex;justify-content:space-between">'
+        + '<span style="font-size:11px;color:var(--secondary)">取引</span>'
+        + '<span style="font-size:13px;font-weight:700">' + e.total + '件 (' + e.wins + '勝)</span></div>'
+        + '</div>';
+    });
+    cards.innerHTML = html;
   }
 
   function renderEquityChart(data) {

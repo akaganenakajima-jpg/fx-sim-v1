@@ -149,6 +149,11 @@ export function getDashboardHtml(): string {
     <div class="kpi"><div class="kpi-val" id="sk-total">--</div><div class="kpi-lbl">総取引</div></div>
   </div>
 
+  <!-- Era比較（旧基準 vs RR基準） -->
+  <div id="era-stats-section" style="margin:12px 16px 0;display:none">
+    <div style="display:flex;gap:8px" id="era-stats-cards"></div>
+  </div>
+
   <!-- エクイティカーブ -->
   <div style="margin:12px 16px 0;background:var(--surface);border-radius:var(--rs);padding:12px">
     <div style="font-size:11px;color:var(--tertiary);margin-bottom:8px;font-weight:600">エクイティカーブ</div>
