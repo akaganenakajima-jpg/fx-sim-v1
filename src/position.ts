@@ -171,18 +171,23 @@ export async function checkAndCloseAllPositions(
         const partialPnl = calcPnl(pos.direction, pos.entry_rate, currentRate, multiplier) * tp1Ratio;
         console.log(`[position] TP1 hit: ${pos.pair} id=${pos.id} partial_close=${(tp1Ratio * 100).toFixed(0)}% pnl=${partialPnl.toFixed(2)}`);
 
-        // tp1_ratio部分決済 + SLを建値に移動 + tp1_hit フラグ
+        // tp1_ratio部分決済 + SLを建値以上（トレイリング優先）に移動 + tp1_hit フラグ
+        // BUY: max(現在SL, 建値)  SELL: min(現在SL, 建値) — より有利なSLを維持
+        const newSlAfterTp1 = isBuy
+          ? Math.max(pos.sl_rate, pos.entry_rate)
+          : Math.min(pos.sl_rate, pos.entry_rate);
         await db.prepare(
           `UPDATE positions SET lot = lot * ?, partial_closed_lot = COALESCE(partial_closed_lot, 0) + ?,
-           sl_rate = entry_rate, tp1_hit = 1 WHERE id = ?`
-        ).bind(1 - tp1Ratio, halfLot, pos.id).run();
+           sl_rate = ?, tp1_hit = 1 WHERE id = ?`
+        ).bind(1 - tp1Ratio, halfLot, newSlAfterTp1, pos.id).run();
         pos.lot = pos.lot * (1 - tp1Ratio);
-        pos.sl_rate = pos.entry_rate;
+        pos.sl_rate = newSlAfterTp1;
         pos.tp1_hit = 1;
 
+        const slLabel = newSlAfterTp1 === pos.entry_rate ? 'SL→建値' : `SL→${newSlAfterTp1.toFixed(4)}(trailing維持)`;
         await insertSystemLog(db, 'INFO', 'POSITION',
-          `TP1分割決済: ${pos.pair} 50%決済 PnL+${partialPnl.toFixed(2)} SL→建値`,
-          JSON.stringify({ id: pos.id, tp1Rate, currentRate, halfLot }));
+          `TP1分割決済: ${pos.pair} 50%決済 PnL+${partialPnl.toFixed(2)} ${slLabel}`,
+          JSON.stringify({ id: pos.id, tp1Rate, currentRate, halfLot, newSl: newSlAfterTp1 }));
 
         // OANDA実弾: 部分決済 + SL更新
         if (pos.source === 'oanda' && pos.oanda_trade_id && instr && brokerEnv) {
@@ -190,7 +195,7 @@ export async function checkAndCloseAllPositions(
           if (broker.name === 'oanda') {
             await withFallback(broker, () => broker.updateStopLoss({
               positionId: pos.id, oandaTradeId: pos.oanda_trade_id,
-              newSlRate: pos.entry_rate,
+              newSlRate: newSlAfterTp1,
             }), db, `tp1-sl ${pos.pair}`);
           }
         }
@@ -301,25 +306,45 @@ export async function checkAndCloseAllPositions(
 /** 直近の連続損失数を取得（全銘柄通算: 縮退判定用）
  *  最新クローズからrealized_rr<1.0が続く件数を返す（RR≥1.0勝率統一定義）
  */
-export async function getConsecutiveLosses(db: D1Database): Promise<number> {
+export interface ConsecutiveLossInfo {
+  streak: number;
+  /** 連敗ストリーク中の最初の負け取引のclosed_at（クールダウン起算点） */
+  streakStartAt: string | null;
+}
+
+export async function getConsecutiveLosses(db: D1Database): Promise<ConsecutiveLossInfo> {
   const recent = await db
-    .prepare(`SELECT pnl, realized_rr FROM positions WHERE status = 'CLOSED' ORDER BY closed_at DESC LIMIT 10`)
-    .all<{ pnl: number; realized_rr: number | null }>();
+    .prepare(`SELECT pnl, realized_rr, closed_at FROM positions WHERE status = 'CLOSED' ORDER BY closed_at DESC LIMIT 10`)
+    .all<{ pnl: number; realized_rr: number | null; closed_at: string }>();
   let streak = 0;
+  let streakStartAt: string | null = null;
   for (const row of (recent.results ?? [])) {
-    if ((row.realized_rr ?? 0) < 1.0) streak++;
-    else break;
+    if ((row.realized_rr ?? 0) < 1.0) {
+      streak++;
+      streakStartAt = row.closed_at; // 最も古い連敗取引を更新し続ける
+    } else break;
   }
-  return streak;
+  return { streak, streakStartAt };
 }
 
 /** 連敗縮退: 連続損失数からロット乗数を計算
- *  3連敗 → ×0.5, 5連敗 → ×0.25, 7連敗以上 → ×0（当日停止）
+ *  3連敗 → ×0.5, 5連敗 → ×0.25, 7連敗以上 → 8時間クールダウン
  */
-export function drawdownLotMultiplier(consecutiveLosses: number): number {
-  if (consecutiveLosses >= 7) return 0;   // 当日停止
-  if (consecutiveLosses >= 5) return 0.25; // 75%削減
-  if (consecutiveLosses >= 3) return 0.5;  // 50%削減
+const DRAWDOWN_COOLDOWN_MS = 8 * 60 * 60 * 1000; // 8時間
+
+export function drawdownLotMultiplier(streak: number, streakStartAt: string | null): number {
+  if (streak >= 7) {
+    // 8時間クールダウン: streakStartAt（連敗開始）から8時間経過していれば最小ロットで再開
+    if (streakStartAt) {
+      const elapsed = Date.now() - new Date(streakStartAt).getTime();
+      if (elapsed >= DRAWDOWN_COOLDOWN_MS) {
+        return 0.1; // クールダウン明け: 最小ロットで再開
+      }
+    }
+    return 0; // クールダウン中: 発注停止
+  }
+  if (streak >= 5) return 0.25; // 75%削減
+  if (streak >= 3) return 0.5;  // 50%削減
   return 1.0;
 }
 
@@ -360,32 +385,32 @@ export async function openPosition(
     return;
   }
 
-  // ポジションサイジング: ケリー基準（勝率 × RR比）
-  // サンプル数20件以上で Kelly ゲートを適用:
+  // ポジションサイジング: ケリー基準（直近30件の勝率 × RR比）
   //   Kelly < 0   → 期待値マイナス銘柄 → エントリー停止
   //   Kelly < 0.1 → 最小ロット (0.1)
   //   Kelly ≥ 0.1 → Kelly 値をそのままロットに使用（上限 1.0）
+  const KELLY_WINDOW = 30;
   const perfRow = await db
     .prepare(`SELECT
       COUNT(*) as total,
       COALESCE(SUM(CASE WHEN realized_rr >= 1.0 THEN 1 ELSE 0 END), 0) as wins,
       COALESCE(AVG(CASE WHEN realized_rr >= 1.0 THEN pnl ELSE NULL END), 0) as avgWin,
       COALESCE(AVG(CASE WHEN realized_rr IS NULL OR realized_rr < 1.0 THEN ABS(pnl) ELSE NULL END), 1) as avgLoss
-      FROM positions WHERE pair = ? AND status = 'CLOSED'`)
-    .bind(pair)
+      FROM (SELECT pnl, realized_rr FROM positions WHERE pair = ? AND status = 'CLOSED' ORDER BY closed_at DESC LIMIT ?)`)
+    .bind(pair, KELLY_WINDOW)
     .first<{ total: number; wins: number; avgWin: number; avgLoss: number }>();
   let lot = 1.0;
   if (perfRow && perfRow.total >= 20) {
     const winRate = perfRow.wins / perfRow.total;
     const avgRR = perfRow.avgLoss > 0 ? perfRow.avgWin / perfRow.avgLoss : 0;
     const kelly = kellyFraction(winRate, avgRR);
-    // Kelly ゲート: 負のKellyは期待値マイナス → 取引停止
+    // Kelly ゲート: 負のKellyは期待値マイナス → 最小ロット(0.1)で継続（完全停止しない）
     if (kelly < 0) {
-      await insertSystemLog(db, 'WARN', 'KELLY',
-        `Kelly負: ${pair} ${direction}エントリーをブロック (kelly=${kelly.toFixed(3)})`,
-        JSON.stringify({ pair, kelly, winRate: winRate.toFixed(3), avgRR: avgRR.toFixed(3), total: perfRow.total }));
-      console.warn(`[position] Kelly block: ${pair} kelly=${kelly.toFixed(3)} (wr=${(winRate*100).toFixed(0)}% rr=${avgRR.toFixed(2)}) n=${perfRow.total}`);
-      return;
+      lot = 0.1;
+      await insertSystemLog(db, 'INFO', 'KELLY',
+        `Kelly負→最小ロット: ${pair} ${direction} (kelly=${kelly.toFixed(3)})`,
+        JSON.stringify({ pair, kelly, winRate: winRate.toFixed(3), avgRR: avgRR.toFixed(3), total: perfRow.total, lot }));
+      console.log(`[position] Kelly negative→min lot: ${pair} kelly=${kelly.toFixed(3)} (wr=${(winRate*100).toFixed(0)}% rr=${avgRR.toFixed(2)}) n=${perfRow.total} → lot=0.1`);
     }
     // Kelly 比例ロットサイジング: Kelly<0.1→最小, Kelly≥0.1→Kelly値（上限1.0）
     lot = kelly < 0.1 ? 0.1 : Math.min(kelly, 1.0);
@@ -408,29 +433,32 @@ export async function openPosition(
     }
   }
 
-  // 連敗縮退: 直近連続損失数に応じてロットを削減
-  const consecutiveLosses = await getConsecutiveLosses(db);
-  const ddMultiplier = drawdownLotMultiplier(consecutiveLosses);
+  // 連敗縮退: 直近連続損失数に応じてロットを削減（7連敗以上→8時間クールダウン）
+  const lossInfo = await getConsecutiveLosses(db);
+  const ddMultiplier = drawdownLotMultiplier(lossInfo.streak, lossInfo.streakStartAt);
   if (ddMultiplier === 0) {
+    const cooldownEnd = lossInfo.streakStartAt
+      ? new Date(new Date(lossInfo.streakStartAt).getTime() + 8 * 60 * 60 * 1000).toISOString()
+      : 'unknown';
     await insertSystemLog(db, 'WARN', 'DRAWDOWN',
-      `7連敗縮退: ${pair} ${direction} 当日発注停止`,
-      JSON.stringify({ consecutiveLosses, lot }));
-    console.warn(`[position] 7連敗縮退: ${pair} 発注停止`);
-    // 7連敗通知（return の直前）
+      `${lossInfo.streak}連敗クールダウン中: ${pair} ${direction} 発注停止（解除: ${cooldownEnd}）`,
+      JSON.stringify({ consecutiveLosses: lossInfo.streak, lot, cooldownEnd }));
+    console.warn(`[position] ${lossInfo.streak}連敗クールダウン: ${pair} 発注停止 (解除: ${cooldownEnd})`);
     await sendNotification(webhookUrl, buildDrawdownMessage({
-      consecutiveLosses, lotMultiplier: 0, pair,
+      consecutiveLosses: lossInfo.streak, lotMultiplier: 0, pair,
     }));
     return;
   }
   if (ddMultiplier < 1.0) {
     const prevLot = lot;
     lot = Math.max(0.1, lot * ddMultiplier);
-    console.log(`[position] 連敗縮退: ${consecutiveLosses}連敗 ×${ddMultiplier} lot ${prevLot.toFixed(1)} → ${lot.toFixed(1)}`);
+    const isPostCooldown = lossInfo.streak >= 7;
+    const label = isPostCooldown ? `${lossInfo.streak}連敗クールダウン明け` : `${lossInfo.streak}連敗縮退`;
+    console.log(`[position] ${label}: ×${ddMultiplier} lot ${prevLot.toFixed(2)} → ${lot.toFixed(2)}: ${pair}`);
     await insertSystemLog(db, 'INFO', 'DRAWDOWN',
-      `連敗縮退 ${consecutiveLosses}連敗 → lot×${ddMultiplier}: ${pair}`);
-    // 縮退通知
+      `${label} → lot×${ddMultiplier}: ${pair}`);
     await sendNotification(webhookUrl, buildDrawdownMessage({
-      consecutiveLosses, lotMultiplier: ddMultiplier, pair,
+      consecutiveLosses: lossInfo.streak, lotMultiplier: ddMultiplier, pair,
     }));
   }
 

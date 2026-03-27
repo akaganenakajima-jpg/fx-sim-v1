@@ -47,32 +47,19 @@ async function loadPriceHistory(
   const map = new Map<string, number[]>();
   if (pairs.length === 0) return map;
 
-  const placeholders = pairs.map(() => '?').join(',');
-  // decisions テーブルの rate カラムを価格履歴として使用
-  // 50件取得（RSI14安定化には最低30件必要: ts.md §1）
-  const raw = await db
-    .prepare(
-      `SELECT pair, rate FROM decisions
-       WHERE pair IN (${placeholders})
-       ORDER BY id DESC LIMIT ${pairs.length * 50}`
-    )
-    .bind(...pairs)
-    .all<{ pair: string; rate: number }>();
-
-  const countMap = new Map<string, number>();
-  for (const row of raw.results ?? []) {
-    const cnt = countMap.get(row.pair) ?? 0;
-    if (cnt < 50) {
-      const arr = map.get(row.pair) ?? [];
-      arr.push(row.rate);
-      map.set(row.pair, arr);
-      countMap.set(row.pair, cnt + 1);
+  // 銘柄ごとに個別クエリ: 単一LIMITだとGold等の高頻度銘柄が枠を占有して
+  // 他銘柄が「価格履歴不足」になる問題を防ぐ
+  await Promise.all(pairs.map(async (pair) => {
+    const rows = await db
+      .prepare(`SELECT rate FROM decisions WHERE pair = ? ORDER BY id DESC LIMIT 50`)
+      .bind(pair)
+      .all<{ rate: number }>();
+    if (rows.results && rows.results.length > 0) {
+      // DESC取得を正順（最古→最新）に並び替え
+      map.set(pair, rows.results.map(r => r.rate).reverse());
     }
-  }
-  // 時系列を正順（最古→最新）に並び替え
-  for (const [pair, rates] of map) {
-    map.set(pair, rates.reverse());
-  }
+  }));
+
   return map;
 }
 
@@ -487,9 +474,11 @@ export async function runLogicDecisions(
   }
 
   if (summary.entered > 0 || summary.signals.some(s => s.signal !== 'SKIP')) {
+    const nonSkip = summary.signals.filter(s => s.signal !== 'SKIP').map(s => `${s.pair}:${s.signal}`);
+    const skips = summary.signals.filter(s => s.signal === 'SKIP').map(s => `${s.pair}:${s.reason?.slice(0, 40) ?? '?'}`);
     await insertSystemLog(db, 'INFO', 'FLOW',
       `LOGIC完了: ${summary.entered}件エントリー / ${summary.skipped}件スキップ`,
-      JSON.stringify(summary.signals.filter(s => s.signal !== 'SKIP').map(s => `${s.pair}:${s.signal}`)));
+      JSON.stringify({ signals: nonSkip, skips }));
   }
 
   return summary;
