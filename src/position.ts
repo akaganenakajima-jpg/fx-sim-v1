@@ -6,7 +6,7 @@ import type { Position } from './db';
 import type { InstrumentConfig } from './instruments';
 import { getBroker, withFallback, type BrokerEnv } from './broker';
 import { kellyFraction, logReturn } from './stats';
-import { sendNotification, buildTpSlMessage, buildDrawdownMessage } from './notify';
+import { sendNotification, buildTpSlMessage } from './notify';
 import { updateThompsonParams } from './thompson';
 import { logTradeJournal } from './trade-journal';
 import { getCurrentBalance } from './risk-manager';
@@ -291,30 +291,7 @@ export async function checkAndCloseAllPositions(
   }
 }
 
-/** 直近の連続損失数を取得（全銘柄通算: 縮退判定用）
- *  最新クローズからrealized_rr<1.0が続く件数を返す（RR≥1.0勝率統一定義）
- */
-export async function getConsecutiveLosses(db: D1Database): Promise<number> {
-  const recent = await db
-    .prepare(`SELECT pnl, realized_rr FROM positions WHERE status = 'CLOSED' ORDER BY closed_at DESC LIMIT 10`)
-    .all<{ pnl: number; realized_rr: number | null }>();
-  let streak = 0;
-  for (const row of (recent.results ?? [])) {
-    if ((row.realized_rr ?? 0) < 1.0) streak++;
-    else break;
-  }
-  return streak;
-}
 
-/** 連敗縮退: 連続損失数からロット乗数を計算
- *  3連敗 → ×0.5, 5連敗 → ×0.25, 7連敗以上 → ×0（当日停止）
- */
-export function drawdownLotMultiplier(consecutiveLosses: number): number {
-  if (consecutiveLosses >= 7) return 0;   // 当日停止
-  if (consecutiveLosses >= 5) return 0.25; // 75%削減
-  if (consecutiveLosses >= 3) return 0.5;  // 50%削減
-  return 1.0;
-}
 
 export async function openPosition(
   db: D1Database,
@@ -325,7 +302,7 @@ export async function openPosition(
   slRate: number | null,
   source: 'paper' | 'oanda' = 'paper',
   oandaTradeId: string | null = null,
-  webhookUrl?: string,
+  _webhookUrl?: string,
   extra?: {
     strategy?: string | null;
     regime?: string | null;
@@ -385,63 +362,21 @@ export async function openPosition(
     console.log(`[position] Kelly: ${pair} wr=${(winRate*100).toFixed(0)}% rr=${avgRR.toFixed(2)} f=${kelly.toFixed(3)} → lot=${lot.toFixed(2)}`);
   }
 
-  // テスタ式: SL幅ベースポジションサイズ（複利 + RR傾斜配分）
-  // ① 実残高ベースで複利効果を有効化（テスタ「利益は口座に残して複利で増やす」）
-  // ② 銘柄RR実績で傾斜配分（テスタ「確信度に応じてサイズを変える」）
+  // SL幅ベースポジションサイズ（複利・残高1%リスク上限）
+  // Kelly値がSL幅ベース上限を超える場合は上限に切り下げる
   if (slRate != null) {
     const slPips = Math.abs(entryRate - slRate);
     const multiplier = extra?.pnlMultiplier ?? 1;
     const riskPerLot = slPips * multiplier;
     const balance = await getCurrentBalance(db);
-
-    // RR傾斜: 直近5取引のavg_rrで銘柄ごとにリスク率を調整
-    const recentRr = await db.prepare(
-      `SELECT AVG(realized_rr) as avg_rr FROM (
-        SELECT realized_rr FROM positions
-        WHERE pair=? AND status='CLOSED' AND realized_rr IS NOT NULL
-        ORDER BY id DESC LIMIT 5
-      )`
-    ).bind(pair).first<{avg_rr: number | null}>();
-    const avgRr = recentRr?.avg_rr ?? 0;
-    let riskMultiplier = 1.0;
-    if (avgRr >= 1.0) riskMultiplier = 1.5;       // 勝者: リスク拡大
-    else if (avgRr >= 0.5) riskMultiplier = 1.25;  // 好調: やや拡大
-    else if (avgRr < 0) riskMultiplier = 0.5;      // 不調: リスク半減
-
-    const maxRisk = balance * 0.01 * riskMultiplier;
+    const maxRisk = balance * 0.01;
     if (riskPerLot > 0) {
       const slBasedLot = maxRisk / riskPerLot;
       if (slBasedLot < lot) {
-        console.log(`[position] テスタ式lot: ${pair} kelly=${lot.toFixed(2)} sl_lot=${slBasedLot.toFixed(2)} bal=${balance.toFixed(0)} riskMult=${riskMultiplier} avgRR=${avgRr.toFixed(2)}`);
+        console.log(`[position] SL-based lot cap: ${pair} kelly=${lot.toFixed(2)} sl_lot=${slBasedLot.toFixed(2)} bal=${balance.toFixed(0)}`);
         lot = slBasedLot;
       }
     }
-  }
-
-  // 連敗縮退: 直近連続損失数に応じてロットを削減
-  const consecutiveLosses = await getConsecutiveLosses(db);
-  const ddMultiplier = drawdownLotMultiplier(consecutiveLosses);
-  if (ddMultiplier === 0) {
-    await insertSystemLog(db, 'WARN', 'DRAWDOWN',
-      `7連敗縮退: ${pair} ${direction} 当日発注停止`,
-      JSON.stringify({ consecutiveLosses, lot }));
-    console.warn(`[position] 7連敗縮退: ${pair} 発注停止`);
-    // 7連敗通知（return の直前）
-    await sendNotification(webhookUrl, buildDrawdownMessage({
-      consecutiveLosses, lotMultiplier: 0, pair,
-    }));
-    return;
-  }
-  if (ddMultiplier < 1.0) {
-    const prevLot = lot;
-    lot = Math.max(0.1, lot * ddMultiplier);
-    console.log(`[position] 連敗縮退: ${consecutiveLosses}連敗 ×${ddMultiplier} lot ${prevLot.toFixed(1)} → ${lot.toFixed(1)}`);
-    await insertSystemLog(db, 'INFO', 'DRAWDOWN',
-      `連敗縮退 ${consecutiveLosses}連敗 → lot×${ddMultiplier}: ${pair}`);
-    // 縮退通知
-    await sendNotification(webhookUrl, buildDrawdownMessage({
-      consecutiveLosses, lotMultiplier: ddMultiplier, pair,
-    }));
   }
 
   await db
