@@ -34,7 +34,6 @@ import { getWeekendStatus, lockProfitsForWeekend, forceCloseAllForWeekend } from
 import { runLogicDecisions } from './logic-trading';
 import { runParamReview } from './param-review';
 import { runNewsTrigger, consumeEmergencyForceFlag } from './news-trigger';
-import { getCurrentBalance } from './risk-manager';
 
 interface Env {
   DB: D1Database;
@@ -893,33 +892,6 @@ async function run(env: Env): Promise<void> {
             console.warn(`[fx-sim] Path B REVERSE close failed (${pair}): ${String(e).slice(0, 80)}`);
           }
         }
-      }
-
-      // テスタ式: Path Bにも日次/週次リスクキャップ適用
-      const pathBBalance = await getCurrentBalance(env.DB);
-      const pathBTodayLoss = await env.DB.prepare(
-        `SELECT COALESCE(SUM(pnl), 0) AS loss FROM positions
-         WHERE status='CLOSED' AND pnl < 0 AND closed_at >= datetime('now','start of day')`
-      ).first<{loss: number}>();
-      const pathBDailyCap = pathBBalance * 0.02;
-      if ((pathBTodayLoss?.loss ?? 0) <= -pathBDailyCap) {
-        await insertSystemLog(env.DB, 'WARN', 'RISK',
-          'テスタ日次キャップ: Path Bエントリー停止',
-          `todayLoss=${(pathBTodayLoss?.loss ?? 0).toFixed(0)} cap=-${pathBDailyCap.toFixed(0)}`
-        ).catch(() => {});
-        return handledPairs;
-      }
-      const pathBWeekLoss = await env.DB.prepare(
-        `SELECT COALESCE(SUM(pnl), 0) AS loss FROM positions
-         WHERE status='CLOSED' AND pnl < 0 AND closed_at >= datetime('now','-7 days')`
-      ).first<{loss: number}>();
-      const pathBWeeklyCap = pathBBalance * 0.05;
-      if ((pathBWeekLoss?.loss ?? 0) <= -pathBWeeklyCap) {
-        await insertSystemLog(env.DB, 'WARN', 'RISK',
-          'テスタ週次キャップ: Path Bエントリー停止',
-          `weekLoss=${(pathBWeekLoss?.loss ?? 0).toFixed(0)} cap=-${pathBWeeklyCap.toFixed(0)}`
-        ).catch(() => {});
-        return handledPairs;
       }
 
       // BUY/SELL: ポジション開設

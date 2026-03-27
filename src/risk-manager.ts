@@ -6,7 +6,9 @@
 import { insertSystemLog } from './db';
 import type { InstrumentConfig } from './instruments';
 
-// ─── DD段階（5段階: テスタ理論§1.2 段階的縮小） ────
+// ─── DD段階（5段階: DDベース段階縮小 + Kelly基準） ────
+// ※ テスタ語録「守りを考えた方が結果として増える」の実装。
+//   具体的な閾値(5%/8%/12%/15%)はKelly基準を根拠とした独自設計。
 
 export type DrawdownLevel = 'NORMAL' | 'CAUTION' | 'WARNING' | 'HALT' | 'STOP';
 
@@ -90,7 +92,7 @@ export async function getDrawdownLevel(db: D1Database): Promise<DrawdownResult> 
   const hwm = await getHWM(db);
   const ddPct = hwm > 0 ? ((hwm - balance) / hwm) * 100 : 0;
 
-  // 5段階DD制御（テスタ理論§1.2 段階的縮小 + Kelly基準）
+  // 5段階DD制御（DDベース段階縮小 + Kelly基準）
   // STOP: 完全停止, HALT: Micro Kelly(0.1), WARNING: Quarter Kelly(0.25)
   // CAUTION: Half Kelly(0.5), NORMAL: Full Kelly(1.0)
   let level: DrawdownLevel;
@@ -127,7 +129,7 @@ export async function applyDrawdownControl(
     await insertSystemLog(db, 'WARN', 'RISK',
       `DD STOP: ${result.ddPct.toFixed(1)}% — 完全停止`);
   } else if (result.level === 'HALT' || result.level === 'WARNING') {
-    // 段階的縮小（テスタ理論§1.2）: 完全停止せずロット縮小で継続
+    // 段階的縮小（DDベース）: 完全停止せずロット縮小で継続
     await insertSystemLog(db, 'WARN', 'RISK',
       `DD ${result.level}: ${result.ddPct.toFixed(1)}% — lotMult=${result.lotMultiplier}で継続`,
       `HWM=${result.hwm.toFixed(0)} Balance=${result.balance.toFixed(0)}`);
