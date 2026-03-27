@@ -38,6 +38,7 @@ export const JS = `
   window.toggleJcParam  = toggleJcParam;
   window.toggleHcItem   = toggleHcItem;
   window.toggleWhyTree  = toggleWhyTree;
+  window.setThSort      = setThSort;
 
   var CATEGORY_ORDER = ['為替', '株式指数', '暗号資産', 'コモディティ', '債券'];
 

@@ -202,14 +202,36 @@ export async function runLogicDecisions(
       }
     }
 
-    // ── Ph.8: 日次エントリー回数制限 ──
+    // ── Ph.8: 動的日次エントリー回数制限 ──
+    // 直近5取引のavg_rrに応じてベースライン(daily_max_entries)を動的調整
+    //   avg_rr ≥ 1.0 → ×2（最大10）
+    //   avg_rr ≥ 0.5 → +2
+    //   avg_rr < 0   → ×0.6（最低3）
     if (params.daily_max_entries > 0) {
+      const recentRr = await db.prepare(
+        `SELECT AVG(realized_rr) as avg_rr FROM (
+          SELECT realized_rr FROM positions
+          WHERE pair=? AND status='CLOSED' AND realized_rr IS NOT NULL
+          ORDER BY id DESC LIMIT 5
+        )`
+      ).bind(pair).first<{avg_rr: number | null}>();
+      const avgRr = recentRr?.avg_rr ?? 0;
+      const base = params.daily_max_entries;
+      let dynamicLimit = base;
+      if (avgRr >= 1.0) {
+        dynamicLimit = Math.min(base * 2, 10);
+      } else if (avgRr >= 0.5) {
+        dynamicLimit = Math.min(base + 2, 10);
+      } else if (avgRr < 0) {
+        dynamicLimit = Math.max(Math.round(base * 0.6), 3);
+      }
+
       const todayEntries = await db.prepare(
         `SELECT COUNT(*) as cnt FROM positions WHERE pair=? AND entry_at > datetime('now','start of day')`
       ).bind(pair).first<{cnt: number}>();
-      if (todayEntries && todayEntries.cnt >= params.daily_max_entries) {
+      if (todayEntries && todayEntries.cnt >= dynamicLimit) {
         summary.skipped++;
-        summary.signals.push({ pair, signal: 'SKIP', reason: `日次上限(${todayEntries.cnt}/${params.daily_max_entries})` });
+        summary.signals.push({ pair, signal: 'SKIP', reason: `日次上限(${todayEntries.cnt}/${dynamicLimit})[avgRR=${avgRr.toFixed(2)}]` });
         continue;
       }
     }
@@ -486,17 +508,17 @@ export async function runLogicDecisions(
     }
   }
 
-  if (summary.entered > 0 || summary.signals.some(s => s.signal !== 'SKIP')) {
-    // BUY/SELLシグナルが出ているのにエントリーゼロの場合はSKIP理由も記録（デバッグ用）
-    const hasBuySellSignal = summary.signals.some(s => s.signal === 'BUY' || s.signal === 'SELL');
-    const skipReasons = hasBuySellSignal && summary.entered === 0
-      ? summary.signals.filter(s => s.signal === 'SKIP').map(s => `${s.pair}:${s.reason ?? 'SKIP'}`).slice(0, 5)
-      : [];
+  {
+    // 日次上限・ER超過等のSKIP理由は常にログに記録（動的上限の動作確認用）
+    const skipReasons = summary.signals
+      .filter(s => s.signal === 'SKIP')
+      .map(s => `${s.pair}:${s.reason ?? 'SKIP'}`)
+      .slice(0, 8);
     await insertSystemLog(db, 'INFO', 'FLOW',
       `LOGIC完了: ${summary.entered}件エントリー / ${summary.skipped}件スキップ`,
       JSON.stringify([
         ...summary.signals.filter(s => s.signal !== 'SKIP').map(s => `${s.pair}:${s.signal}`),
-        ...(skipReasons.length > 0 ? [`SKIP理由:${skipReasons.join(',')}`.slice(0, 200)] : []),
+        ...(skipReasons.length > 0 ? [`SKIP理由:${skipReasons.join(',')}`.slice(0, 300)] : []),
       ]));
   }
 

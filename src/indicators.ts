@@ -55,7 +55,7 @@ async function fetchYahoo(symbol: string): Promise<number | null> {
   try {
     const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(symbol)}`;
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 3_000); // 3秒タイムアウト（18並列）
+    const timeout = setTimeout(() => controller.abort(), 5_000); // 5秒タイムアウト（20並列・競合対策）
     const res = await fetch(url, {
       headers: { 'User-Agent': 'fx-sim-v1/1.0' },
       signal: controller.signal,
@@ -68,7 +68,7 @@ async function fetchYahoo(symbol: string): Promise<number | null> {
   } catch (e) {
     const msg = String(e);
     if (msg.includes('abort')) {
-      console.warn(`[indicators] Yahoo timeout (${symbol}): 5s`);
+      console.warn(`[indicators] Yahoo timeout (${symbol}): 5000ms`);
     } else {
       console.error(`[indicators] Yahoo fetch error (${symbol}):`, msg.slice(0, 100));
     }
