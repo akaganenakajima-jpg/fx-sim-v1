@@ -95,6 +95,11 @@ export function isNakaneWindow(now: Date): boolean {
  * | Gold        | △0.5  | ○0.8   | ○0.8 | ○0.8    |
  * | CrudeOil    | △0.5  | ○0.8   | ◎1.0 | ○0.8    |
  * | BTC/USD     | △0.5  | △0.5   | ◎1.0 | ○0.8    |
+ * | EUR/JPY     | ◎1.0  | ◎1.0   | △0.5 | ○0.8    |
+ * | GBP/JPY     | ○0.8  | ◎1.0   | △0.5 | ○0.8    |
+ * | AUD/JPY     | ◎1.0  | △0.5   | △0.5 | ○0.8    |
+ * | 日本株(10)  | ◎1.0  | ✗0     | ✗0   | ✗0      |
+ * | 米国株(8)   | ✗0    | △0.3   | ◎1.0 | ○0.8    |
  */
 export function getSessionInstrumentMultiplier(
   session: SessionTag,
@@ -103,11 +108,17 @@ export function getSessionInstrumentMultiplier(
   // early_morning は全銘柄取引禁止
   if (session === 'early_morning') return 0;
 
-  // overlap は全銘柄 ○0.8
-  if (session === 'overlap') return 0.8;
+  // 銘柄名を正規化（大文字・スラッシュ除去）— 日本語銘柄はそのまま使用
+  const normalized = /^[a-zA-Z]/.test(pair)
+    ? pair.toUpperCase().replace(/[\/\s]/g, '')
+    : pair;
 
-  // 銘柄名を正規化（大文字・スラッシュ除去）
-  const normalized = pair.toUpperCase().replace(/[\/\s]/g, '');
+  // overlap: FX/商品=0.8、日本株=0（TSE閉場）、米国株=0.8
+  if (session === 'overlap') {
+    const jpStocks = ['川崎汽船','日本郵船','ソフトバンクG','レーザーテック','東京エレクトロン','ディスコ','アドバンテスト','ファーストリテイリング','日本製鉄','三菱UFJ'];
+    if (jpStocks.includes(pair)) return 0;
+    return 0.8;
+  }
 
   const matrix: Record<string, Record<string, number>> = {
     tokyo: {
@@ -129,6 +140,24 @@ export function getSessionInstrumentMultiplier(
       BTCUSD: 0.5,
       HK33: 1.0,
       UK100: 0.5,
+      // 円クロス: 東京主力
+      EURJPY: 1.0,
+      GBPJPY: 0.8,
+      AUDJPY: 1.0,
+      // 日本株: 東京セッション = TSE営業時間
+      '川崎汽船': 1.0,
+      '日本郵船': 1.0,
+      'ソフトバンクG': 1.0,
+      'レーザーテック': 1.0,
+      '東京エレクトロン': 1.0,
+      'ディスコ': 1.0,
+      'アドバンテスト': 1.0,
+      'ファーストリテイリング': 1.0,
+      '日本製鉄': 1.0,
+      '三菱UFJ': 1.0,
+      // 米国株: 東京セッションでは取引不可
+      NVDA: 0, TSLA: 0, AAPL: 0, AMZN: 0, AMD: 0,
+      META: 0, MSFT: 0, GOOGL: 0,
     },
     london: {
       EURUSD: 1.0,
@@ -149,6 +178,18 @@ export function getSessionInstrumentMultiplier(
       BTCUSD: 0.5,
       UK100: 1.0,
       HK33: 0.5,
+      // 円クロス: ロンドンでも活発
+      EURJPY: 1.0,
+      GBPJPY: 1.0,
+      AUDJPY: 0.5,
+      // 日本株: TSE閉場
+      '川崎汽船': 0, '日本郵船': 0, 'ソフトバンクG': 0,
+      'レーザーテック': 0, '東京エレクトロン': 0, 'ディスコ': 0,
+      'アドバンテスト': 0, 'ファーストリテイリング': 0,
+      '日本製鉄': 0, '三菱UFJ': 0,
+      // 米国株: プレマーケット（低倍率）
+      NVDA: 0.3, TSLA: 0.3, AAPL: 0.3, AMZN: 0.3, AMD: 0.3,
+      META: 0.3, MSFT: 0.3, GOOGL: 0.3,
     },
     ny: {
       SP500: 1.0,
@@ -169,6 +210,18 @@ export function getSessionInstrumentMultiplier(
       DAX: 0.5,
       UK100: 0.5,
       HK33: 0.5,
+      // 円クロス: NYは低倍率
+      EURJPY: 0.5,
+      GBPJPY: 0.5,
+      AUDJPY: 0.5,
+      // 日本株: TSE閉場
+      '川崎汽船': 0, '日本郵船': 0, 'ソフトバンクG': 0,
+      'レーザーテック': 0, '東京エレクトロン': 0, 'ディスコ': 0,
+      'アドバンテスト': 0, 'ファーストリテイリング': 0,
+      '日本製鉄': 0, '三菱UFJ': 0,
+      // 米国株: NYSE/NASDAQ本場
+      NVDA: 1.0, TSLA: 1.0, AAPL: 1.0, AMZN: 1.0, AMD: 1.0,
+      META: 1.0, MSFT: 1.0, GOOGL: 1.0,
     },
   };
 
