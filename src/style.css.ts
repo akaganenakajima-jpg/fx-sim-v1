@@ -34,7 +34,7 @@ body{background:var(--bg);color:var(--text);font-size:15px;line-height:1.47;
 }
 /* ═══ v7: Sticky glass header ═══ */
 .sbar{display:flex;justify-content:space-between;align-items:center;
-  padding:calc(env(safe-area-inset-top,0px) + 8px) 16px 6px;
+  padding:calc(env(safe-area-inset-top,0px) + 8px) 16px 8px;
   position:sticky;top:0;z-index:90;
   background:rgba(0,0,0,0.6);
   backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);
@@ -563,6 +563,9 @@ body.drawer-open .tabs, body.sheet-open .tabs { transform: translateZ(0) transla
   .param-card-detail { transition: none; }
   .param-category-body { transition: none; }
 }
+
+/* ═══ Tracking list text overflow protection ═══ */
+#tracking-list-container div { overflow: hidden; text-overflow: ellipsis; }
 
 /* ═══════════════════════════════════════════════════
    PRESERVED: PC Responsive
