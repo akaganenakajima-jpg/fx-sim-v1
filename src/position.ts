@@ -90,6 +90,22 @@ export async function checkAndCloseAllPositions(
         const pnl = calcPnl(pos.direction, pos.entry_rate, currentRate, multiplier);
         const lr = logReturn(pos.entry_rate, currentRate);
         const timeRealizedRR = pos.sl_rate != null ? calcRealizedRR(pos.direction, pos.entry_rate, currentRate, pos.sl_rate) : 0;
+
+        // T08: RR >= 0.5 かつ maxHold×2 以内なら延期（TP/SLに委ねる）
+        if (timeRealizedRR >= 0.5 && holdMinutes <= maxHold * 2) {
+          // SLを建値以上に引き上げ（利益確保）
+          if (pos.sl_rate != null) {
+            const isBuy = pos.direction === 'BUY';
+            const breakeven = pos.entry_rate;
+            const shouldMove = isBuy ? pos.sl_rate < breakeven : pos.sl_rate > breakeven;
+            if (shouldMove) {
+              await db.prepare('UPDATE positions SET sl_rate = ? WHERE id = ?').bind(breakeven, pos.id).run();
+              console.log(`[position] TIME_STOP延期: ${pos.pair} id=${pos.id} RR=${timeRealizedRR.toFixed(2)} — SLを建値${breakeven}に引き上げ`);
+            }
+          }
+          continue;
+        }
+
         console.log(`[position] TIME_STOP: ${pos.pair} id=${pos.id} held=${Math.round(holdMinutes)}min > ${maxHold}min pnl=${pnl.toFixed(2)}`);
         await closePosition(db, pos.id, currentRate, 'TIME_STOP', pnl, lr, timeRealizedRR);
         await updateDecisionOutcome(db, pos.pair, pos.direction, pos.entry_at, timeRealizedRR >= 1.0 ? 'WIN' : 'LOSE');
