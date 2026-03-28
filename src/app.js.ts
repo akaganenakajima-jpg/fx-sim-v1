@@ -40,6 +40,27 @@ export const JS = `
   window.toggleWhyTree  = toggleWhyTree;
   window.setThSort      = setThSort;
 
+  // ── 銘柄入替え承認/拒否 ──
+  function rotationDecide(id, action) {
+    fetch('/api/rotation', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id: id, action: action }),
+    })
+      .then(function(res) { return res.json(); })
+      .then(function(data) {
+        if (data.success) {
+          location.reload();
+        } else {
+          alert('エラー: ' + (data.message || '不明なエラー'));
+        }
+      })
+      .catch(function(e) {
+        alert('通信エラー: ' + e);
+      });
+  }
+  window.rotationDecide = rotationDecide;
+
   var CATEGORY_ORDER = ['為替', '株式指数', '日本株', '米国株', '暗号資産', '商品', '債券'];
 
   // INSTRUMENTS はAPIレスポンスの data.instruments から動的に初期化される
@@ -2589,6 +2610,132 @@ export const JS = `
 
   refresh();
   setInterval(refresh, 30000);
+
+  // ══════════════════════════════════════════
+  // AI銘柄マネージャー — ローテーション & スコア
+  // ══════════════════════════════════════════
+
+  function renderRotationBannerClient(pending) {
+    if (!pending || pending.length === 0) return '';
+    var p = pending[0];
+    var proposedAt = new Date(p.proposed_at);
+    var expiresAt = new Date(proposedAt.getTime() + 24 * 3600 * 1000);
+    var remainingMs = expiresAt.getTime() - Date.now();
+    var remainingH = Math.max(0, Math.floor(remainingMs / 3600000));
+    var remainingM = Math.max(0, Math.floor((remainingMs % 3600000) / 60000));
+    return '<div class="rotation-banner" style="background:linear-gradient(135deg,#1c1c1e 0%,#2c2c2e 100%);border:1px solid rgba(255,159,10,0.4);border-radius:16px;padding:16px;margin:12px 16px;">' +
+      '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">' +
+        '<span style="font-size:13px;font-weight:600;color:#ff9f0a;">\uD83D\uDD04 銘柄入替え提案</span>' +
+        '<span style="font-size:11px;color:#8e8e93;">残り ' + remainingH + 'h' + remainingM + 'm</span>' +
+      '</div>' +
+      '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:12px;">' +
+        '<div style="background:rgba(48,209,88,0.1);border-radius:10px;padding:10px;">' +
+          '<div style="font-size:10px;color:#30d158;font-weight:600;margin-bottom:2px;">IN</div>' +
+          '<div style="font-size:14px;font-weight:700;color:#fff;">' + escHtml(p.in_symbol) + '</div>' +
+          '<div style="font-size:11px;color:#8e8e93;">スコア ' + (p.in_score || 0).toFixed(0) + '</div>' +
+        '</div>' +
+        '<div style="background:rgba(255,69,58,0.1);border-radius:10px;padding:10px;">' +
+          '<div style="font-size:10px;color:#ff453a;font-weight:600;margin-bottom:2px;">OUT</div>' +
+          '<div style="font-size:14px;font-weight:700;color:#fff;">' + escHtml(p.out_symbol) + '</div>' +
+          '<div style="font-size:11px;color:#8e8e93;">スコア ' + (p.out_score || 0).toFixed(0) + '</div>' +
+        '</div>' +
+      '</div>' +
+      '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">' +
+        '<button onclick="rotationDecide(' + p.id + ',\'approve\')" style="background:#30d158;color:#000;border:none;border-radius:10px;padding:10px;font-size:13px;font-weight:600;cursor:pointer;">\u2713 承認</button>' +
+        '<button onclick="rotationDecide(' + p.id + ',\'reject\')" style="background:#ff453a;color:#fff;border:none;border-radius:10px;padding:10px;font-size:13px;font-weight:600;cursor:pointer;">\u2715 拒否</button>' +
+      '</div>' +
+    '</div>';
+  }
+
+  function renderTrackingListClient(scores) {
+    var trackingScores = (scores || []).filter(function(s) { return s.in_universe === 1; });
+    if (trackingScores.length === 0) return '';
+    var rows = trackingScores.map(function(s) {
+      var color = s.total_score >= 200 ? '#30d158' : s.total_score >= 150 ? '#ff9f0a' : '#ff453a';
+      var barWidth = Math.min(100, s.total_score / 3);
+      var isLowTheme = s.theme_score <= 20;
+      return '<div style="display:flex;align-items:center;padding:8px 0;border-bottom:1px solid rgba(255,255,255,0.06);">' +
+        '<span style="font-size:12px;color:#fff;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' + (isLowTheme ? '\u26A0 ' : '') + escHtml(s.symbol) + '</span>' +
+        '<div style="width:80px;height:4px;background:rgba(255,255,255,0.1);border-radius:2px;margin:0 8px;">' +
+          '<div style="width:' + barWidth + '%;height:100%;background:' + color + ';border-radius:2px;"></div>' +
+        '</div>' +
+        '<span style="font-size:11px;color:' + color + ';font-weight:600;width:32px;text-align:right;">' + (s.total_score || 0).toFixed(0) + '</span>' +
+      '</div>';
+    }).join('');
+    return '<div style="background:#1c1c1e;border-radius:16px;padding:12px 16px;margin:12px 16px;">' +
+      '<div style="font-size:12px;font-weight:600;color:#8e8e93;margin-bottom:8px;text-transform:uppercase;letter-spacing:0.5px;">追跡中 (' + trackingScores.length + '銘柄)</div>' +
+      rows +
+    '</div>';
+  }
+
+  function renderRotationHistoryClient(rotations) {
+    if (!rotations || rotations.length === 0) {
+      return '<div style="padding:16px;color:#8e8e93;font-size:13px;text-align:center;">入替え履歴なし</div>';
+    }
+    var statusLabel = { 'APPROVED': '手動承認', 'AUTO_APPROVED': '自動承認', 'REJECTED': '拒否', 'PENDING': '保留中' };
+    function fmtPnl(pnl) {
+      if (pnl === null || pnl === undefined) return '<span style="color:#8e8e93">\u2014</span>';
+      var color = pnl >= 0 ? '#30d158' : '#ff453a';
+      return '<span style="color:' + color + '">' + (pnl >= 0 ? '+' : '') + pnl.toFixed(1) + '%</span>';
+    }
+    var rows = rotations.slice(0, 20).map(function(r) {
+      var date = new Date(r.proposed_at).toLocaleDateString('ja-JP', { month: 'numeric', day: 'numeric' });
+      return '<tr style="border-bottom:1px solid rgba(255,255,255,0.06);">' +
+        '<td style="padding:8px 4px;font-size:11px;color:#8e8e93;">' + date + '</td>' +
+        '<td style="padding:8px 4px;font-size:11px;color:#30d158;">' + escHtml(r.in_symbol) + '</td>' +
+        '<td style="padding:8px 4px;font-size:11px;color:#ff453a;">' + escHtml(r.out_symbol) + '</td>' +
+        '<td style="padding:8px 4px;font-size:11px;color:#8e8e93;">' + (statusLabel[r.status] || r.status) + '</td>' +
+        '<td style="padding:8px 4px;font-size:11px;">' + fmtPnl(r.in_result_pnl) + '</td>' +
+        '<td style="padding:8px 4px;font-size:11px;">' + fmtPnl(r.out_result_pnl) + '</td>' +
+      '</tr>';
+    }).join('');
+    return '<div style="background:#1c1c1e;border-radius:16px;padding:12px 16px;margin:12px 16px;">' +
+      '<div style="font-size:12px;font-weight:600;color:#8e8e93;margin-bottom:8px;text-transform:uppercase;letter-spacing:0.5px;">入替え履歴</div>' +
+      '<table style="width:100%;border-collapse:collapse;">' +
+        '<thead><tr>' +
+          '<th style="font-size:10px;color:#636366;text-align:left;padding:4px;">日付</th>' +
+          '<th style="font-size:10px;color:#636366;text-align:left;padding:4px;">IN</th>' +
+          '<th style="font-size:10px;color:#636366;text-align:left;padding:4px;">OUT</th>' +
+          '<th style="font-size:10px;color:#636366;text-align:left;padding:4px;">判定</th>' +
+          '<th style="font-size:10px;color:#636366;text-align:left;padding:4px;">IN結果</th>' +
+          '<th style="font-size:10px;color:#636366;text-align:left;padding:4px;">OUT仮想</th>' +
+        '</tr></thead>' +
+        '<tbody>' + rows + '</tbody>' +
+      '</table>' +
+    '</div>';
+  }
+
+  function loadRotationData() {
+    // pending rotations → rotation-banner-container
+    fetch('/api/rotation/pending')
+      .then(function(r) { return r.json(); })
+      .then(function(d) {
+        var bannerEl = document.getElementById('rotation-banner-container');
+        if (bannerEl) bannerEl.innerHTML = renderRotationBannerClient(d.rotations || []);
+      })
+      .catch(function() {});
+
+    // rotation history → rotation-history-container
+    fetch('/api/rotation/history')
+      .then(function(r) { return r.json(); })
+      .then(function(d) {
+        var histEl = document.getElementById('rotation-history-container');
+        if (histEl) histEl.innerHTML = renderRotationHistoryClient(d.rotations || []);
+      })
+      .catch(function() {});
+
+    // scores → tracking-list-container
+    fetch('/api/scores')
+      .then(function(r) { return r.json(); })
+      .then(function(d) {
+        var trackEl = document.getElementById('tracking-list-container');
+        if (trackEl) trackEl.innerHTML = renderTrackingListClient(d.scores || []);
+      })
+      .catch(function() {});
+  }
+
+  loadRotationData();
+  setInterval(loadRotationData, 60000);
 
   // ══════════════════════════════════════════
   // パラメーター管理（戦略タブ遅延ロード）

@@ -1,4 +1,5 @@
 // 取引対象銘柄の定義
+import type { D1Database } from '@cloudflare/workers-types';
 
 /** 相関グループ（テスタ施策4） */
 export type CorrelationGroup =
@@ -1011,4 +1012,37 @@ export function getYahooSymbol(inst: InstrumentConfig): string | null {
     'BTC/USD': 'BTC-USD', 'ETH/USD': 'ETH-USD', 'SOL/USD': 'SOL-USD',
   };
   return map[inst.pair] ?? null;
+}
+
+/**
+ * 日本株の追跡リストをD1から取得する。
+ * D1が空またはエラーの場合はINSTRUMENTS配列のハードコード日本株をフォールバック。
+ * FX・コモディティ・株式指数・米株は常にINSTRUMENTS配列を使用。
+ */
+export async function getActiveJpStocks(db: D1Database): Promise<InstrumentConfig[]> {
+  try {
+    const rows = await db.prepare(
+      "SELECT config_json FROM active_instruments ORDER BY added_at DESC"
+    ).all<{ config_json: string }>();
+
+    if (rows.results && rows.results.length > 0) {
+      return rows.results.map(r => JSON.parse(r.config_json) as InstrumentConfig);
+    }
+  } catch (e) {
+    console.warn('[instruments] getActiveJpStocks D1 error, using fallback:', e);
+  }
+
+  // フォールバック: instruments.tsのハードコード日本株
+  return INSTRUMENTS.filter(
+    (i: InstrumentConfig) => i.assetClass === 'stock' && i.stockSymbol?.endsWith('.T')
+  );
+}
+
+/** 全銘柄（FX+指数+商品+米株+アクティブ日本株）を取得 */
+export async function getAllActiveInstruments(db: D1Database): Promise<InstrumentConfig[]> {
+  const nonJpStocks = INSTRUMENTS.filter(
+    (i: InstrumentConfig) => !(i.assetClass === 'stock' && i.stockSymbol?.endsWith('.T'))
+  );
+  const jpStocks = await getActiveJpStocks(db);
+  return [...nonJpStocks, ...jpStocks];
 }

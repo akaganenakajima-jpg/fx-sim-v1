@@ -101,3 +101,70 @@ CREATE TABLE IF NOT EXISTS indicator_logs (
 );
 
 CREATE INDEX IF NOT EXISTS idx_indicator_logs_created ON indicator_logs(created_at DESC);
+
+-- ─────────────────────────────────────────────────────────────────────────────
+-- AI銘柄マネージャー: テスタ式スコアリング & 動的銘柄入替え
+-- ─────────────────────────────────────────────────────────────────────────────
+
+-- J-Quantsから取得した財務データ（2期分保持して2期連続赤字判定に使用）
+CREATE TABLE IF NOT EXISTS fundamentals (
+  symbol        TEXT NOT NULL,           -- '7203.T'
+  fiscal_year   TEXT NOT NULL,           -- '2026'
+  fiscal_quarter TEXT NOT NULL,          -- 'Q1'/'Q2'/'Q3'/'FY'
+  eps           REAL,
+  bps           REAL,
+  revenue       REAL,
+  op_profit     REAL,
+  net_profit    REAL,
+  forecast_rev  REAL,
+  forecast_op   REAL,
+  forecast_net  REAL,
+  dividend      REAL,
+  equity_ratio  REAL,
+  next_earnings TEXT,
+  sector        TEXT,
+  market_cap    REAL,
+  updated_at    TEXT NOT NULL,
+  PRIMARY KEY (symbol, fiscal_year, fiscal_quarter)
+);
+CREATE INDEX IF NOT EXISTS idx_fundamentals_symbol_period
+  ON fundamentals(symbol, fiscal_year DESC, fiscal_quarter DESC);
+
+-- 日次3軸スコアリング結果（需給熱/モメンタム/ファンダ）
+CREATE TABLE IF NOT EXISTS stock_scores (
+  symbol         TEXT NOT NULL,
+  scored_at      TEXT NOT NULL,          -- 'YYYY-MM-DD'
+  theme_score    REAL NOT NULL,          -- 需給熱 0-100
+  funda_score    REAL NOT NULL,          -- ファンダ補正 0-100
+  momentum_score REAL NOT NULL,          -- モメンタム 0-100
+  total_score    REAL NOT NULL,          -- 重み付き合計
+  rank           INTEGER NOT NULL,
+  in_universe    INTEGER DEFAULT 0,      -- 1=現在の追跡リスト
+  PRIMARY KEY (symbol, scored_at)
+);
+CREATE INDEX IF NOT EXISTS idx_stock_scores_date_rank ON stock_scores(scored_at, rank);
+CREATE INDEX IF NOT EXISTS idx_stock_scores_symbol_date ON stock_scores(symbol, scored_at DESC);
+
+-- 銘柄入替え提案・承認・結果ログ
+CREATE TABLE IF NOT EXISTS rotation_log (
+  id             INTEGER PRIMARY KEY AUTOINCREMENT,
+  proposed_at    TEXT NOT NULL,
+  in_symbol      TEXT NOT NULL,
+  in_score       REAL NOT NULL,
+  out_symbol     TEXT NOT NULL,
+  out_score      REAL NOT NULL,
+  status         TEXT NOT NULL DEFAULT 'PENDING',  -- PENDING/APPROVED/REJECTED/AUTO_APPROVED
+  decided_at     TEXT,
+  decided_by     TEXT,                              -- 'user' | 'timer'
+  in_result_pnl  REAL,                              -- IN銘柄の7日間リターン(%)
+  out_result_pnl REAL                               -- OUT銘柄の7日間仮想リターン(%)
+);
+
+-- 動的銘柄設定（日本株のみ。FX/指数/米株はinstruments.tsのハードコードを使用）
+CREATE TABLE IF NOT EXISTS active_instruments (
+  pair        TEXT PRIMARY KEY,       -- InstrumentConfig.pair と一致
+  config_json TEXT NOT NULL,          -- JSON.stringify(InstrumentConfig)
+  added_at    TEXT NOT NULL,          -- 7日ロックの起算日
+  source      TEXT DEFAULT 'auto',    -- 'auto' | 'manual'
+  updated_at  TEXT NOT NULL
+);
