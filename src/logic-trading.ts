@@ -701,5 +701,21 @@ export async function runLogicDecisions(
       ]));
   }
 
+  // T07: 日次BUY+SELL件数モニタリング — 100件未満ならWARN
+  const todayStart = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate())).toISOString();
+  const dailyRow = await db
+    .prepare(
+      `SELECT COUNT(*) AS cnt FROM decisions
+       WHERE decision IN ('BUY','SELL') AND created_at >= ?`
+    )
+    .bind(todayStart)
+    .first<{ cnt: number }>();
+  const dailySignals = dailyRow?.cnt ?? 0;
+  if (dailySignals < 100) {
+    await insertSystemLog(db, 'WARN', 'MONITOR',
+      `日次BUY+SELL件数不足: ${dailySignals}件 (目標>=100)`,
+      `todayStart=${todayStart}`);
+  }
+
   return summary;
 }
