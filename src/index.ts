@@ -764,7 +764,8 @@ async function run(env: Env): Promise<void> {
 
     // 2.7 ロジックトレーディング（Ph.3: AIを呼ばない定量エントリー）
     // TP/SLチェック後・Path B/A前に実行 → ロジックポジションがOPEN枠に先に入る
-    if (!cryptoOnlyMode && !economicEventGuard.highImpactNearby) {
+    // Weekend Phase 2以降は新規エントリー禁止（Logic内部でもガードあるが、呼び出し自体をスキップ）
+    if (!cryptoOnlyMode && !economicEventGuard.highImpactNearby && weekendStatus.phase < 2 && weekendStatus.phase > -2) {
       try {
         const tLogic = Date.now();
         const logicResult = await runLogicDecisions(env.DB, prices, indicators, brokerEnv, now);
