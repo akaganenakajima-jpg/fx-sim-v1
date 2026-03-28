@@ -444,13 +444,67 @@ async function runPathB(
     return { decisions: [], reversals: [], newsAnalysis: [] };
   }
 
+  // T09: 方向別平均RR集計（直近30件/銘柄）
+  const biasRows = await env.DB
+    .prepare(
+      `SELECT pair, direction, AVG(realized_rr) AS avgRR
+       FROM positions
+       WHERE status = 'CLOSED' AND realized_rr IS NOT NULL
+       GROUP BY pair, direction`
+    )
+    .all<{ pair: string; direction: string; avgRR: number }>();
+  const biasMap = new Map<string, { buyAvgRR: number; sellAvgRR: number }>();
+  for (const row of biasRows.results ?? []) {
+    const existing = biasMap.get(row.pair) ?? { buyAvgRR: 0, sellAvgRR: 0 };
+    if (row.direction === 'BUY') existing.buyAvgRR = row.avgRR;
+    else if (row.direction === 'SELL') existing.sellAvgRR = row.avgRR;
+    biasMap.set(row.pair, existing);
+  }
+
   const instrumentList = INSTRUMENTS.map(i => ({
     pair: i.pair,
     hasOpenPosition: openPairs.has(i.pair),
     tpSlHint: i.tpSlHint,
     correlationGroup: i.correlationGroup,
     currentRate: prices?.get(i.pair) ?? undefined,
+    directionBias: biasMap.get(i.pair) ?? undefined,
   }));
+
+  // T10: 実績フィードバック — 直近30件の勝率・平均RR・連敗数・低パフォ銘柄
+  let performanceSummary: { winRate: number; avgRR: number; recentStreak: number; worstPairs: string[] } | undefined;
+  try {
+    const recent30 = await env.DB
+      .prepare(
+        `SELECT pair, realized_rr FROM positions
+         WHERE status = 'CLOSED' AND realized_rr IS NOT NULL
+         ORDER BY id DESC LIMIT 30`
+      )
+      .all<{ pair: string; realized_rr: number }>();
+    const rows = recent30.results ?? [];
+    if (rows.length >= 10) {
+      const wins = rows.filter(r => r.realized_rr >= 1.0).length;
+      const winRate = wins / rows.length;
+      const avgRR = rows.reduce((s, r) => s + r.realized_rr, 0) / rows.length;
+      // 連敗数（最新から連続でRR<1.0の数、負の値）
+      let streak = 0;
+      for (const r of rows) {
+        if (r.realized_rr < 1.0) streak--;
+        else break;
+      }
+      // 低パフォーマンス銘柄（勝率30%未満 かつ 10件以上）
+      const pairStats = new Map<string, { wins: number; total: number }>();
+      for (const r of rows) {
+        const s = pairStats.get(r.pair) ?? { wins: 0, total: 0 };
+        s.total++;
+        if (r.realized_rr >= 1.0) s.wins++;
+        pairStats.set(r.pair, s);
+      }
+      const worstPairs = [...pairStats.entries()]
+        .filter(([, s]) => s.total >= 5 && s.wins / s.total < 0.3)
+        .map(([pair]) => pair);
+      performanceSummary = { winRate, avgRR, recentStreak: streak, worstPairs };
+    }
+  } catch { /* 集計失敗は無視 */ }
 
   // B1: タイトル即断（タイムアウト10秒）— キャッシュ付き
   const B1_CACHE_KEY = 'path_b_b1_cache';
@@ -485,6 +539,8 @@ async function runPathB(
         // 施策6+20: テクニカル環境認識・禁止行動をAIプロンプトに注入
         regimeText: regimeContext?.text,
         regimeProhibitions: regimeContext?.prohibitions,
+        // T10: 実績フィードバック
+        performanceSummary,
       });
       stage1 = b1Result;
       if (b1Result.provider !== 'gemini') {
