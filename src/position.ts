@@ -318,6 +318,26 @@ export async function openPosition(
     return;
   }
 
+  // SL方向最終防衛ライン（entryRate基準）
+  // currentRate基準のサニティチェックは市場変動でバイパスされうるため、
+  // openPosition自体でentryRate vs slRateの方向を再検証する
+  if (slRate != null) {
+    if (direction === 'BUY' && slRate >= entryRate) {
+      await insertSystemLog(db, 'WARN', 'SANITY',
+        `SL方向エラー: BUY sl=${slRate} >= entry=${entryRate} — エントリー拒否`,
+        JSON.stringify({ pair, direction, entryRate, slRate }));
+      console.warn(`[position] SL direction error: BUY pair=${pair} sl=${slRate} >= entry=${entryRate}, skipping`);
+      return;
+    }
+    if (direction === 'SELL' && slRate <= entryRate) {
+      await insertSystemLog(db, 'WARN', 'SANITY',
+        `SL方向エラー: SELL sl=${slRate} <= entry=${entryRate} — エントリー拒否`,
+        JSON.stringify({ pair, direction, entryRate, slRate }));
+      console.warn(`[position] SL direction error: SELL pair=${pair} sl=${slRate} <= entry=${entryRate}, skipping`);
+      return;
+    }
+  }
+
   // TP後クールダウン: 同銘柄の逆方向TPから60分以内は逆張りエントリー禁止
   const TP_COOLDOWN_MIN = 60;
   const recentTP = await getRecentTPOpposite(db, pair, direction, TP_COOLDOWN_MIN);
