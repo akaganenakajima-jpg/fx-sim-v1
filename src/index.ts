@@ -243,6 +243,20 @@ export default {
             status: 500,
           });
         }
+      case '/api/rotation/history':
+        try {
+          const histRows = await env.DB.prepare(
+            'SELECT id, proposed_at, in_symbol, out_symbol, status, in_result_pnl, out_result_pnl FROM rotation_log ORDER BY proposed_at DESC LIMIT 20'
+          ).all();
+          return new Response(JSON.stringify({ rotations: histRows.results ?? [] }), {
+            headers: { 'Content-Type': 'application/json' },
+          });
+        } catch (e) {
+          return new Response(JSON.stringify({ success: false, message: String(e) }), {
+            headers: { 'Content-Type': 'application/json' },
+            status: 500,
+          });
+        }
       case '/api/rotation':
         if (request.method === 'POST') {
           try {
