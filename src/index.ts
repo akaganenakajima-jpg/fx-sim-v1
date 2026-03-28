@@ -37,7 +37,7 @@ import { runNewsTrigger, consumeEmergencyForceFlag } from './news-trigger';
 // AI銘柄マネージャー
 import { fetchFundamentals, saveFundamentals, fetchAllListedStocks, cleanupOldFundamentals } from './jquants';
 import { calcStockScore, saveScores, countNewsForSymbol, getSectorAvgPer, type StockScoreInput } from './scoring';
-import { getTrackingList, getCandidateList, detectPromotionCandidates, detectDemotionCandidates, proposeRotation, processAutoApproval as autoApprove, recordResultPnl } from './rotation';
+import { getTrackingList, getCandidateList, detectPromotionCandidates, detectDemotionCandidates, proposeRotation, processAutoApproval as autoApprove, recordResultPnl, decideRotation, getPendingRotations } from './rotation';
 
 interface Env {
   DB: D1Database;
@@ -231,6 +231,64 @@ export default {
             status: 500, headers: { 'Content-Type': 'application/json' },
           });
         }
+      case '/api/rotation/pending':
+        try {
+          const pending = await getPendingRotations(env.DB);
+          return new Response(JSON.stringify({ rotations: pending }), {
+            headers: { 'Content-Type': 'application/json' },
+          });
+        } catch (e) {
+          return new Response(JSON.stringify({ success: false, message: String(e) }), {
+            headers: { 'Content-Type': 'application/json' },
+            status: 500,
+          });
+        }
+      case '/api/rotation':
+        if (request.method === 'POST') {
+          try {
+            const body = await request.json() as { id: number; action: 'approve' | 'reject' };
+            const result = await decideRotation(env.DB, body.id, body.action);
+            return new Response(JSON.stringify(result), {
+              headers: { 'Content-Type': 'application/json' },
+              status: result.success ? 200 : 404,
+            });
+          } catch (e) {
+            return new Response(JSON.stringify({ success: false, message: String(e) }), {
+              headers: { 'Content-Type': 'application/json' },
+              status: 500,
+            });
+          }
+        }
+        return new Response('Method Not Allowed', { status: 405 });
+      case '/api/scores': {
+        try {
+          const today = new Date().toISOString().split('T')[0];
+          const rows = await env.DB.prepare(`
+            SELECT symbol, theme_score, funda_score, momentum_score, total_score, rank, in_universe
+            FROM stock_scores
+            WHERE scored_at = ?
+            ORDER BY rank ASC
+            LIMIT 60
+          `).bind(today).all();
+
+          const trackingRows = await env.DB.prepare(
+            "SELECT pair, added_at FROM active_instruments"
+          ).all<{ pair: string; added_at: string }>();
+
+          return new Response(JSON.stringify({
+            scoredAt: today,
+            scores: rows.results ?? [],
+            trackingList: trackingRows.results ?? [],
+          }), {
+            headers: { 'Content-Type': 'application/json' },
+          });
+        } catch (e) {
+          return new Response(JSON.stringify({ error: String(e) }), {
+            status: 500,
+            headers: { 'Content-Type': 'application/json' },
+          });
+        }
+      }
       default:
         return new Response('Not Found', { status: 404 });
     }
