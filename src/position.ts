@@ -201,7 +201,9 @@ export async function checkAndCloseAllPositions(
         }
       }
 
-      const tpRealizedRR = calcRealizedRR(pos.direction, pos.entry_rate, currentRate, pos.sl_rate!);
+      const tpRealizedRR = pos.sl_rate != null
+        ? calcRealizedRR(pos.direction, pos.entry_rate, currentRate, pos.sl_rate)
+        : 1.0; // sl_rate未設定（日本株等）のTP → 勝ちとして扱う
       await closePosition(db, pos.id, currentRate, 'TP', pnl, lr, tpRealizedRR);
       // TP 通知（currentRate はこの時点で number に絞り込まれている）
       await sendNotification(webhookUrl, buildTpSlMessage({
@@ -244,7 +246,9 @@ export async function checkAndCloseAllPositions(
         }
       }
 
-      const slRealizedRR = calcRealizedRR(pos.direction, pos.entry_rate, currentRate, pos.sl_rate!);
+      const slRealizedRR = pos.sl_rate != null
+        ? calcRealizedRR(pos.direction, pos.entry_rate, currentRate, pos.sl_rate)
+        : 0; // sl_rate未設定のSL → 負けとして扱う
       await closePosition(db, pos.id, currentRate, 'SL', pnl, lr, slRealizedRR);
       // SL 通知
       await sendNotification(webhookUrl, buildTpSlMessage({
@@ -273,19 +277,32 @@ export async function checkAndCloseAllPositions(
         { strategy: pos.strategy ?? undefined, regime: pos.regime ?? undefined, session: pos.session ?? undefined, confidence: pos.confidence ?? undefined },
       ).catch(() => {});
 
-      // ドローダウン検知: 直近3件がすべてSLなら警告
+      // ドローダウン検知: 直近3件がすべてSLなら警告（60分デバウンス）
       try {
         const recent = await db.prepare(
           `SELECT close_reason FROM positions WHERE status = 'CLOSED' ORDER BY closed_at DESC LIMIT 3`
         ).all<{ close_reason: string }>();
         const reasons = (recent.results ?? []).map(r => r.close_reason);
         if (reasons.length >= 3 && reasons.every(r => r === 'SL')) {
-          const totalSlPnl = await db.prepare(
-            `SELECT COALESCE(SUM(pnl), 0) AS slLoss FROM positions WHERE status = 'CLOSED' AND close_reason = 'SL' ORDER BY closed_at DESC LIMIT 3`
-          ).first<{ slLoss: number }>();
-          await insertSystemLog(db, 'WARN', 'DRAWDOWN',
-            `⚠️ 3連続SL損切 — 累計損失 ¥${Math.round(totalSlPnl?.slLoss ?? 0)}`);
-          console.warn(`[position] ⚠️ DRAWDOWN: 3 consecutive SL hits`);
+          // 60分デバウンス: market_cache で最終アラート時刻をチェック
+          const cdKey = 'drawdown_alert_cd';
+          const cdRow = await db.prepare('SELECT value, updated_at FROM market_cache WHERE key = ?')
+            .bind(cdKey).first<{ value: string; updated_at: string }>();
+          const lastAlertMs = cdRow ? new Date(cdRow.updated_at).getTime() : 0;
+          const nowMs = Date.now();
+          if (nowMs - lastAlertMs >= 60 * 60 * 1000) { // 60分以上経過
+            const totalSlPnl = await db.prepare(
+              `SELECT COALESCE(SUM(pnl), 0) AS slLoss FROM positions WHERE status = 'CLOSED' AND close_reason = 'SL' ORDER BY closed_at DESC LIMIT 3`
+            ).first<{ slLoss: number }>();
+            await insertSystemLog(db, 'WARN', 'DRAWDOWN',
+              `⚠️ 3連続SL損切 — 累計損失 ¥${Math.round(totalSlPnl?.slLoss ?? 0)}`);
+            console.warn(`[position] ⚠️ DRAWDOWN: 3 consecutive SL hits`);
+            // クールダウン時刻を記録
+            await db.prepare(
+              `INSERT INTO market_cache (key, value, updated_at) VALUES (?, ?, ?)
+               ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`
+            ).bind(cdKey, 'alerted', new Date().toISOString()).run();
+          }
         }
       } catch {}
     }
