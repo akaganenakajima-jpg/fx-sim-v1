@@ -34,6 +34,10 @@ import { getWeekendStatus, lockProfitsForWeekend, forceCloseAllForWeekend, getWe
 import { runLogicDecisions } from './logic-trading';
 import { runParamReview } from './param-review';
 import { runNewsTrigger, consumeEmergencyForceFlag } from './news-trigger';
+// AI銘柄マネージャー
+import { fetchFundamentals, saveFundamentals, fetchAllListedStocks, cleanupOldFundamentals } from './jquants';
+import { calcStockScore, saveScores, countNewsForSymbol, getSectorAvgPer, type StockScoreInput } from './scoring';
+import { getTrackingList, getCandidateList, detectPromotionCandidates, detectDemotionCandidates, proposeRotation, processAutoApproval as autoApprove, recordResultPnl } from './rotation';
 
 interface Env {
   DB: D1Database;
@@ -69,6 +73,8 @@ interface Env {
   MARKETAUX_API_KEY?: string;
   CRYPTOPANIC_API_KEY?: string;
   // FINNHUB_API_KEY は calendar.ts と共有（上記に既に定義）
+  // AI銘柄マネージャー
+  JQUANTS_REFRESH_TOKEN?: string;
 }
 
 // ── キー別クールダウン管理 ──
@@ -231,11 +237,33 @@ export default {
   },
 
   async scheduled(
-    _event: ScheduledEvent,
+    event: ScheduledEvent,
     env: Env,
     ctx: ExecutionContext
   ): Promise<void> {
-    ctx.waitUntil(run(env));
+    const cron = event.cron;
+    switch (cron) {
+      case '* * * * *':
+        ctx.waitUntil(run(env));
+        break;
+      case '0 21 * * *':
+        ctx.waitUntil(runDailyScoring(env));
+        break;
+      case '0 18 * * 6':
+        ctx.waitUntil(runWeeklyScreeningBatch(env));
+        break;
+      case '5 18 * * 6':
+        ctx.waitUntil(runWeeklyScreeningFinalize(env));
+        break;
+      case '0 * * * *':
+        ctx.waitUntil(runAutoApproval(env));
+        break;
+      case '0 14 * * *':
+        ctx.waitUntil(runResultPnl(env));
+        break;
+      default:
+        ctx.waitUntil(run(env));
+    }
   },
 };
 
@@ -1672,4 +1700,236 @@ async function updateInstrumentScores(db: D1Database): Promise<void> {
   } catch (e) {
     console.warn('[fx-sim] period RR update failed:', e);
   }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// AI銘柄マネージャー cronハンドラ
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** 日次スコアリング: JST 06:00 (UTC 21:00) */
+async function runDailyScoring(env: Env): Promise<void> {
+  if (!env.JQUANTS_REFRESH_TOKEN) {
+    console.warn('[daily-scoring] JQUANTS_REFRESH_TOKEN not set, skipping');
+    return;
+  }
+
+  console.log('[daily-scoring] Start');
+  const today = new Date().toISOString().split('T')[0];
+
+  // 追跡リストの銘柄を取得
+  const trackingInsts = await getTrackingList(env.DB);
+  const trackingSymbols = trackingInsts
+    .filter(i => i.stockSymbol?.endsWith('.T'))
+    .map(i => i.stockSymbol!);
+
+  // 財務データを取得・保存
+  const fundaData = await fetchFundamentals(env.DB, env.JQUANTS_REFRESH_TOKEN, trackingSymbols);
+  await saveFundamentals(env.DB, fundaData);
+
+  // スコアリング入力データを構築
+  const scores = [];
+  for (const inst of trackingInsts.filter(i => i.stockSymbol?.endsWith('.T'))) {
+    const symbol = inst.stockSymbol!;
+    const newsCount3d = await countNewsForSymbol(env.DB, inst.pair, 3);
+    const newsCount14d = await countNewsForSymbol(env.DB, inst.pair, 14);
+    const funda = fundaData.find(f => f.symbol === symbol);
+    const sectorAvgPer = await getSectorAvgPer(env.DB, funda?.sector ?? null);
+
+    // Yahoo Finance から出来高・値幅・52週レンジを取得
+    let vol5dAvg: number | null = null, vol20dAvg: number | null = null;
+    let vol1d: number | null = null, volYesterday: number | null = null;
+    let highLow1d: number | null = null, highLow20dAvg: number | null = null;
+    let week52High: number | null = null, week52Low: number | null = null;
+    let currentPrice: number | null = null;
+
+    try {
+      const res = await fetch(
+        `https://query1.finance.yahoo.com/v8/finance/chart/${symbol}?interval=1d&range=3mo`,
+        { signal: AbortSignal.timeout(6000) }
+      );
+      if (res.ok) {
+        const data = await res.json() as { chart?: { result?: Array<{ meta?: { regularMarketPrice?: number }; indicators?: { quote?: Array<{ close?: number[]; volume?: number[]; high?: number[]; low?: number[] }> } }> } };
+        const result = data?.chart?.result?.[0];
+        const volumes: number[] = result?.indicators?.quote?.[0]?.volume ?? [];
+        const highs: number[] = result?.indicators?.quote?.[0]?.high ?? [];
+        const lows: number[] = result?.indicators?.quote?.[0]?.low ?? [];
+
+        if (volumes.length >= 20) {
+          const recentVols = volumes.filter(v => v > 0).slice(-20);
+          vol20dAvg = recentVols.reduce((a, b) => a + b, 0) / recentVols.length;
+          const last5 = recentVols.slice(-5);
+          vol5dAvg = last5.reduce((a, b) => a + b, 0) / last5.length;
+          vol1d = volumes[volumes.length - 1] ?? null;
+          volYesterday = volumes[volumes.length - 2] ?? null;
+        }
+
+        if (highs.length >= 20 && lows.length >= 20) {
+          const ranges = highs.map((h, i) => (h ?? 0) - (lows[i] ?? 0)).filter(r => r > 0);
+          if (ranges.length > 0) {
+            highLow1d = ranges[ranges.length - 1];
+            highLow20dAvg = ranges.slice(-20).reduce((a, b) => a + b, 0) / Math.min(20, ranges.length);
+          }
+        }
+
+        currentPrice = result?.meta?.regularMarketPrice ?? null;
+
+        // 52週レンジ
+        try {
+          const res52 = await fetch(
+            `https://query1.finance.yahoo.com/v8/finance/chart/${symbol}?interval=1d&range=1y`,
+            { signal: AbortSignal.timeout(6000) }
+          );
+          if (res52.ok) {
+            const data52 = await res52.json() as { chart?: { result?: Array<{ indicators?: { quote?: Array<{ close?: number[] }> } }> } };
+            const result52 = data52?.chart?.result?.[0];
+            const closes52: number[] = result52?.indicators?.quote?.[0]?.close ?? [];
+            const validCloses = closes52.filter((c): c is number => c !== null && c > 0);
+            if (validCloses.length > 0) {
+              week52High = Math.max(...validCloses);
+              week52Low = Math.min(...validCloses);
+            }
+          }
+        } catch {}
+      }
+    } catch (e) {
+      console.warn(`[daily-scoring] Yahoo Finance error for ${symbol}:`, e);
+    }
+
+    // RSI/ADX取得（market_cacheから）
+    let rsi: number | null = null;
+    let adx: number | null = null;
+    try {
+      const cached = await env.DB.prepare(
+        "SELECT value FROM market_cache WHERE key = ?"
+      ).bind(`indicators_${symbol}_D`).first<{ value: string }>();
+      if (cached) {
+        const ind = JSON.parse(cached.value);
+        rsi = ind.rsi14 ?? null;
+        adx = ind.adx14 ?? null;
+      }
+    } catch {}
+
+    const THEME_GROUPS = ['jp_ai_dc', 'jp_defense', 'jp_entertainment'];
+    const isThemeStock = THEME_GROUPS.includes(inst.correlationGroup ?? '');
+
+    const input: StockScoreInput = {
+      symbol,
+      stockSymbol: symbol,
+      displayName: inst.pair,
+      vol5dAvg, vol20dAvg, vol1d, volYesterday,
+      highLow1d, highLow20dAvg,
+      rsi, adx,
+      week52High, week52Low, currentPrice,
+      newsCount3d, newsCount14d,
+      equityRatio: funda?.equityRatio ?? null,
+      netProfit: funda?.netProfit ?? null,
+      prevNetProfit: null,
+      forecastOpChange: funda?.forecastOp && funda?.opProfit
+        ? ((funda.forecastOp - funda.opProfit) / Math.abs(funda.opProfit)) * 100 : null,
+      per: currentPrice && funda?.eps ? currentPrice / funda.eps : null,
+      sectorAvgPer,
+      dividendYield: currentPrice && funda?.dividend ? (funda.dividend / currentPrice) * 100 : null,
+      marketCap: funda?.marketCap ?? null,
+      nextEarningsDate: funda?.nextEarnings ?? null,
+      isThemeStock,
+    };
+
+    const score = calcStockScore(input);
+    scores.push(score);
+  }
+
+  await saveScores(env.DB, scores, today);
+
+  // 入替え判定
+  const promotable = await detectPromotionCandidates(env.DB, trackingSymbols);
+  const trackingWithDates = await env.DB.prepare(
+    "SELECT pair, added_at FROM active_instruments"
+  ).all<{ pair: string; added_at: string }>();
+
+  const demotable = await detectDemotionCandidates(
+    env.DB,
+    (trackingWithDates.results ?? []).map(r => ({
+      symbol: r.pair,
+      addedAt: r.added_at,
+    }))
+  );
+
+  if (promotable.length > 0 && demotable.length > 0) {
+    const candidates = await getCandidateList(env.DB);
+    const bestPromotion = promotable[0];
+    const worstDemotion = demotable[0];
+
+    const promScore = candidates.find(c => c.symbol === bestPromotion)?.totalScore ?? 0;
+    const demScore = scores.find(s => s.symbol === worstDemotion)?.totalScore ?? 0;
+
+    await proposeRotation(env.DB, bestPromotion, promScore, worstDemotion, demScore);
+  }
+
+  await cleanupOldFundamentals(env.DB);
+  console.log(`[daily-scoring] Done. Scored ${scores.length} stocks`);
+}
+
+/** 週次スクリーニング①: 全上場銘柄の財務サマリ取得（日曜03:00 JST） */
+async function runWeeklyScreeningBatch(env: Env): Promise<void> {
+  if (!env.JQUANTS_REFRESH_TOKEN) return;
+  console.log('[weekly-screening-1] Start');
+
+  let pageToken: string | undefined;
+  const allCandidates: Array<{ symbol: string; marketCap: number | null; sector: string | null }> = [];
+  let page = 0;
+  const MAX_PAGES = 10;
+
+  do {
+    const result = await fetchAllListedStocks(env.DB, env.JQUANTS_REFRESH_TOKEN, pageToken);
+    allCandidates.push(...result.candidates);
+    pageToken = result.nextPageToken ?? undefined;
+    page++;
+  } while (pageToken && page < MAX_PAGES);
+
+  // 時価総額フィルタ: 50億〜5000億円（百万円単位: 5000〜500000）
+  const filtered = allCandidates.filter(c =>
+    c.marketCap !== null && c.marketCap >= 5000 && c.marketCap <= 500000
+  );
+
+  await env.DB.prepare(
+    "INSERT OR REPLACE INTO market_cache (key, value, updated_at) VALUES (?, ?, ?)"
+  ).bind(
+    'weekly_screening_candidates',
+    JSON.stringify(filtered.slice(0, 500)),
+    new Date().toISOString()
+  ).run();
+
+  console.log(`[weekly-screening-1] Done. ${allCandidates.length} total, ${filtered.length} filtered`);
+}
+
+/** 週次スクリーニング②: 候補50銘柄確定（日曜03:05 JST） */
+async function runWeeklyScreeningFinalize(env: Env): Promise<void> {
+  if (!env.JQUANTS_REFRESH_TOKEN) return;
+  console.log('[weekly-screening-2] Start');
+
+  const cached = await env.DB.prepare(
+    "SELECT value FROM market_cache WHERE key = 'weekly_screening_candidates'"
+  ).first<{ value: string }>();
+
+  if (!cached) {
+    console.warn('[weekly-screening-2] No candidates from step 1');
+    return;
+  }
+
+  const candidates = JSON.parse(cached.value) as Array<{ symbol: string }>;
+  const top100 = candidates.slice(0, 100).map(c => c.symbol);
+  const fundaData = await fetchFundamentals(env.DB, env.JQUANTS_REFRESH_TOKEN, top100);
+  await saveFundamentals(env.DB, fundaData);
+
+  console.log(`[weekly-screening-2] Done. Fetched fundamentals for ${fundaData.length} candidates`);
+}
+
+/** 自動承認チェック: 毎時 */
+async function runAutoApproval(env: Env): Promise<void> {
+  await autoApprove(env.DB);
+}
+
+/** 結果PnL記録: JST 23:00 */
+async function runResultPnl(env: Env): Promise<void> {
+  await recordResultPnl(env.DB);
 }
