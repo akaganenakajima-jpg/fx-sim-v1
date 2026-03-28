@@ -287,6 +287,19 @@ async function fetchMarketData(env: Env, now: Date): Promise<MarketData | null> 
     }
   }
 
+  // Fix-B: ニュースフェッチ全ソース失敗検知
+  const failedSources = newsFetchStats.filter(s => !s.ok);
+  if (failedSources.length > 0 && newsData.items.length === 0) {
+    const errorSummary = failedSources.map(s => `${s.source}:${s.error ?? 'unknown'}`).join(' | ').slice(0, 500);
+    await insertSystemLog(env.DB, 'ERROR', 'NEWS',
+      `ニュース全ソース失敗: ${failedSources.length}/${newsFetchStats.length}ソース — 記事0件`,
+      errorSummary);
+  } else if (failedSources.length >= newsFetchStats.length * 0.5 && newsFetchStats.length > 0) {
+    await insertSystemLog(env.DB, 'WARN', 'NEWS',
+      `ニュースソース半数以上失敗: ${failedSources.length}/${newsFetchStats.length}`,
+      failedSources.map(s => s.source).join(','));
+  }
+
   // news_raw ステージングテーブルに全記事を保存（Haikuフィルタ前）
   saveRawNews(newsData.items, env.DB).catch(e =>
     console.warn(`[fx-sim] saveRawNews error: ${String(e).slice(0, 100)}`)
