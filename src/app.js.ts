@@ -2641,8 +2641,8 @@ export const JS = `
         '</div>' +
       '</div>' +
       '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">' +
-        '<button onclick="rotationDecide(' + p.id + ',\'approve\')" style="background:#30d158;color:#000;border:none;border-radius:10px;padding:10px;font-size:13px;font-weight:600;cursor:pointer;">\u2713 承認</button>' +
-        '<button onclick="rotationDecide(' + p.id + ',\'reject\')" style="background:#ff453a;color:#fff;border:none;border-radius:10px;padding:10px;font-size:13px;font-weight:600;cursor:pointer;">\u2715 拒否</button>' +
+        '<button onclick="rotationDecide(' + p.id + ',\\\'approve\\\')" style="background:#30d158;color:#000;border:none;border-radius:10px;padding:10px;font-size:13px;font-weight:600;cursor:pointer;">\u2713 承認</button>' +
+        '<button onclick="rotationDecide(' + p.id + ',\\\'reject\\\')" style="background:#ff453a;color:#fff;border:none;border-radius:10px;padding:10px;font-size:13px;font-weight:600;cursor:pointer;">\u2715 拒否</button>' +
       '</div>' +
     '</div>';
   }
