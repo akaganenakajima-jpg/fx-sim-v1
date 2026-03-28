@@ -2227,6 +2227,8 @@ export const JS = `
       var nextReview = data.systemStatus && data.systemStatus.nextReview;
       if (nextReview) {
         reviewEl.textContent = '次回レビュー: ' + fmtTime(nextReview);
+      } else {
+        reviewEl.textContent = '次回スコアリング: 毎週土曜 18:00 UTC';
       }
     }
   }

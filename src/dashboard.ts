@@ -15,12 +15,15 @@ export function getDashboardHtml(): string {
   <link rel="manifest" href="/manifest.json">
   <link rel="apple-touch-icon" href="/icon-192.png">
   <title>FX Sim</title>
-  <link rel="stylesheet" href="/style.css?v=16">
+  <meta name="description" content="FX仮想トレードシミュレーター — Gemini AIによるUSD/JPYリアルタイム売買判断">
+  <meta property="og:title" content="FX Sim — AI FX Trading Simulator">
+  <meta property="og:description" content="Gemini AIがリアルタイムにFX相場を分析する仮想トレードシミュレーター">
+  <link rel="stylesheet" href="/style.css?v=17">
 </head>
 <body>
 
 <!-- ═══ PC Tabbar (769-1279px: horizontal tabs at top) ═══ -->
-<nav class="pc-tabbar" id="pc-tabbar">
+<nav class="pc-tabbar" id="pc-tabbar" aria-label="PCタブナビゲーション">
   <button class="pc-tabbar-item active" data-tab="tab-portfolio" onclick="switchTab('tab-portfolio')">
     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12l9-8 9 8"/><path d="M5 10v9a1 1 0 001 1h3v-5h6v5h3a1 1 0 001-1v-9"/></svg>
     HOME
@@ -407,7 +410,7 @@ export function getDashboardHtml(): string {
 </div>
 
 <!-- ═══ Floating Liquid Glass タブバー ═══ -->
-<nav class="tabs" id="main-tabs">
+<nav class="tabs" id="main-tabs" aria-label="メインナビゲーション">
   <div class="tab on" data-tab="tab-portfolio" onclick="switchTab('tab-portfolio')">
     <svg class="tab-icon" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12l9-8 9 8"/><path d="M5 10v9a1 1 0 001 1h3v-5h6v5h3a1 1 0 001-1v-9"/></svg>
     <span class="tab-t">HOME</span>
@@ -451,7 +454,7 @@ export function getDashboardHtml(): string {
   <div id="news-drawer-body" class="news-drawer-body"></div>
 </div>
 
-<script src="/app.js?v=18"></script>
+<script src="/app.js?v=19"></script>
 </body>
 </html>`;
 }

@@ -567,6 +567,18 @@ body.drawer-open .tabs, body.sheet-open .tabs { transform: translateZ(0) transla
 /* ═══ Tracking list text overflow protection ═══ */
 #tracking-list-container div { overflow: hidden; text-overflow: ellipsis; }
 
+/* ═══ Accessibility: キーボードフォーカス表示 (WCAG 2.4.7) ═══ */
+:focus-visible {
+  outline: 2px solid var(--blue);
+  outline-offset: 2px;
+  border-radius: var(--rs);
+}
+.tab:focus-visible, .pc-tabbar-item:focus-visible, .sidebar-tab:focus-visible {
+  outline: 2px solid var(--blue);
+  outline-offset: 2px;
+}
+button:focus-visible { outline: 2px solid var(--blue); outline-offset: 2px; }
+
 /* ═══════════════════════════════════════════════════
    PRESERVED: PC Responsive
    ═══════════════════════════════════════════════════ */
