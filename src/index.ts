@@ -431,6 +431,7 @@ async function runPathB(
   apiKey: string,
   hedgeKeys?: { openaiApiKey?: string; anthropicApiKey?: string },
   regimeContext?: { text: string; prohibitions: string },
+  prices?: Map<string, number | null>,
 ): Promise<PathBResult> {
   const news = sharedNewsStore.items;
   if (news.length === 0) return { decisions: [], reversals: [], newsAnalysis: [] };
@@ -448,6 +449,7 @@ async function runPathB(
     hasOpenPosition: openPairs.has(i.pair),
     tpSlHint: i.tpSlHint,
     correlationGroup: i.correlationGroup,
+    currentRate: prices?.get(i.pair) ?? undefined,
   }));
 
   // B1: タイトル即断（タイムアウト10秒）— キャッシュ付き
@@ -1095,7 +1097,7 @@ async function run(env: Env): Promise<void> {
         pathBResult = await runPathB(env, sharedNewsStore, indicators, openPairsForPathB, getApiKey(env), {
           openaiApiKey: env.OPENAI_API_KEY,
           anthropicApiKey: env.ANTHROPIC_API_KEY,
-        }, regimeContext);
+        }, regimeContext, prices);
         await setCacheValue(env.DB, 'last_path_b_at', String(Date.now()));
         console.log(`[fx-sim] Path B: ${pathBResult.decisions.length}件シグナル, ${pathBResult.reversals.length}件REVERSE`);
       } catch (e) {

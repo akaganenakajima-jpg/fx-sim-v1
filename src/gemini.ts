@@ -348,7 +348,7 @@ export async function getDecisionWithHedge(params: {
 export interface NewsAnalysisItem {
   index: number;
   attention: boolean;
-  /** テスタ理論指標ティア: S=50-300pip超, A=20-80pip, B=10-40pip, C=その他 */
+  /** 経済指標インパクト分類: S=50-300pip超, A=20-80pip, B=10-40pip, C=その他 */
   impact_level?: 'S' | 'A' | 'B' | 'C';
   impact: string;
   title_ja: string;
@@ -548,7 +548,7 @@ const STAGE1_TIMEOUT_MS = 10_000;
 export async function newsStage1(params: {
   news: NewsItem[];
   indicators: MarketIndicators;
-  instruments: Array<{ pair: string; hasOpenPosition: boolean; tpSlHint?: string; correlationGroup?: string }>;
+  instruments: Array<{ pair: string; hasOpenPosition: boolean; tpSlHint?: string; correlationGroup?: string; currentRate?: number }>;
   apiKey: string;
   db?: D1Database;
   // 施策6: テクニカル環境認識テキスト（ADX/ATR/RSI/レジーム分類）
@@ -565,9 +565,10 @@ export async function newsStage1(params: {
   const THEME_STOCK_GROUPS = ['jp_ai_dc', 'jp_defense', 'jp_entertainment'];
   const instrumentList = instruments.map(inst => {
     const base = inst.hasOpenPosition ? `${inst.pair}[OP]` : inst.pair;
+    const rate = inst.currentRate != null ? `[rate=${inst.currentRate}]` : '';
     const hint = inst.tpSlHint ? `(${inst.tpSlHint})` : '';
     const tag = THEME_STOCK_GROUPS.includes(inst.correlationGroup ?? '') ? '[テーマ株・モメンタム重視]' : '';
-    return `${base}${hint}${tag}`;
+    return `${base}${rate}${hint}${tag}`;
   }).join('\n');
 
   const userMessage = [
@@ -599,7 +600,7 @@ export async function newsStage1(params: {
     '必ず以下のJSON形式のみで返答してください:\n' +
     '{"news_analysis":[{"index":0,"attention":true,"impact_level":"S","impact":"円安・株安要因（50文字以内）","affected_pairs":["USD/JPY","Nikkei225"]}],' +
     '"trade_signals":[{"pair":"USD/JPY","decision":"BUY","tp_rate":160.50,"sl_rate":158.00,"reasoning":"日本語100文字以内"}]}\n\n' +
-    'impact_levelの定義（テスタ理論指標ティア）:\n' +
+    'impact_levelの定義（経済指標インパクト分類）:\n' +
     '- S: FOMC金利決定・米雇用統計・米CPI・日銀会合・地政学リスク急変。50-300pip超の値動き\n' +
     '- A: GDP・ISM・ECB/BOE金利決定・要人発言の方針転換・地政学リスク拡大。20-80pipの値動き\n' +
     '- B: ADP・PPI・小売売上高・PMI・企業決算。10-40pipの小〜中程度の値動き\n' +
@@ -638,7 +639,7 @@ export async function newsStage1(params: {
     '- 【送信前絶対検証・省略禁止】各シグナルを送信する前に必ず: (1)BUYなら tp_rate > entry_rate を確認 / (2)SELLなら tp_rate < entry_rate を確認 / 条件を満たさないシグナルは送信せず削除する\n' +
     '- attention:falseのニュースはimpact/impact_level/affected_pairsを空にする\n' +
     '- affected_pairs選定: 直接影響だけでなく間接影響も含める。地政学リスク・原油高・米金利急変はNikkei225/S&P500/NASDAQ/DAXにも影響する。為替と株式指数は同じニュースで同時に動くことが多い\n' +
-    '- 【テーマ株モード】[テーマ株・モメンタム重視]タグの銘柄はテスタ流の小型テーマ株です。判断基準: (1)ファンダメンタルズよりモメンタム（出来高変化・投資家の注目度）を最重視 (2)ニュースの「話題性」と「投資家殺到度」で方向判断 (3)乱高下を恐れず方向が明確なら積極エントリー (4)RR2.0以上を狙いSLはATR×1.0〜1.5で広めにOK';
+    '- 【テーマ株モード】[テーマ株・モメンタム重視]タグの銘柄は小型テーマ株（モメンタム型）です。判断基準: (1)ファンダメンタルズよりモメンタム（出来高変化・投資家の注目度）を最重視 (2)ニュースの「話題性」と「投資家殺到度」で方向判断 (3)乱高下を恐れず方向が明確なら積極エントリー (4)RR2.0以上を狙いSLはATR×1.0〜1.5で広めにOK';
 
   const res = await fetchWithTimeout(`${GEMINI_ENDPOINT}?key=${apiKey}`, {
     method: 'POST',
@@ -762,7 +763,7 @@ export async function newsStage2(params: {
 export async function newsStage1WithHedge(params: {
   news: NewsItem[];
   indicators: MarketIndicators;
-  instruments: Array<{ pair: string; hasOpenPosition: boolean; tpSlHint?: string; correlationGroup?: string }>;
+  instruments: Array<{ pair: string; hasOpenPosition: boolean; tpSlHint?: string; correlationGroup?: string; currentRate?: number }>;
   apiKey: string;
   openaiApiKey?: string;
   anthropicApiKey?: string;
@@ -808,7 +809,7 @@ export async function newsStage1WithHedge(params: {
 async function newsStage1GPT(params: {
   news: NewsItem[];
   indicators: MarketIndicators;
-  instruments: Array<{ pair: string; hasOpenPosition: boolean; tpSlHint?: string; correlationGroup?: string }>;
+  instruments: Array<{ pair: string; hasOpenPosition: boolean; tpSlHint?: string; correlationGroup?: string; currentRate?: number }>;
   apiKey: string;
   regimeText?: string;
   regimeProhibitions?: string;
@@ -822,9 +823,10 @@ async function newsStage1GPT(params: {
   const THEME_STOCK_GROUPS = ['jp_ai_dc', 'jp_defense', 'jp_entertainment'];
   const instrumentList = instruments.map(inst => {
     const base = inst.hasOpenPosition ? `${inst.pair}[OP]` : inst.pair;
+    const rate = inst.currentRate != null ? `[rate=${inst.currentRate}]` : '';
     const hint = inst.tpSlHint ? `(${inst.tpSlHint})` : '';
     const tag = THEME_STOCK_GROUPS.includes(inst.correlationGroup ?? '') ? '[テーマ株・モメンタム重視]' : '';
-    return `${base}${hint}${tag}`;
+    return `${base}${rate}${hint}${tag}`;
   }).join('\n');
 
   const userMessage = [
@@ -849,7 +851,7 @@ async function newsStage1GPT(params: {
     '必ず以下のJSON形式のみで返答してください:\n' +
     '{"news_analysis":[{"index":0,"attention":true,"impact_level":"S","impact":"円安・株安要因（50文字以内）","affected_pairs":["USD/JPY","Nikkei225"]}],' +
     '"trade_signals":[{"pair":"USD/JPY","decision":"BUY","tp_rate":160.50,"sl_rate":158.00,"reasoning":"日本語100文字以内"}]}\n\n' +
-    'impact_levelの定義（テスタ理論指標ティア）:\n' +
+    'impact_levelの定義（経済指標インパクト分類）:\n' +
     '- S: FOMC金利決定・米雇用統計・米CPI・日銀会合・地政学リスク急変。50-300pip超の値動き\n' +
     '- A: GDP・ISM・ECB/BOE金利決定・要人発言の方針転換・地政学リスク拡大。20-80pipの値動き\n' +
     '- B: ADP・PPI・小売売上高・PMI・企業決算。10-40pipの小〜中程度の値動き\n' +
@@ -883,7 +885,7 @@ async function newsStage1GPT(params: {
     '- 【方向最終チェック・送信前必須】BUY: sl_rate < entry_rate でなければ即自動拒否（sl_rate ≥ entry_rateは全て拒否。例: entry=158.337でsl=158.5はBUYとして拒否）。SELL: sl_rate > entry_rate でなければ即自動拒否（sl_rate ≤ entry_rateは全て拒否）。送信前に必ずsl_rateとentry_rateの大小を数値で確認すること\n' +
     '- 確信度が低いニュースはtrade_signalsに含めない\n' +
     '- affected_pairs選定: 直接影響だけでなく間接影響も含める。地政学リスク・原油高・米金利急変はNikkei225/S&P500/NASDAQ/DAXにも影響する。為替と株式指数は同じニュースで同時に動くことが多い\n' +
-    '- 【テーマ株モード】[テーマ株・モメンタム重視]タグの銘柄はテスタ流の小型テーマ株です。判断基準: (1)ファンダメンタルズよりモメンタム（出来高変化・投資家の注目度）を最重視 (2)ニュースの「話題性」と「投資家殺到度」で方向判断 (3)乱高下を恐れず方向が明確なら積極エントリー (4)RR2.0以上を狙いSLはATR×1.0〜1.5で広めにOK';
+    '- 【テーマ株モード】[テーマ株・モメンタム重視]タグの銘柄は小型テーマ株（モメンタム型）です。判断基準: (1)ファンダメンタルズよりモメンタム（出来高変化・投資家の注目度）を最重視 (2)ニュースの「話題性」と「投資家殺到度」で方向判断 (3)乱高下を恐れず方向が明確なら積極エントリー (4)RR2.0以上を狙いSLはATR×1.0〜1.5で広めにOK';
 
   const res = await fetchWithTimeout('https://api.openai.com/v1/chat/completions', {
     method: 'POST',
@@ -929,7 +931,7 @@ async function newsStage1GPT(params: {
 async function newsStage1Claude(params: {
   news: NewsItem[];
   indicators: MarketIndicators;
-  instruments: Array<{ pair: string; hasOpenPosition: boolean; tpSlHint?: string; correlationGroup?: string }>;
+  instruments: Array<{ pair: string; hasOpenPosition: boolean; tpSlHint?: string; correlationGroup?: string; currentRate?: number }>;
   apiKey: string;
   db?: D1Database;
   regimeText?: string;
@@ -944,9 +946,10 @@ async function newsStage1Claude(params: {
   const THEME_STOCK_GROUPS = ['jp_ai_dc', 'jp_defense', 'jp_entertainment'];
   const instrumentList = instruments.map(inst => {
     const base = inst.hasOpenPosition ? `${inst.pair}[OP]` : inst.pair;
+    const rate = inst.currentRate != null ? `[rate=${inst.currentRate}]` : '';
     const hint = inst.tpSlHint ? `(${inst.tpSlHint})` : '';
     const tag = THEME_STOCK_GROUPS.includes(inst.correlationGroup ?? '') ? '[テーマ株・モメンタム重視]' : '';
-    return `${base}${hint}${tag}`;
+    return `${base}${rate}${hint}${tag}`;
   }).join('\n');
 
   const userMessage = [
@@ -993,7 +996,7 @@ async function newsStage1Claude(params: {
     '- 【SL距離の厳守・自動拒否回避】SL距離は必ずtpSlMin以上tpSlMax以下でなければならない（この範囲外は値の大小を問わず例外なく即自動拒否）。USD/JPYの場合: 0.2≤SL距離≤1.2が必須。下限違反例: 0.19, 0.16, 0.08（0.2未満）/ 上限違反例: 1.21, 1.25, 1.38, 1.50, 2.00, 2.38, 2.40（1.2超はどんな値でも拒否）。安全な推奨範囲: 0.30〜0.80（迷ったら必ずこの範囲で設定すること）\n' +
     '- 【方向最終チェック・送信前必須】BUY: sl_rate < entry_rate でなければ即自動拒否（sl_rate ≥ entry_rateは全て拒否。例: entry=158.337でsl=158.5はBUYとして拒否）。SELL: sl_rate > entry_rate でなければ即自動拒否（sl_rate ≤ entry_rateは全て拒否）。送信前に必ずsl_rateとentry_rateの大小を数値で確認すること\n' +
     '- affected_pairs選定: 直接影響だけでなく間接影響も含める。地政学リスク・原油高・米金利急変はNikkei225/S&P500/NASDAQ/DAXにも影響する。為替と株式指数は同じニュースで同時に動くことが多い\n' +
-    '- 【テーマ株モード】[テーマ株・モメンタム重視]タグの銘柄はテスタ流の小型テーマ株です。判断基準: (1)ファンダメンタルズよりモメンタム（出来高変化・投資家の注目度）を最重視 (2)ニュースの「話題性」と「投資家殺到度」で方向判断 (3)乱高下を恐れず方向が明確なら積極エントリー (4)RR2.0以上を狙いSLはATR×1.0〜1.5で広めにOK';
+    '- 【テーマ株モード】[テーマ株・モメンタム重視]タグの銘柄は小型テーマ株（モメンタム型）です。判断基準: (1)ファンダメンタルズよりモメンタム（出来高変化・投資家の注目度）を最重視 (2)ニュースの「話題性」と「投資家殺到度」で方向判断 (3)乱高下を恐れず方向が明確なら積極エントリー (4)RR2.0以上を狙いSLはATR×1.0〜1.5で広めにOK';
 
   const res = await fetchWithTimeout('https://api.anthropic.com/v1/messages', {
     method: 'POST',
