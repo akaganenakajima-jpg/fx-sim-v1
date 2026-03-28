@@ -613,16 +613,19 @@ function scoreUniqueness(topic: string | undefined, recentTopics: string[]): num
   return 10; // ユニーク
 }
 
-/** 7軸加重合計スコアを計算（0〜10） */
-function computeComposite(t: number, u: number, r: number, c: number, s: number, b: number, n: number): number {
+/** 7軸加重合計スコアを計算（0〜10）
+ * isStockSpecific=trueの場合、breadth(b)を無効化しrelevance(r)に再配分 */
+function computeComposite(
+  t: number, u: number, r: number, c: number,
+  s: number, b: number, n: number,
+  isStockSpecific = false
+): number {
+  if (isStockSpecific) {
+    // 個別株ニュース: breadthは無関係（そのニュースが自銘柄に関係あるかが全て）
+    return t * 0.20 + u * 0.15 + r * 0.35 + c * 0.15 + s * 0.10 + n * 0.05;
+  }
   return (
-    t * 0.20 +  // timeliness   20%
-    u * 0.15 +  // uniqueness   15%
-    r * 0.30 +  // relevance    30% ← 最重要
-    c * 0.15 +  // credibility  15%
-    s * 0.10 +  // sentiment    10%
-    b * 0.05 +  // breadth       5%
-    n * 0.05    // novelty       5%
+    t * 0.20 + u * 0.15 + r * 0.30 + c * 0.15 + s * 0.10 + b * 0.05 + n * 0.05
   );
 }
 
@@ -693,7 +696,8 @@ export async function filterAndTranslateWithHaiku(
         const u = scoreUniqueness(r.topic, recentTopicsCached);
         const credBase = scoreCredibility(item.source);
         const ai = r.scores ?? { r: 6, c: credBase, s: 5, b: 5, n: 6 };
-        const composite = computeComposite(t, u, ai.r, ai.c, ai.s, ai.b, ai.n);
+        const isStockSpecific = Boolean(item.source?.includes('.T'));
+        const composite = computeComposite(t, u, ai.r, ai.c, ai.s, ai.b, ai.n, isStockSpecific);
         const rounded = Math.round(composite * 10) / 10;
         scoresMapCached.set(r.index, {
           timeliness: t, uniqueness: u,
@@ -864,7 +868,8 @@ JSON配列のみを返し、他の文字は一切含めないでください。`
       // AI側スコア（なければデフォルト値）
       const ai = r.scores ?? { r: 6, c: credBase, s: 5, b: 5, n: 6 };
 
-      const composite = computeComposite(t, u, ai.r, ai.c, ai.s, ai.b, ai.n);
+      const isStockSpecific = Boolean(item.source?.includes('.T'));
+      const composite = computeComposite(t, u, ai.r, ai.c, ai.s, ai.b, ai.n, isStockSpecific);
       const rounded = Math.round(composite * 10) / 10;
 
       scoresMap.set(r.index, {
@@ -1326,4 +1331,70 @@ function simpleHash(str: string): string {
     hash = ((hash << 5) - hash + str.charCodeAt(i)) | 0;
   }
   return Math.abs(hash).toString(36);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 保有状態バイアス（composite閾値の動的制御）
+// テスタ: 「どうしたら負けないで済むか」— 保有中は些細なニュースも見逃さない
+// ─────────────────────────────────────────────────────────────────────────────
+
+export interface HoldingBias {
+  thresholdOverrides: Map<string, number>;   // pair → composite閾値
+  attentionPairs: string[];                  // 注目優先銘柄
+  maxItemsOverrides: Map<string, number>;    // pair → 最大取得件数
+}
+
+/**
+ * 保有・追跡・候補状態に応じたcomposite閾値バイアスを計算
+ * @param openPositionPairs 保有中のpair名リスト
+ * @param trackingPairs 追跡リストのpair名リスト
+ * @param candidatePairs 候補リストのpair名リスト
+ */
+export function buildHoldingBias(
+  openPositionPairs: string[],
+  trackingPairs: string[],
+  candidatePairs: string[]
+): HoldingBias {
+  const thresholdOverrides = new Map<string, number>();
+  const maxItemsOverrides = new Map<string, number>();
+
+  for (const pair of openPositionPairs) {
+    thresholdOverrides.set(pair, 4.0);  // 緩和
+    maxItemsOverrides.set(pair, 10);
+  }
+  for (const pair of trackingPairs) {
+    if (!thresholdOverrides.has(pair)) {
+      thresholdOverrides.set(pair, 5.0);  // やや緩
+      maxItemsOverrides.set(pair, 7);
+    }
+  }
+  for (const pair of candidatePairs) {
+    if (!thresholdOverrides.has(pair)) {
+      thresholdOverrides.set(pair, 6.0);  // 通常
+      maxItemsOverrides.set(pair, 5);
+    }
+  }
+
+  return {
+    thresholdOverrides,
+    attentionPairs: [...openPositionPairs, ...trackingPairs],
+    maxItemsOverrides,
+  };
+}
+
+/**
+ * ニュースアイテムに対する実効的なcomposite閾値を返す
+ * デフォルト6.5、保有中なら緩和
+ */
+export function getEffectiveThreshold(
+  news: { source?: string; pair?: string },
+  bias: HoldingBias | null,
+  defaultThreshold = 6.5
+): number {
+  if (!bias) return defaultThreshold;
+  // pairフィールドがあればそれで検索
+  if (news.pair && bias.thresholdOverrides.has(news.pair)) {
+    return bias.thresholdOverrides.get(news.pair)!;
+  }
+  return defaultThreshold;
 }
