@@ -598,7 +598,7 @@ export async function newsStage1(params: {
       ...(performanceSummary.worstPairs.length > 0 ? [`低パフォーマンス銘柄: ${performanceSummary.worstPairs.join(', ')} — HOLD推奨`] : []),
       ``,
     ] : []),
-    `【対象銘柄】（[OP]=既存ポジションあり、trade_signalsに含めない）`,
+    `【対象銘柄】（[OP]=既存ポジションあり。[rate=X]=現在レート — ⚠️TP/SLは必ずこのrateを基準に計算すること）`,
     instrumentList,
   ].join('\n');
 
@@ -863,7 +863,7 @@ async function newsStage1GPT(params: {
       ...(performanceSummary.worstPairs.length > 0 ? [`低パフォーマンス銘柄: ${performanceSummary.worstPairs.join(', ')} — HOLD推奨`] : []),
       ``,
     ] : []),
-    `【対象銘柄】（[OP]=既存ポジションあり、trade_signalsに含めない）`, instrumentList,
+    `【対象銘柄】（[OP]=既存ポジションあり。[rate=X]=現在レート — ⚠️TP/SLは必ずこのrateを基準に計算すること）`, instrumentList,
   ].join('\n');
 
   const systemPrompt =
@@ -997,7 +997,7 @@ async function newsStage1Claude(params: {
       ...(performanceSummary.worstPairs.length > 0 ? [`低パフォーマンス銘柄: ${performanceSummary.worstPairs.join(', ')} — HOLD推奨`] : []),
       ``,
     ] : []),
-    `【対象銘柄】（[OP]=既存ポジションあり、trade_signalsに含めない）`, instrumentList,
+    `【対象銘柄】（[OP]=既存ポジションあり。[rate=X]=現在レート — ⚠️TP/SLは必ずこのrateを基準に計算すること）`, instrumentList,
   ].join('\n');
 
   const systemPrompt =

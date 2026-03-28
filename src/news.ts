@@ -23,6 +23,7 @@ export interface SourceFetchStat {
   latencyMs: number;
   itemCount: number;
   avgFreshnessMin: number | null;
+  error?: string; // Fix-B: エラー詳細（ok=false時のみ）
 }
 
 export interface FetchNewsResult {
@@ -345,10 +346,11 @@ export async function fetchNews(apiKeys?: NewsApiKeys): Promise<FetchNewsResult>
           latencyMs, itemCount: items.length, avgFreshnessMin: avgFresh,
         });
         return items;
-      } catch {
+      } catch (err) {
         stats.push({
           source: src.name, url: src.url, ok: false,
           latencyMs: Date.now() - start, itemCount: 0, avgFreshnessMin: null,
+          error: String(err).slice(0, 120),
         });
         return [];
       }
