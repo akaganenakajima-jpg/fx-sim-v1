@@ -72,14 +72,22 @@ function normalizeTpSl(params: {
 
   // パターン5: 片側ミラー — TP方向は正しいがSLが同じ側にある（最頻出）
   // 例: SELL rate=4569.5, TP=4530.5(正しく下), SL=4559.5(誤って下) → SL=4579.5(上にミラー)
+  // 拡張: SL距離 < tpSlMin の場合もtpSlMinにクランプして補正（SLミラー+距離クランプ複合）
   {
     const tpCorrectSide = isBuy ? tp > rate : tp < rate;
     const slWrongSide = isBuy ? sl > rate : sl < rate;
     if (tpCorrectSide && slWrongSide) {
       const slDist = Math.abs(sl - rate);
-      const newSl = isBuy ? rate - slDist : rate + slDist;
-      if (isPlausibleAbsolute(isBuy, rate, tp, newSl, instrument)) {
-        return { tp, sl: newSl, corrected: true, correctionType: 'SLミラー補正' };
+      // SL距離がtpSlMin未満の場合はtpSlMinにクランプ（距離補正+ミラー複合）
+      const newSlDist = Math.max(slDist, instrument.tpSlMin);
+      const newSl = isBuy ? rate - newSlDist : rate + newSlDist;
+      // TPはRR上限を超えないようクランプ（元のTP距離を最大限尊重）
+      const tpDist = Math.abs(tp - rate);
+      const maxTpDist = newSlDist * instrument.rrMax;
+      const newTpDist = Math.min(tpDist, maxTpDist);
+      const newTp = isBuy ? rate + newTpDist : rate - newTpDist;
+      if (isPlausibleAbsolute(isBuy, rate, newTp, newSl, instrument)) {
+        return { tp: newTp, sl: newSl, corrected: true, correctionType: 'SLミラー+距離クランプ補正' };
       }
     }
     // 逆ケース: SL方向は正しいがTPが同じ側
@@ -90,6 +98,27 @@ function normalizeTpSl(params: {
       const newTp = isBuy ? rate + tpDist : rate - tpDist;
       if (isPlausibleAbsolute(isBuy, rate, newTp, sl, instrument)) {
         return { tp: newTp, sl, corrected: true, correctionType: 'TPミラー補正' };
+      }
+    }
+  }
+
+  // パターン6: SL距離クランプ補正 — 方向は正しいがSL距離 < tpSlMin
+  // 例: MSFT BUY rate=359.86, SL=359.83(正しく下だが距離=0.03 < tpSlMin=2.0) → SL=357.86(-2.0)
+  {
+    const tpCorrect = isBuy ? tp > rate : tp < rate;
+    const slCorrect = isBuy ? sl < rate : sl > rate;
+    if (tpCorrect && slCorrect) {
+      const slDist = Math.abs(sl - rate);
+      const tpDist = Math.abs(tp - rate);
+      if (slDist < instrument.tpSlMin) {
+        const newSlDist = instrument.tpSlMin;
+        const newSl = isBuy ? rate - newSlDist : rate + newSlDist;
+        const maxTpDist = newSlDist * instrument.rrMax;
+        const newTpDist = Math.min(tpDist, maxTpDist);
+        const newTp = isBuy ? rate + newTpDist : rate - newTpDist;
+        if (isPlausibleAbsolute(isBuy, rate, newTp, newSl, instrument)) {
+          return { tp: newTp, sl: newSl, corrected: true, correctionType: 'SL距離クランプ補正' };
+        }
       }
     }
   }
