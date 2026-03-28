@@ -3,7 +3,7 @@
 
 import { getOpenPositions, getOpenPositionByPair, closePosition, insertSystemLog, updateDecisionOutcome, getRecentTPOpposite } from './db';
 import type { Position } from './db';
-import type { InstrumentConfig } from './instruments';
+import { INSTRUMENTS, type InstrumentConfig } from './instruments';
 import { getBroker, withFallback, type BrokerEnv } from './broker';
 import { kellyFraction, logReturn } from './stats';
 import { sendNotification, buildTpSlMessage } from './notify';
@@ -350,6 +350,32 @@ export async function openPosition(
   if (existing) {
     console.log(`[position] Already has open position for ${pair}, skipping`);
     return;
+  }
+
+  // T11: セッション時間ガード（取引時間外のエントリーを拒否）
+  const instConfig = INSTRUMENTS.find(i => i.pair === pair);
+  if (instConfig) {
+    const now = new Date();
+    if (instConfig.tradingHoursJST) {
+      // 日本株: JST = UTC+9
+      const jstHour = (now.getUTCHours() + 9) % 24;
+      const { open, close } = instConfig.tradingHoursJST;
+      if (jstHour < open || jstHour >= close) {
+        console.log(`[position] セッション外: ${pair} JST ${jstHour}時 (許可: ${open}-${close}) — エントリー拒否`);
+        return;
+      }
+    }
+    if (instConfig.tradingHoursET) {
+      // 米国株: ET = UTC-4 (EDT) or UTC-5 (EST)。簡易的にUTC-4（EDT）を使用
+      const etHour = (now.getUTCHours() - 4 + 24) % 24;
+      const { open, close } = instConfig.tradingHoursET;
+      // open=9.5 → 9:30以降、close=16 → 16:00まで
+      const etTime = etHour + now.getUTCMinutes() / 60;
+      if (etTime < open || etTime >= close) {
+        console.log(`[position] セッション外: ${pair} ET ${etTime.toFixed(1)}h (許可: ${open}-${close}) — エントリー拒否`);
+        return;
+      }
+    }
   }
 
   // SL方向最終防衛ライン（entryRate基準）
