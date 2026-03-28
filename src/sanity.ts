@@ -151,6 +151,67 @@ function isPlausibleAbsolute(
   return true;
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// ファンダベースTP multiplier補正
+// テスタ: SLは変えない。TPのみ理論株価との乖離率で微調整
+// ─────────────────────────────────────────────────────────────────────────────
+
+export interface FundaTpCorrectionParams {
+  direction: 'BUY' | 'SELL';
+  rate: number;      // 現在株価
+  tp: number | null;
+  eps: number | null;
+  sectorAvgPer: number | null;
+  isThemeStock: boolean;
+  fundaUpdatedAt: string | null;  // fundamentals.updated_atのISO8601
+}
+
+/**
+ * ファンダデータに基づいてTP multiplierを補正する
+ * - 割安(乖離率>15%): multiplier ×1.2
+ * - 割高(乖離率<-10%): multiplier ×0.8
+ * - テーマ株 or データ古い(7日以上): 補正なし
+ */
+export function applyFundaTpCorrection(params: FundaTpCorrectionParams): number | null {
+  const { direction, rate, tp, eps, sectorAvgPer, isThemeStock, fundaUpdatedAt } = params;
+
+  if (!tp) return tp;
+
+  // テーマ株は補正無効（モメンタム優先）
+  if (isThemeStock) return tp;
+
+  // データが7日以上古い場合は補正無効
+  if (fundaUpdatedAt) {
+    const daysOld = (Date.now() - new Date(fundaUpdatedAt).getTime()) / (1000 * 3600 * 24);
+    if (daysOld > 7) return tp;
+  } else {
+    return tp; // データなし → 補正なし
+  }
+
+  // 理論株価を計算
+  if (!eps || !sectorAvgPer || sectorAvgPer <= 0 || rate <= 0) return tp;
+
+  const theoreticalPrice = eps * sectorAvgPer;
+  const deviation = (theoreticalPrice - rate) / rate; // 正=割安、負=割高
+
+  let multiplier = 1.0;
+  if (deviation > 0.15) {
+    multiplier = 1.2; // 割安: TPを広げる
+  } else if (deviation < -0.10) {
+    multiplier = 0.8; // 割高: TPを狭める
+  } else {
+    return tp; // 適正: 補正なし
+  }
+
+  // TP距離を補正
+  const tpDist = Math.abs(tp - rate);
+  const correctedDist = tpDist * multiplier;
+
+  return direction === 'BUY'
+    ? rate + correctedDist
+    : rate - correctedDist;
+}
+
 /**
  * AIが返したTP/SLが妥当か検証（自動補正付き）
  * - 自動補正を試みた後でバリデーション
