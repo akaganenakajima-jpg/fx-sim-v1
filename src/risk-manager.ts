@@ -71,6 +71,32 @@ export async function getCurrentBalance(db: D1Database): Promise<number> {
   return INITIAL_BALANCE + (row?.totalPnl ?? 0);
 }
 
+// ─── 日次損失チェック（Daily Loss Cap） ──────────
+
+/**
+ * 当日（UTC 0:00〜）の実現損失合計を取得し、HWM × capPct を超えているか判定。
+ * @returns { dailyLoss: 当日損失合計（負値）, capped: 上限超過か, capAmount: 上限額 }
+ */
+export async function checkDailyLossCap(
+  db: D1Database,
+  now: Date,
+  capPct: number = 0.005, // デフォルト 0.5%
+): Promise<{ dailyLoss: number; capped: boolean; capAmount: number }> {
+  const hwm = await getHWM(db);
+  const capAmount = hwm * capPct;
+  const todayStart = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate())).toISOString();
+  const row = await db
+    .prepare(
+      `SELECT COALESCE(SUM(pnl), 0) AS dailyPnl
+       FROM positions
+       WHERE status = 'CLOSED' AND closed_at >= ?`
+    )
+    .bind(todayStart)
+    .first<{ dailyPnl: number }>();
+  const dailyLoss = row?.dailyPnl ?? 0;
+  return { dailyLoss, capped: dailyLoss <= -capAmount, capAmount };
+}
+
 // ─── DD段階判定 ──────────────────────────────────
 
 export async function getDrawdownLevel(db: D1Database): Promise<DrawdownResult> {

@@ -11,14 +11,15 @@ import {
   type InstrumentParamsRow,
 } from './logic-indicators';
 import { checkTpSlSanity } from './sanity';
-import { checkCorrelationGuard, getDrawdownLevel, updateHWM, getCurrentBalance, applyDrawdownControl } from './risk-manager';
+import { checkCorrelationGuard, getDrawdownLevel, updateHWM, getCurrentBalance, applyDrawdownControl, checkDailyLossCap } from './risk-manager';
 import { openPosition } from './position';
 import { insertDecision, insertSystemLog, insertIndicatorLog, getCacheValue, setCacheValue } from './db';
 import { INSTRUMENTS, getDefaultParams, getYahooSymbol } from './instruments';
 import type { MarketIndicators } from './indicators';
 import { getBroker, type BrokerEnv } from './broker';
 import { getActiveTempParams } from './news-trigger';
-import { isNakaneWindow } from './session'; // 施策19: 東京仲値ウィンドウ
+import { isNakaneWindow, getCurrentSession, getSessionLotMultiplier, getSessionInstrumentMultiplier } from './session';
+import { getWeekendStatus } from './weekend';
 import { fetchYahooCandles } from './candles';
 
 export interface LogicDecisionSummary {
@@ -199,6 +200,19 @@ export async function runLogicDecisions(
   const openPairs = new Set((openRaw.results ?? []).map(p => p.pair));
   const OPEN_LIMIT = 10;
 
+  // ── Weekend Phase ゲート: Phase 2/3/4 は新規エントリー完全禁止 ──
+  const weekendStatus = getWeekendStatus(now);
+  if (weekendStatus.phase >= 2 || weekendStatus.phase <= -2) {
+    return summary; // Phase 2以降 or 月曜ウォームアップ観察期: Logic自体をスキップ
+  }
+
+  // ── セッション判定（全銘柄共通） ──
+  const session = getCurrentSession(now);
+  const sessionLotMult = getSessionLotMultiplier(session);
+  if (sessionLotMult === 0) {
+    return summary; // early_morning: 全銘柄取引禁止
+  }
+
   // DD状態を事前取得（全銘柄共通）
   const ddResult = await getDrawdownLevel(db);
   const balance = await getCurrentBalance(db);
@@ -209,6 +223,14 @@ export async function runLogicDecisions(
     await insertSystemLog(db, 'WARN', 'LOGIC',
       'DD STOP: ロジックエントリー全銘柄スキップ',
       `DD=${ddResult.ddPct.toFixed(1)}%`);
+    return summary;
+  }
+
+  // ── 日次損失上限チェック（HWM × 0.5%/日） ──
+  const dailyCap = await checkDailyLossCap(db, now);
+  if (dailyCap.capped) {
+    await insertSystemLog(db, 'WARN', 'LOGIC',
+      `Daily Loss Cap: 当日損失 ${dailyCap.dailyLoss.toFixed(2)}円 >= 上限 ${dailyCap.capAmount.toFixed(2)}円 — 全銘柄スキップ`);
     return summary;
   }
 
@@ -269,18 +291,61 @@ export async function runLogicDecisions(
       }
     }
 
-    // ── Ph.8: SL後クールダウン ──
+    // ── Ph.8: SL後クールダウン（段階強化） ──
+    // 1回目SL→10分、2回目→30分、3回目→60分、4回目以降→当日エントリー禁止
     if (params.cooldown_after_sl > 0) {
+      // 当日（UTC 0:00〜）の同一銘柄SL回数を取得
+      const todayStart = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate())).toISOString();
+      const slCountRow = await db.prepare(
+        `SELECT COUNT(*) as cnt FROM positions WHERE pair=? AND close_reason='SL' AND status='CLOSED' AND closed_at >= ?`
+      ).bind(pair, todayStart).first<{cnt: number}>();
+      const todaySLCount = slCountRow?.cnt ?? 0;
+
+      if (todaySLCount >= 4) {
+        // 4回目以降: 当日エントリー禁止
+        summary.skipped++;
+        summary.signals.push({ pair, signal: 'SKIP', reason: `SL当日禁止(本日${todaySLCount}回SL)` });
+        continue;
+      }
+
       const lastSl = await db.prepare(
         `SELECT closed_at FROM positions WHERE pair=? AND close_reason='SL' AND status='CLOSED' ORDER BY id DESC LIMIT 1`
       ).bind(pair).first<{closed_at: string}>();
       if (lastSl) {
         const slTime = new Date(lastSl.closed_at).getTime();
-        const cooldownMs = params.cooldown_after_sl * 60 * 1000;
+        // 段階的クールダウン: 1回目10分、2回目30分、3回目60分
+        const cooldownMinutes = todaySLCount <= 1 ? 10 : todaySLCount === 2 ? 30 : 60;
+        const cooldownMs = cooldownMinutes * 60 * 1000;
         if (now.getTime() - slTime < cooldownMs) {
           summary.skipped++;
-          summary.signals.push({ pair, signal: 'SKIP', reason: `SLクールダウン中(${params.cooldown_after_sl}分)` });
+          summary.signals.push({ pair, signal: 'SKIP', reason: `SLクールダウン中(${cooldownMinutes}分, 本日${todaySLCount}回目)` });
           continue;
+        }
+      }
+    }
+
+    // ── 相関グループクールダウン（施策4拡張） ──
+    // 同グループ内の他銘柄が直近30分以内にSLされた場合、この銘柄もクールダウン
+    const group = instrument.correlationGroup;
+    if (group !== 'standalone') {
+      const groupPairs = INSTRUMENTS
+        .filter(i => i.correlationGroup === group && i.pair !== pair)
+        .map(i => i.pair);
+      if (groupPairs.length > 0) {
+        const placeholders = groupPairs.map(() => '?').join(',');
+        const groupLastSl = await db.prepare(
+          `SELECT pair, closed_at FROM positions
+           WHERE pair IN (${placeholders}) AND close_reason='SL' AND status='CLOSED'
+           ORDER BY id DESC LIMIT 1`
+        ).bind(...groupPairs).first<{pair: string; closed_at: string}>();
+        if (groupLastSl) {
+          const groupSlTime = new Date(groupLastSl.closed_at).getTime();
+          const groupCooldownMs = 30 * 60 * 1000; // 30分
+          if (now.getTime() - groupSlTime < groupCooldownMs) {
+            summary.skipped++;
+            summary.signals.push({ pair, signal: 'SKIP', reason: `相関グループCD(${group}: ${groupLastSl.pair}がSL)` });
+            continue;
+          }
         }
       }
     }
@@ -511,7 +576,7 @@ export async function runLogicDecisions(
     const ddLotMult  = ddResult.lotMultiplier;
     const tierMult   = instrument.tierLotMultiplier;
 
-    // ── Ph.8: 連敗ロット縮退 ──
+    // ── Ph.8: 連敗ロット縮退（銘柄別） ──
     let consecutiveLossMult = 1.0;
     if (params.consecutive_loss_shrink > 0) {
       const recentClosedRows = await db.prepare(
@@ -522,12 +587,31 @@ export async function runLogicDecisions(
         consecutiveLossMult = 0.5;
       }
     }
+
+    // ── 全銘柄横断連敗カウンタ（P2: 銘柄変更による連敗リセット回避） ──
+    // 全銘柄直近5件のSL率を見て追加縮退
+    let globalLossMult = 1.0;
+    {
+      const globalRecent = await db.prepare(
+        `SELECT close_reason FROM positions WHERE status='CLOSED' ORDER BY id DESC LIMIT 5`
+      ).all<{close_reason: string | null}>();
+      const globalRows = globalRecent.results ?? [];
+      if (globalRows.length >= 5) {
+        const slCount = globalRows.filter(r => r.close_reason === 'SL').length;
+        if (slCount >= 4) globalLossMult = 0.3;       // 5件中4件以上SL → 0.3倍
+        else if (slCount >= 3) globalLossMult = 0.5;   // 5件中3件SL → 0.5倍
+      }
+    }
     // 施策18: confidence乗数（0.7〜1.3倍）— スコアが高いほど大きいロット
     const confidenceScore = techSignal.scores?.total ?? null;
     const confidenceMult = confidenceScore != null
       ? 0.7 + Math.min(confidenceScore, 1.0) * 0.6
       : 1.0;
-    const requestedLot = 1 * ddLotMult * tierMult * consecutiveLossMult * confidenceMult;
+    // セッション×銘柄マトリクス乗数 + Weekend乗数
+    const sessionInstrMult = getSessionInstrumentMultiplier(session, pair);
+    const weekendEntryMult = weekendStatus.entryLotMultiplier;
+    const requestedLot = 1 * ddLotMult * tierMult * consecutiveLossMult * globalLossMult * confidenceMult
+                           * sessionLotMult * sessionInstrMult * weekendEntryMult;
 
     if (requestedLot <= 0) {
       summary.skipped++;
