@@ -53,6 +53,11 @@ export interface MarketIndicators {
   tokio_marine: number | null;     // 東京海上HD 8766.T
   mitsubishi_corp: number | null;  // 三菱商事 8058.T
   toyota: number | null;           // トヨタ 7203.T
+  sakura_internet: number | null;  // さくらインターネット 3778.T
+  mhi: number | null;              // 三菱重工 7011.T
+  ihi: number | null;              // IHI 7013.T
+  anycolor: number | null;         // ANYCOLOR 5032.T
+  cover_corp: number | null;       // カバー 5253.T
   // 米国個別株
   nvda: number | null;
   tsla: number | null;
@@ -195,6 +200,7 @@ export async function getMarketIndicators(twelveDataApiKey?: string): Promise<Ma
     kawasaki_kisen, nippon_yusen, softbank_g, lasertec, tokyo_electron,
     disco, advantest, fast_retailing, nippon_steel, mufg,
     mitsui_osk, tokio_marine, mitsubishi_corp, toyota,
+    sakura_internet, mhi, ihi, anycolor, cover_corp,
     // 米国個別株
     nvda, tsla, aapl, amzn, amd, meta, msft, googl,
     fearGreedData,
@@ -239,6 +245,11 @@ export async function getMarketIndicators(twelveDataApiKey?: string): Promise<Ma
     fetchYahoo('8766.T'),     // 東京海上HD
     fetchYahoo('8058.T'),     // 三菱商事
     fetchYahoo('7203.T'),     // トヨタ
+    fetchYahoo('3778.T'),     // さくらインターネット
+    fetchYahoo('7011.T'),     // 三菱重工
+    fetchYahoo('7013.T'),     // IHI
+    fetchYahoo('5032.T'),     // ANYCOLOR
+    fetchYahoo('5253.T'),     // カバー
     // 米国個別株
     fetchYahoo('NVDA'),
     fetchYahoo('TSLA'),
@@ -260,6 +271,7 @@ export async function getMarketIndicators(twelveDataApiKey?: string): Promise<Ma
     kawasaki_kisen, nippon_yusen, softbank_g, lasertec, tokyo_electron,
     disco, advantest, fast_retailing, nippon_steel, mufg,
     mitsui_osk, tokio_marine, mitsubishi_corp, toyota,
+    sakura_internet, mhi, ihi, anycolor, cover_corp,
     nvda, tsla, aapl, amzn, amd, meta, msft, googl,
     fearGreed: fearGreedData.value,
     fearGreedLabel: fearGreedData.label,
