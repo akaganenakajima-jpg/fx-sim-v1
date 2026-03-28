@@ -21,8 +21,8 @@
  *   - 新規エントリー → Phase 1でロット半減、Phase 2以降は完全禁止
  */
 
-import { getOpenPositions, insertSystemLog } from './db';
-import type { InstrumentConfig } from './instruments';
+import { getOpenPositions, insertSystemLog, getCacheValue, setCacheValue } from './db';
+import { INSTRUMENTS, type InstrumentConfig } from './instruments';
 
 // ---------------------------------------------------------------------------
 // 型定義
@@ -281,4 +281,143 @@ export async function forceCloseAllForWeekend(
   }
 
   return closedCount;
+}
+
+// ---------------------------------------------------------------------------
+// 施策A: 週末ニュースダイジェスト生成
+// ---------------------------------------------------------------------------
+
+export interface WeekendNewsItem {
+  title: string;
+  title_ja: string | null;
+  source: string;
+  pub_date: string | null;
+  composite_score: number | null;
+}
+
+/**
+ * 週末（Phase 4）中に news_raw に蓄積されたフィルタ済みニュースを取得
+ * @param hoursBack Phase 4 の期間（金曜21:00〜日曜22:00 ≒ 49時間、余裕を持って50）
+ */
+export async function getWeekendNewsDigest(
+  db: D1Database,
+  hoursBack: number = 50,
+): Promise<WeekendNewsItem[]> {
+  const rows = await db
+    .prepare(
+      `SELECT title, title_ja, source, pub_date, composite_score
+       FROM news_raw
+       WHERE fetched_at >= datetime('now', '-' || ? || ' hours')
+         AND haiku_accepted = 1
+       ORDER BY composite_score DESC, fetched_at DESC
+       LIMIT 100`
+    )
+    .bind(hoursBack)
+    .all();
+  return (rows.results ?? []) as unknown as WeekendNewsItem[];
+}
+
+// ---------------------------------------------------------------------------
+// 施策C: 金曜終値保存 + ギャップ検知
+// ---------------------------------------------------------------------------
+
+export interface GapSignal {
+  pair: string;
+  fridayClose: number;
+  mondayOpen: number;
+  gapPercent: number;
+  gapDirection: 'UP' | 'DOWN';
+  magnitude: 'SMALL' | 'MEDIUM' | 'LARGE';
+}
+
+const FRIDAY_CLOSE_KEY = 'friday_close_prices';
+
+/**
+ * 金曜終値を market_cache に保存（Phase 2 末期、18:55 UTC 頃に呼び出す）
+ */
+export async function saveFridayClosePrices(
+  db: D1Database,
+  prices: Map<string, number | null>,
+): Promise<number> {
+  const snapshot: Record<string, number> = {};
+  let count = 0;
+  for (const [pair, rate] of prices) {
+    if (rate != null) {
+      snapshot[pair] = rate;
+      count++;
+    }
+  }
+  await setCacheValue(db, FRIDAY_CLOSE_KEY, JSON.stringify({
+    savedAt: new Date().toISOString(),
+    prices: snapshot,
+  }));
+  return count;
+}
+
+/**
+ * 月曜始値と金曜終値を比較し、ギャップを検知
+ * Phase -2 の最初の cron で呼び出す
+ */
+export async function detectGaps(
+  db: D1Database,
+  currentPrices: Map<string, number | null>,
+): Promise<GapSignal[]> {
+  const raw = await getCacheValue(db, FRIDAY_CLOSE_KEY);
+  if (!raw) return [];
+
+  let fridayPrices: Record<string, number>;
+  try {
+    fridayPrices = JSON.parse(raw).prices;
+  } catch { return []; }
+
+  const gaps: GapSignal[] = [];
+  for (const inst of INSTRUMENTS) {
+    const fridayClose = fridayPrices[inst.pair];
+    const mondayOpen = currentPrices.get(inst.pair);
+    if (fridayClose == null || mondayOpen == null) continue;
+
+    const gapPercent = ((mondayOpen - fridayClose) / fridayClose) * 100;
+    const absGap = Math.abs(gapPercent);
+
+    // アセットクラス別閾値
+    const isStock = !!(inst as any).tradingHoursJST || !!(inst as any).tradingHoursET;
+    const isCommodity = ['Gold', 'Silver', 'CrudeOil', 'NatGas', 'Copper'].includes(inst.pair);
+    const threshold = isStock ? 0.5 : isCommodity ? 0.3 : 0.15;
+
+    if (absGap >= threshold) {
+      gaps.push({
+        pair: inst.pair,
+        fridayClose,
+        mondayOpen,
+        gapPercent: Math.round(gapPercent * 1000) / 1000,
+        gapDirection: gapPercent > 0 ? 'UP' : 'DOWN',
+        magnitude: absGap >= threshold * 3 ? 'LARGE'
+          : absGap >= threshold * 1.5 ? 'MEDIUM'
+          : 'SMALL',
+      });
+    }
+  }
+
+  gaps.sort((a, b) => Math.abs(b.gapPercent) - Math.abs(a.gapPercent));
+  return gaps;
+}
+
+// ---------------------------------------------------------------------------
+// 共通: フラグリセット
+// ---------------------------------------------------------------------------
+
+const WEEKEND_FLAG_KEYS = [
+  'weekend_digest_done',
+  'premarket_analysis_done',
+  'friday_close_saved',
+  'gap_detection_done',
+];
+
+/**
+ * 月曜 Phase 0 移行時に全週末フラグをリセット
+ */
+export async function resetWeekendFlags(db: D1Database): Promise<void> {
+  for (const key of WEEKEND_FLAG_KEYS) {
+    await setCacheValue(db, key, '');
+  }
 }

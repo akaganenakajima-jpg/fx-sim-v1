@@ -5,7 +5,7 @@
 import { getUSDJPY } from './rate';
 import { fetchNews, filterAndTranslateWithHaiku, saveRawNews, purgeOldNewsRaw, type SourceFetchStat, type NewsApiKeys } from './news';
 import { getMarketIndicators } from './indicators';
-import { fetchOgDescription, newsStage1WithHedge, newsStage2, RateLimitError, type NewsAnalysisItem, type NewsStage1Result } from './gemini';
+import { fetchOgDescription, newsStage1WithHedge, newsStage2, premarketAnalysis, RateLimitError, type NewsAnalysisItem, type NewsStage1Result } from './gemini';
 import { checkAndCloseAllPositions, openPosition } from './position';
 import {
   insertSystemLog,
@@ -30,7 +30,7 @@ import { fetchEconomicCalendar, getUpcomingHighImpactEvents } from './calendar';
 import { generateWeeklyReview, generateMonthlyReview } from './trade-journal';
 import { detectBreakout } from './breakout';
 import { determineRegime, formatRegimeForPrompt, getRegimeProhibitions } from './regime';
-import { getWeekendStatus, lockProfitsForWeekend, forceCloseAllForWeekend } from './weekend';
+import { getWeekendStatus, lockProfitsForWeekend, forceCloseAllForWeekend, getWeekendNewsDigest, saveFridayClosePrices, detectGaps, resetWeekendFlags } from './weekend';
 import { runLogicDecisions } from './logic-trading';
 import { runParamReview } from './param-review';
 import { runNewsTrigger, consumeEmergencyForceFlag } from './news-trigger';
@@ -777,6 +777,130 @@ async function run(env: Env): Promise<void> {
       sources: activeNewsSources || 'none',
     }));
 
+    // ── 施策B: プレマーケット分析（日曜20:00 UTC、Phase 4 中に1回のみ） ──
+    if (weekendStatus.phase === 4 && now.getUTCDay() === 0
+        && now.getUTCHours() === 20 && now.getUTCMinutes() <= 2) {
+      const pmDone = await getCacheValue(env.DB, 'premarket_analysis_done');
+      if (!pmDone) {
+        try {
+          const digestNews = await getWeekendNewsDigest(env.DB, 50);
+          if (digestNews.length > 0) {
+            const digestText = digestNews.slice(0, 30).map((n, i) =>
+              `[W${i}] ${n.title_ja || n.title} (${n.source}) score=${n.composite_score?.toFixed(1) ?? 'N/A'}`
+            ).join('\n');
+            const instrumentList = INSTRUMENTS.map(i => i.pair).join(', ');
+            const pmResult = await premarketAnalysis({
+              weekendNews: digestText,
+              instrumentList,
+              apiKey: getApiKey(env),
+              openaiApiKey: env.OPENAI_API_KEY,
+              anthropicApiKey: env.ANTHROPIC_API_KEY,
+              db: env.DB,
+            });
+            await setCacheValue(env.DB, 'premarket_analysis', JSON.stringify({
+              generatedAt: now.toISOString(),
+              provider: pmResult.provider,
+              predictions: pmResult.predictions,
+              market_summary: pmResult.market_summary,
+              risk_events: pmResult.risk_events,
+            }));
+            await setCacheValue(env.DB, 'premarket_analysis_done', 'true');
+            const highConf = pmResult.predictions.filter(p => p.confidence >= 70).length;
+            await insertSystemLog(env.DB, 'INFO', 'PREMARKET',
+              `プレマーケット分析完了 (${pmResult.provider}): ${highConf}件高確信`,
+              pmResult.market_summary.slice(0, 200));
+          }
+        } catch (e) {
+          await insertSystemLog(env.DB, 'WARN', 'PREMARKET',
+            'プレマーケット分析失敗', String(e).slice(0, 200));
+        }
+      }
+    }
+
+    // ── 施策A: 週末ニュースダイジェスト + 施策C: ギャップ検知（Phase -2 初回） ──
+    let weekendContext = '';
+    if (weekendStatus.phase === -2) {
+      // 施策A: ダイジェスト生成
+      const digestDone = await getCacheValue(env.DB, 'weekend_digest_done');
+      if (!digestDone) {
+        const digestNews = await getWeekendNewsDigest(env.DB, 50);
+        if (digestNews.length > 0) {
+          const digestText = digestNews.slice(0, 30).map((n, i) =>
+            `[W${i}] ${n.title_ja || n.title} (${n.source})`
+          ).join('\n');
+          await setCacheValue(env.DB, 'weekend_news_digest', JSON.stringify({
+            generatedAt: now.toISOString(), count: digestNews.length, digest: digestText,
+          }));
+          await setCacheValue(env.DB, 'weekend_digest_done', 'true');
+          await insertSystemLog(env.DB, 'INFO', 'WEEKEND',
+            `週末ニュースダイジェスト: ${digestNews.length}件`, digestText.slice(0, 300));
+        }
+      }
+
+      // 施策C: ギャップ検知
+      const gapDone = await getCacheValue(env.DB, 'gap_detection_done');
+      if (!gapDone) {
+        const gaps = await detectGaps(env.DB, prices);
+        if (gaps.length > 0) {
+          await setCacheValue(env.DB, 'gap_signals', JSON.stringify({ detectedAt: now.toISOString(), gaps }));
+          const summary = gaps.slice(0, 5)
+            .map(g => `${g.pair} ${g.gapDirection} ${g.gapPercent.toFixed(2)}% (${g.magnitude})`)
+            .join(', ');
+          await insertSystemLog(env.DB, 'INFO', 'GAP',
+            `ギャップ検知: ${gaps.length}件 (LARGE=${gaps.filter(g => g.magnitude === 'LARGE').length})`,
+            summary);
+        }
+        await setCacheValue(env.DB, 'gap_detection_done', 'true');
+      }
+    }
+
+    // Phase -2/-1: プレマーケット分析 + ギャップ情報を weekendContext に構築
+    if (weekendStatus.phase >= -2 && weekendStatus.phase <= -1) {
+      const parts: string[] = [];
+      // プレマーケット分析
+      const pmRaw = await getCacheValue(env.DB, 'premarket_analysis');
+      if (pmRaw) {
+        try {
+          const pm = JSON.parse(pmRaw);
+          const highConf = (pm.predictions ?? [])
+            .filter((p: any) => p.confidence >= 70)
+            .map((p: any) => `${p.pair}: ${p.bias} (確信度${p.confidence}%) ${p.reasoning}`)
+            .join('\n');
+          if (highConf) {
+            parts.push(`【プレマーケット分析（日曜20:00生成）】\n${pm.market_summary}\n高確信シグナル:\n${highConf}`);
+          }
+        } catch { /* ignore */ }
+      }
+      // ギャップ情報
+      const gapRaw = await getCacheValue(env.DB, 'gap_signals');
+      if (gapRaw) {
+        try {
+          const { gaps } = JSON.parse(gapRaw);
+          if (gaps && gaps.length > 0) {
+            const gapText = gaps.slice(0, 10)
+              .map((g: any) => `${g.pair}: ${g.gapDirection} ${g.gapPercent.toFixed(2)}% (${g.fridayClose}→${g.mondayOpen}) ${g.magnitude}`)
+              .join('\n');
+            parts.push(`【ギャップ検知（金曜終値 vs 月曜始値）】\n${gapText}\n※ ギャップフィルは発生確率60-70%だが、ファンダ要因の方向性ギャップは継続傾向`);
+          }
+        } catch { /* ignore */ }
+      }
+      // ダイジェスト
+      const digestRaw = await getCacheValue(env.DB, 'weekend_news_digest');
+      if (digestRaw) {
+        try {
+          const { digest } = JSON.parse(digestRaw);
+          if (digest) parts.push(`【週末蓄積ニュース】\n${digest}`);
+        } catch { /* ignore */ }
+      }
+      weekendContext = parts.join('\n\n');
+    }
+
+    // Phase 0 移行時にフラグリセット（月曜03:00 UTC）
+    if (weekendStatus.phase === 0 && now.getUTCDay() === 1
+        && now.getUTCHours() === 3 && now.getUTCMinutes() <= 1) {
+      await resetWeekendFlags(env.DB);
+    }
+
     // ブローカー環境（TP/SL・ポジション開設で使用）
     const brokerEnv: BrokerEnv = {
       OANDA_API_TOKEN: env.OANDA_API_TOKEN,
@@ -826,6 +950,16 @@ async function run(env: Env): Promise<void> {
     // Phase 2/3 はクリプト以外（FX・株指数等）のみ対象
     const nonCryptoInstruments = INSTRUMENTS.filter(i => !['BTC/USD', 'ETH/USD', 'SOL/USD'].includes(i.pair));
     if (weekendStatus.phase >= 2 && weekendStatus.phase < 4) {
+      // 施策C: 金曜終値保存（Phase 2、金曜18:55 UTC 付近で1回のみ）
+      if (weekendStatus.phase === 2 && now.getUTCDay() === 5
+          && now.getUTCHours() === 18 && now.getUTCMinutes() >= 55) {
+        const fridayDone = await getCacheValue(env.DB, 'friday_close_saved');
+        if (!fridayDone) {
+          const savedCount = await saveFridayClosePrices(env.DB, prices);
+          await setCacheValue(env.DB, 'friday_close_saved', 'true');
+          await insertSystemLog(env.DB, 'INFO', 'WEEKEND', `金曜終値保存: ${savedCount}銘柄`);
+        }
+      }
       // Phase 2: 含み益ポジションのSLを引き上げて利益ロック（クリプト以外）
       const lockedCount = await lockProfitsForWeekend(env.DB, prices, nonCryptoInstruments);
       if (lockedCount > 0) {
@@ -1162,6 +1296,16 @@ async function run(env: Env): Promise<void> {
             }
           }
         } catch { /* regime計算失敗は従来動作を維持 */ }
+
+        // 施策A/B/C: Phase -2/-1 のとき weekendContext を regimeText に追記
+        if (weekendContext && regimeContext) {
+          regimeContext = {
+            text: regimeContext.text + '\n\n' + weekendContext,
+            prohibitions: regimeContext.prohibitions,
+          };
+        } else if (weekendContext && !regimeContext) {
+          regimeContext = { text: weekendContext, prohibitions: '' };
+        }
 
         pathBResult = await runPathB(env, sharedNewsStore, indicators, openPairsForPathB, getApiKey(env), {
           openaiApiKey: env.OPENAI_API_KEY,
