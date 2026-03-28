@@ -80,7 +80,7 @@ export async function getCurrentBalance(db: D1Database): Promise<number> {
 export async function checkDailyLossCap(
   db: D1Database,
   now: Date,
-  capPct: number = 0.005, // デフォルト 0.5%
+  capPct: number = 0.02, // デフォルト 2%（一般トレーディング基準: Alexander Elder等）
 ): Promise<{ dailyLoss: number; capped: boolean; capAmount: number }> {
   const hwm = await getHWM(db);
   const capAmount = hwm * capPct;

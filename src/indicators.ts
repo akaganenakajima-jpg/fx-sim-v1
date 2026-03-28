@@ -2,9 +2,9 @@
 // ^TNX = CBOE 10-Year Treasury Note Yield Index（単位: %）
 // FRED API 依存を廃止し全指標をYahoo Financeに統一
 // Yahoo Finance 障害時は Twelve Data API へ自動フォールバック
-// v2: 追加指標（Fear&Greed / CFTC COT / Stooq 10Y バックアップ）
+// v3: 3層キャッシュ + セマフォ並列度制限（実行時間超過対策）
 
-// ─────────────────────────────────────────────────────────────────────────────
+// ──────────────────────────────────────────────────────��──────────────────────
 // 追加指標 ON/OFF スイッチ（false で完全スキップ）
 // ─────────────────────────────────────────────────────────────────────────────
 export const EXTRA_INDICATOR_CONFIG = {
@@ -110,6 +110,63 @@ async function fetchYahoo(symbol: string): Promise<number | null> {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// セマフォ付きバッチ実行（並列度制限）
+// ─────────────────────────────────────────────────────────────────────────────
+
+async function fetchBatch<T>(tasks: Array<() => Promise<T>>, concurrency: number): Promise<T[]> {
+  const results: T[] = new Array(tasks.length);
+  let nextIdx = 0;
+
+  async function worker() {
+    while (nextIdx < tasks.length) {
+      const idx = nextIdx++;
+      results[idx] = await tasks[idx]();
+    }
+  }
+
+  const workers = Array.from({ length: Math.min(concurrency, tasks.length) }, () => worker());
+  await Promise.all(workers);
+  return results;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// D1 market_cache ベースのキャッシュ読み書き
+// ─────────────────────────────────────────────────────────────────────────────
+
+interface CachedPrice { price: number; ts: number; }
+
+async function getCachedPrices(db: D1Database, keys: string[]): Promise<Map<string, CachedPrice>> {
+  const map = new Map<string, CachedPrice>();
+  if (keys.length === 0) return map;
+  // D1はバッチSELECTが効率的でないため、WHERE IN で一括取得
+  const placeholders = keys.map(() => '?').join(',');
+  const rows = await db
+    .prepare(`SELECT key, value, updated_at FROM market_cache WHERE key IN (${placeholders})`)
+    .bind(...keys)
+    .all<{ key: string; value: string; updated_at: string }>();
+  for (const row of rows.results) {
+    try {
+      const parsed = JSON.parse(row.value) as { price: number };
+      map.set(row.key, { price: parsed.price, ts: new Date(row.updated_at).getTime() });
+    } catch { /* ignore corrupt cache */ }
+  }
+  return map;
+}
+
+async function setCachedPrices(db: D1Database, entries: Array<{ key: string; price: number }>): Promise<void> {
+  if (entries.length === 0) return;
+  const now = new Date().toISOString();
+  const stmts = entries.map(e =>
+    db.prepare(
+      `INSERT INTO market_cache (key, value, updated_at) VALUES (?, ?, ?)
+       ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`
+    ).bind(e.key, JSON.stringify({ price: e.price }), now)
+  );
+  // D1 batch API: 最大50ステートメント
+  await db.batch(stmts);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // 追加指標フェッチ関数
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -189,90 +246,202 @@ async function fetchFromTwelveData(apiKey: string): Promise<Partial<MarketIndica
   }
 }
 
-export async function getMarketIndicators(twelveDataApiKey?: string): Promise<MarketIndicators> {
-  // Yahoo Finance（主要指標）と追加指標を並列取得
-  const [
-    vix, nikkei, sp500, us10y, usdjpy, btcusd, gold, eurusd, ethusd,
-    crudeoil, natgas, copper, silver, gbpusd, audusd, solusd, dax, nasdaq, uk100, hk33,
-    // 円クロス
-    eurjpy, gbpjpy, audjpy,
-    // 日本個別株
-    kawasaki_kisen, nippon_yusen, softbank_g, lasertec, tokyo_electron,
-    disco, advantest, fast_retailing, nippon_steel, mufg,
-    mitsui_osk, tokio_marine, mitsubishi_corp, toyota,
-    sakura_internet, mhi, ihi, anycolor, cover_corp,
-    // 米国個別株
-    nvda, tsla, aapl, amzn, amd, meta, msft, googl,
-    fearGreedData,
-    cftcJpyNetLong,
-  ] = await Promise.all([
-    fetchYahoo('^VIX'),
-    fetchYahoo('^N225'),
-    fetchYahoo('^GSPC'),
-    fetchYahoo('^TNX'),
-    fetchYahoo('USDJPY=X'),
-    fetchYahoo('BTC-USD'),
-    fetchYahoo('GC=F'),
-    fetchYahoo('EURUSD=X'),
-    fetchYahoo('ETH-USD'),
-    fetchYahoo('CL=F'),       // 原油先物
-    fetchYahoo('NG=F'),       // 天然ガス先物
-    fetchYahoo('HG=F'),       // 銅先物
-    fetchYahoo('SI=F'),       // Silver先物
-    fetchYahoo('GBPUSD=X'),
-    fetchYahoo('AUDUSD=X'),
-    fetchYahoo('SOL-USD'),
-    fetchYahoo('^GDAXI'),     // DAX
-    fetchYahoo('^IXIC'),      // NASDAQ
-    fetchYahoo('^FTSE'),      // UK100 (FTSE 100)
-    fetchYahoo('^HSI'),       // HK33 (ハンセン指数)
-    // 円クロス
-    fetchYahoo('EURJPY=X'),
-    fetchYahoo('GBPJPY=X'),
-    fetchYahoo('AUDJPY=X'),
-    // 日本個別株（TSE .Tサフィックス）
-    fetchYahoo('9107.T'),     // 川崎汽船
-    fetchYahoo('9101.T'),     // 日本郵船
-    fetchYahoo('9984.T'),     // ソフトバンクG
-    fetchYahoo('6920.T'),     // レーザーテック
-    fetchYahoo('8035.T'),     // 東京エレクトロン
-    fetchYahoo('6146.T'),     // ディスコ
-    fetchYahoo('6857.T'),     // アドバンテスト
-    fetchYahoo('9983.T'),     // ファーストリテイリング
-    fetchYahoo('5401.T'),     // 日本製鉄
-    fetchYahoo('8306.T'),     // 三菱UFJ
-    fetchYahoo('9104.T'),     // 商船三井
-    fetchYahoo('8766.T'),     // 東京海上HD
-    fetchYahoo('8058.T'),     // 三菱商事
-    fetchYahoo('7203.T'),     // トヨタ
-    fetchYahoo('3778.T'),     // さくらインターネット
-    fetchYahoo('7011.T'),     // 三菱重工
-    fetchYahoo('7013.T'),     // IHI
-    fetchYahoo('5032.T'),     // ANYCOLOR
-    fetchYahoo('5253.T'),     // カバー
-    // 米国個別株
-    fetchYahoo('NVDA'),
-    fetchYahoo('TSLA'),
-    fetchYahoo('AAPL'),
-    fetchYahoo('AMZN'),
-    fetchYahoo('AMD'),
-    fetchYahoo('META'),
-    fetchYahoo('MSFT'),
-    fetchYahoo('GOOGL'),
-    // 追加指標（EXTRA_INDICATOR_CONFIG で ON/OFF）
-    EXTRA_INDICATOR_CONFIG.fearGreed  ? fetchFearGreed()        : Promise.resolve({ value: null, label: null }),
-    EXTRA_INDICATOR_CONFIG.cftcJpyCot ? fetchCftcJpyNetLong()   : Promise.resolve(null),
-  ]);
+// ─────────────────────────────────────────────────────────────────────────────
+// 3層グループ定義
+// ─────────────────────────────────────────────────────────────────────────────
 
+// Group A: FX/CFD/指数（毎分必要、キャッシュなし）
+const GROUP_A: Array<{ key: keyof MarketIndicators; symbol: string }> = [
+  { key: 'vix', symbol: '^VIX' },
+  { key: 'nikkei', symbol: '^N225' },
+  { key: 'sp500', symbol: '^GSPC' },
+  { key: 'us10y', symbol: '^TNX' },
+  { key: 'usdjpy', symbol: 'USDJPY=X' },
+  { key: 'btcusd', symbol: 'BTC-USD' },
+  { key: 'gold', symbol: 'GC=F' },
+  { key: 'eurusd', symbol: 'EURUSD=X' },
+  { key: 'ethusd', symbol: 'ETH-USD' },
+  { key: 'crudeoil', symbol: 'CL=F' },
+  { key: 'natgas', symbol: 'NG=F' },
+  { key: 'copper', symbol: 'HG=F' },
+  { key: 'silver', symbol: 'SI=F' },
+  { key: 'gbpusd', symbol: 'GBPUSD=X' },
+  { key: 'audusd', symbol: 'AUDUSD=X' },
+  { key: 'solusd', symbol: 'SOL-USD' },
+  { key: 'dax', symbol: '^GDAXI' },
+  { key: 'nasdaq', symbol: '^IXIC' },
+  { key: 'uk100', symbol: '^FTSE' },
+  { key: 'hk33', symbol: '^HSI' },
+  { key: 'eurjpy', symbol: 'EURJPY=X' },
+  { key: 'gbpjpy', symbol: 'GBPJPY=X' },
+  { key: 'audjpy', symbol: 'AUDJPY=X' },
+];
+
+// Group B: 個別株（5分TTLキャッシュ）
+const GROUP_B: Array<{ key: keyof MarketIndicators; symbol: string }> = [
+  // 日本個別株
+  { key: 'kawasaki_kisen', symbol: '9107.T' },
+  { key: 'nippon_yusen', symbol: '9101.T' },
+  { key: 'softbank_g', symbol: '9984.T' },
+  { key: 'lasertec', symbol: '6920.T' },
+  { key: 'tokyo_electron', symbol: '8035.T' },
+  { key: 'disco', symbol: '6146.T' },
+  { key: 'advantest', symbol: '6857.T' },
+  { key: 'fast_retailing', symbol: '9983.T' },
+  { key: 'nippon_steel', symbol: '5401.T' },
+  { key: 'mufg', symbol: '8306.T' },
+  { key: 'mitsui_osk', symbol: '9104.T' },
+  { key: 'tokio_marine', symbol: '8766.T' },
+  { key: 'mitsubishi_corp', symbol: '8058.T' },
+  { key: 'toyota', symbol: '7203.T' },
+  { key: 'sakura_internet', symbol: '3778.T' },
+  { key: 'mhi', symbol: '7011.T' },
+  { key: 'ihi', symbol: '7013.T' },
+  { key: 'anycolor', symbol: '5032.T' },
+  { key: 'cover_corp', symbol: '5253.T' },
+  // 米国個別株
+  { key: 'nvda', symbol: 'NVDA' },
+  { key: 'tsla', symbol: 'TSLA' },
+  { key: 'aapl', symbol: 'AAPL' },
+  { key: 'amzn', symbol: 'AMZN' },
+  { key: 'amd', symbol: 'AMD' },
+  { key: 'meta', symbol: 'META' },
+  { key: 'msft', symbol: 'MSFT' },
+  { key: 'googl', symbol: 'GOOGL' },
+];
+
+const GROUP_B_TTL_MS = 5 * 60 * 1000;  // 5分
+const GROUP_C_TTL_MS = 60 * 60 * 1000; // 1時間
+const CONCURRENCY = 10; // Yahoo Finance 最大並列数
+
+export async function getMarketIndicators(
+  twelveDataApiKey?: string,
+  db?: D1Database,
+): Promise<MarketIndicators> {
+  const now = Date.now();
+
+  // ── Group A: FX/CFD/指数（毎分フェッチ、セマフォ制限） ──
+  const groupATasks = GROUP_A.map(item => () => fetchYahoo(item.symbol));
+  const groupAResults = await fetchBatch(groupATasks, CONCURRENCY);
+
+  // ── Group B: 個別株（5分TTLキャッシュ、セマフォ制限） ──
+  let groupBResults: Array<number | null>;
+  const cacheKeys = GROUP_B.map(item => `price_${item.key}`);
+
+  if (db) {
+    const cached = await getCachedPrices(db, cacheKeys);
+    const toFetch: Array<{ idx: number; item: typeof GROUP_B[number]; cacheKey: string }> = [];
+    groupBResults = new Array(GROUP_B.length);
+
+    for (let i = 0; i < GROUP_B.length; i++) {
+      const ck = cacheKeys[i];
+      const hit = cached.get(ck);
+      if (hit && (now - hit.ts) < GROUP_B_TTL_MS) {
+        groupBResults[i] = hit.price;
+      } else {
+        toFetch.push({ idx: i, item: GROUP_B[i], cacheKey: ck });
+      }
+    }
+
+    if (toFetch.length > 0) {
+      const fetchTasks = toFetch.map(f => () => fetchYahoo(f.item.symbol));
+      const fetched = await fetchBatch(fetchTasks, CONCURRENCY);
+      const toCache: Array<{ key: string; price: number }> = [];
+      for (let j = 0; j < toFetch.length; j++) {
+        groupBResults[toFetch[j].idx] = fetched[j];
+        if (fetched[j] != null) {
+          toCache.push({ key: toFetch[j].cacheKey, price: fetched[j]! });
+        }
+      }
+      if (toCache.length > 0) {
+        // 非同期でキャッシュ書き込み（レスポンス遅延回避）
+        setCachedPrices(db, toCache).catch(e =>
+          console.warn('[indicators] cache write error:', String(e).slice(0, 100))
+        );
+      }
+    }
+
+    const cacheHitCount = GROUP_B.length - toFetch.length;
+    if (cacheHitCount > 0) {
+      console.log(`[indicators] Group B: ${cacheHitCount}/${GROUP_B.length} cache hit, ${toFetch.length} fetched`);
+    }
+  } else {
+    // db未提供時はフォールバック（全件フェッチ）
+    const fetchTasks = GROUP_B.map(item => () => fetchYahoo(item.symbol));
+    groupBResults = await fetchBatch(fetchTasks, CONCURRENCY);
+  }
+
+  // ── Group C: 追加指標（1時間TTLキャッシュ） ──
+  let fearGreedData: { value: number | null; label: string | null } = { value: null, label: null };
+  let cftcJpyNetLong: number | null = null;
+
+  if (db) {
+    // Fear & Greed
+    if (EXTRA_INDICATOR_CONFIG.fearGreed) {
+      const fgCached = await getCachedPrices(db, ['extra_fear_greed']);
+      const fgHit = fgCached.get('extra_fear_greed');
+      if (fgHit && (now - fgHit.ts) < GROUP_C_TTL_MS) {
+        // キャッシュには {price: value} + labelはmarket_cacheの別キーに保存
+        fearGreedData.value = fgHit.price;
+        const labelRow = await db
+          .prepare('SELECT value FROM market_cache WHERE key = ?')
+          .bind('extra_fear_greed_label')
+          .first<{ value: string }>();
+        fearGreedData.label = labelRow?.value ?? null;
+      } else {
+        fearGreedData = await fetchFearGreed();
+        if (fearGreedData.value != null) {
+          setCachedPrices(db, [{ key: 'extra_fear_greed', price: fearGreedData.value }]).catch(() => {});
+          if (fearGreedData.label) {
+            db.prepare(
+              `INSERT INTO market_cache (key, value, updated_at) VALUES (?, ?, ?)
+               ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`
+            ).bind('extra_fear_greed_label', fearGreedData.label, new Date().toISOString()).run().catch(() => {});
+          }
+        }
+      }
+    }
+
+    // CFTC
+    if (EXTRA_INDICATOR_CONFIG.cftcJpyCot) {
+      const cftcCached = await getCachedPrices(db, ['extra_cftc_jpy']);
+      const cftcHit = cftcCached.get('extra_cftc_jpy');
+      if (cftcHit && (now - cftcHit.ts) < GROUP_C_TTL_MS) {
+        cftcJpyNetLong = cftcHit.price;
+      } else {
+        cftcJpyNetLong = await fetchCftcJpyNetLong();
+        if (cftcJpyNetLong != null) {
+          setCachedPrices(db, [{ key: 'extra_cftc_jpy', price: cftcJpyNetLong }]).catch(() => {});
+        }
+      }
+    }
+  } else {
+    // db未提供時のフォールバック
+    if (EXTRA_INDICATOR_CONFIG.fearGreed) fearGreedData = await fetchFearGreed();
+    if (EXTRA_INDICATOR_CONFIG.cftcJpyCot) cftcJpyNetLong = await fetchCftcJpyNetLong();
+  }
+
+  // ── 結果組み立て ──
   const result: MarketIndicators = {
-    vix, us10y, nikkei, sp500, usdjpy, btcusd, gold, eurusd, ethusd,
-    crudeoil, natgas, copper, silver, gbpusd, audusd, solusd, dax, nasdaq, uk100, hk33,
-    eurjpy, gbpjpy, audjpy,
-    kawasaki_kisen, nippon_yusen, softbank_g, lasertec, tokyo_electron,
-    disco, advantest, fast_retailing, nippon_steel, mufg,
-    mitsui_osk, tokio_marine, mitsubishi_corp, toyota,
-    sakura_internet, mhi, ihi, anycolor, cover_corp,
-    nvda, tsla, aapl, amzn, amd, meta, msft, googl,
+    // Group A
+    vix: groupAResults[0], nikkei: groupAResults[1], sp500: groupAResults[2], us10y: groupAResults[3],
+    usdjpy: groupAResults[4], btcusd: groupAResults[5], gold: groupAResults[6], eurusd: groupAResults[7],
+    ethusd: groupAResults[8], crudeoil: groupAResults[9], natgas: groupAResults[10], copper: groupAResults[11],
+    silver: groupAResults[12], gbpusd: groupAResults[13], audusd: groupAResults[14], solusd: groupAResults[15],
+    dax: groupAResults[16], nasdaq: groupAResults[17], uk100: groupAResults[18], hk33: groupAResults[19],
+    eurjpy: groupAResults[20], gbpjpy: groupAResults[21], audjpy: groupAResults[22],
+    // Group B
+    kawasaki_kisen: groupBResults[0], nippon_yusen: groupBResults[1], softbank_g: groupBResults[2],
+    lasertec: groupBResults[3], tokyo_electron: groupBResults[4], disco: groupBResults[5],
+    advantest: groupBResults[6], fast_retailing: groupBResults[7], nippon_steel: groupBResults[8],
+    mufg: groupBResults[9], mitsui_osk: groupBResults[10], tokio_marine: groupBResults[11],
+    mitsubishi_corp: groupBResults[12], toyota: groupBResults[13],
+    sakura_internet: groupBResults[14], mhi: groupBResults[15], ihi: groupBResults[16],
+    anycolor: groupBResults[17], cover_corp: groupBResults[18],
+    nvda: groupBResults[19], tsla: groupBResults[20], aapl: groupBResults[21],
+    amzn: groupBResults[22], amd: groupBResults[23], meta: groupBResults[24],
+    msft: groupBResults[25], googl: groupBResults[26],
+    // Group C
     fearGreed: fearGreedData.value,
     fearGreedLabel: fearGreedData.label,
     cftcJpyNetLong,

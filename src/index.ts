@@ -258,7 +258,7 @@ async function fetchMarketData(env: Env, now: Date): Promise<MarketData | null> 
 
   const [newsResult, indicatorsResult, frankfurterResult] = await Promise.allSettled([
     fetchNews(newsApiKeys),
-    getMarketIndicators(env.TWELVE_DATA_API_KEY),
+    getMarketIndicators(env.TWELVE_DATA_API_KEY, env.DB),
     getUSDJPY(),
   ]);
 
