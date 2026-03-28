@@ -17,6 +17,64 @@ export class RateLimitError extends Error {
   }
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// ファンダメンタル参考情報プロンプト生成
+// ─────────────────────────────────────────────────────────────────────────────
+
+export interface FundaContext {
+  per: number | null;
+  sectorAvgPer: number | null;
+  forecastOpChange: number | null;  // 前年比%
+  daysToEarnings: number | null;
+  themeScore: number | null;        // 需給熱スコア
+  volChange: number | null;         // 出来高変化率
+  fundaFail: boolean;
+  fundaFailReason: string | null;
+  isThemeStock: boolean;
+}
+
+export function buildFundaPromptSection(ctx: FundaContext): string {
+  if (ctx.fundaFail && ctx.fundaFailReason) {
+    return `\n【地雷警告: ${ctx.fundaFailReason}。エントリー禁止。】\n`;
+  }
+
+  if (ctx.daysToEarnings !== null && ctx.daysToEarnings <= 3 && ctx.daysToEarnings >= 0) {
+    return `\n【決算直前（${ctx.daysToEarnings}日後）: 新規エントリー非推奨。】\n`;
+  }
+
+  const lines: string[] = [];
+  lines.push('\n=== ファンダメンタル参考情報（判断の主因にしないこと）===');
+
+  if (ctx.per !== null && ctx.sectorAvgPer !== null) {
+    const ratio = ctx.per / ctx.sectorAvgPer;
+    const label = ratio < 0.8 ? '割安' : ratio > 1.3 ? '割高' : '適正';
+    lines.push(`PER: ${ctx.per.toFixed(1)}倍（業種平均${ctx.sectorAvgPer.toFixed(1)}倍）→ ${label}`);
+  }
+
+  if (ctx.forecastOpChange !== null) {
+    const dir = ctx.forecastOpChange > 5 ? '上方修正' : ctx.forecastOpChange < -5 ? '下方修正' : '据置';
+    lines.push(`業績予想: 営業利益 前年比${ctx.forecastOpChange.toFixed(1)}%（${dir}）`);
+  }
+
+  if (ctx.daysToEarnings !== null) {
+    lines.push(`次回決算: ${ctx.daysToEarnings}日後`);
+  }
+
+  if (ctx.themeScore !== null) {
+    const volStr = ctx.volChange !== null ? `出来高変化率${ctx.volChange.toFixed(0)}%` : '';
+    lines.push(`需給熱スコア: ${ctx.themeScore.toFixed(0)}/100（${volStr}）`);
+  }
+
+  lines.push('ファンダ判定: PASS');
+
+  if (ctx.isThemeStock) {
+    lines.push('【テーマ株モード: ファンダより需給を優先せよ】');
+  }
+
+  lines.push('===');
+  return lines.join('\n') + '\n';
+}
+
 export interface GeminiDecision {
   decision: 'BUY' | 'SELL' | 'HOLD';
   tp_rate: number | null;
@@ -24,6 +82,7 @@ export interface GeminiDecision {
   reasoning: string; // 日本語100文字以内
   strategy?: string; // テスタ施策7: 手法タグ
   confidence?: number; // テスタ施策7: 確信度 0-100
+  funda_context?: 'used' | 'ignored' | 'blocked';  // ファンダ情報利用状況
 }
 
 /** プロンプトバージョン: プロンプトを変更したらこの値を更新する */
@@ -548,7 +607,7 @@ const STAGE1_TIMEOUT_MS = 10_000;
 export async function newsStage1(params: {
   news: NewsItem[];
   indicators: MarketIndicators;
-  instruments: Array<{ pair: string; hasOpenPosition: boolean; tpSlHint?: string; correlationGroup?: string; currentRate?: number; directionBias?: { buyAvgRR: number; sellAvgRR: number } }>;
+  instruments: Array<{ pair: string; hasOpenPosition: boolean; tpSlHint?: string; correlationGroup?: string; currentRate?: number; directionBias?: { buyAvgRR: number; sellAvgRR: number }; fundaContext?: FundaContext }>;
   apiKey: string;
   db?: D1Database;
   // 施策6: テクニカル環境認識テキスト（ADX/ATR/RSI/レジーム分類）
@@ -571,7 +630,9 @@ export async function newsStage1(params: {
     const hint = inst.tpSlHint ? `(${inst.tpSlHint})` : '';
     const bias = inst.directionBias ? `[BUY:RR${inst.directionBias.buyAvgRR >= 0 ? '+' : ''}${inst.directionBias.buyAvgRR.toFixed(2)}/SELL:RR${inst.directionBias.sellAvgRR >= 0 ? '+' : ''}${inst.directionBias.sellAvgRR.toFixed(2)}]` : '';
     const tag = THEME_STOCK_GROUPS.includes(inst.correlationGroup ?? '') ? '[テーマ株・モメンタム重視]' : '';
-    return `${base}${rate}${hint}${bias}${tag}`;
+    const isStock = inst.correlationGroup === 'jp_ai_dc' || inst.correlationGroup === 'jp_defense' || inst.correlationGroup === 'jp_entertainment' || (inst.pair.startsWith('JP') && /^\d/.test(inst.pair.replace(/^JP/, '')));
+    const fundaSection = isStock && inst.fundaContext ? buildFundaPromptSection(inst.fundaContext) : '';
+    return `${base}${rate}${hint}${bias}${tag}${fundaSection}`;
   }).join('\n');
 
   const userMessage = [
@@ -775,7 +836,7 @@ export async function newsStage2(params: {
 export async function newsStage1WithHedge(params: {
   news: NewsItem[];
   indicators: MarketIndicators;
-  instruments: Array<{ pair: string; hasOpenPosition: boolean; tpSlHint?: string; correlationGroup?: string; currentRate?: number; directionBias?: { buyAvgRR: number; sellAvgRR: number } }>;
+  instruments: Array<{ pair: string; hasOpenPosition: boolean; tpSlHint?: string; correlationGroup?: string; currentRate?: number; directionBias?: { buyAvgRR: number; sellAvgRR: number }; fundaContext?: FundaContext }>;
   apiKey: string;
   openaiApiKey?: string;
   anthropicApiKey?: string;
@@ -823,7 +884,7 @@ export async function newsStage1WithHedge(params: {
 async function newsStage1GPT(params: {
   news: NewsItem[];
   indicators: MarketIndicators;
-  instruments: Array<{ pair: string; hasOpenPosition: boolean; tpSlHint?: string; correlationGroup?: string; currentRate?: number; directionBias?: { buyAvgRR: number; sellAvgRR: number } }>;
+  instruments: Array<{ pair: string; hasOpenPosition: boolean; tpSlHint?: string; correlationGroup?: string; currentRate?: number; directionBias?: { buyAvgRR: number; sellAvgRR: number }; fundaContext?: FundaContext }>;
   apiKey: string;
   regimeText?: string;
   regimeProhibitions?: string;
@@ -842,7 +903,9 @@ async function newsStage1GPT(params: {
     const hint = inst.tpSlHint ? `(${inst.tpSlHint})` : '';
     const bias = inst.directionBias ? `[BUY:RR${inst.directionBias.buyAvgRR >= 0 ? '+' : ''}${inst.directionBias.buyAvgRR.toFixed(2)}/SELL:RR${inst.directionBias.sellAvgRR >= 0 ? '+' : ''}${inst.directionBias.sellAvgRR.toFixed(2)}]` : '';
     const tag = THEME_STOCK_GROUPS.includes(inst.correlationGroup ?? '') ? '[テーマ株・モメンタム重視]' : '';
-    return `${base}${rate}${hint}${bias}${tag}`;
+    const isStock = inst.correlationGroup === 'jp_ai_dc' || inst.correlationGroup === 'jp_defense' || inst.correlationGroup === 'jp_entertainment' || (inst.pair.startsWith('JP') && /^\d/.test(inst.pair.replace(/^JP/, '')));
+    const fundaSection = isStock && inst.fundaContext ? buildFundaPromptSection(inst.fundaContext) : '';
+    return `${base}${rate}${hint}${bias}${tag}${fundaSection}`;
   }).join('\n');
 
   const userMessage = [
@@ -956,7 +1019,7 @@ async function newsStage1GPT(params: {
 async function newsStage1Claude(params: {
   news: NewsItem[];
   indicators: MarketIndicators;
-  instruments: Array<{ pair: string; hasOpenPosition: boolean; tpSlHint?: string; correlationGroup?: string; currentRate?: number; directionBias?: { buyAvgRR: number; sellAvgRR: number } }>;
+  instruments: Array<{ pair: string; hasOpenPosition: boolean; tpSlHint?: string; correlationGroup?: string; currentRate?: number; directionBias?: { buyAvgRR: number; sellAvgRR: number }; fundaContext?: FundaContext }>;
   apiKey: string;
   db?: D1Database;
   regimeText?: string;
@@ -976,7 +1039,9 @@ async function newsStage1Claude(params: {
     const hint = inst.tpSlHint ? `(${inst.tpSlHint})` : '';
     const bias = inst.directionBias ? `[BUY:RR${inst.directionBias.buyAvgRR >= 0 ? '+' : ''}${inst.directionBias.buyAvgRR.toFixed(2)}/SELL:RR${inst.directionBias.sellAvgRR >= 0 ? '+' : ''}${inst.directionBias.sellAvgRR.toFixed(2)}]` : '';
     const tag = THEME_STOCK_GROUPS.includes(inst.correlationGroup ?? '') ? '[テーマ株・モメンタム重視]' : '';
-    return `${base}${rate}${hint}${bias}${tag}`;
+    const isStock = inst.correlationGroup === 'jp_ai_dc' || inst.correlationGroup === 'jp_defense' || inst.correlationGroup === 'jp_entertainment' || (inst.pair.startsWith('JP') && /^\d/.test(inst.pair.replace(/^JP/, '')));
+    const fundaSection = isStock && inst.fundaContext ? buildFundaPromptSection(inst.fundaContext) : '';
+    return `${base}${rate}${hint}${bias}${tag}${fundaSection}`;
   }).join('\n');
 
   const userMessage = [
