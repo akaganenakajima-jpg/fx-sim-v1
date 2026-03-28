@@ -1076,3 +1076,179 @@ async function newsStage1Claude(params: {
     trade_signals: parsed.trade_signals ?? [],
   };
 }
+
+// ---------------------------------------------------------------------------
+// 施策B: プレマーケット分析（方向性予測のみ、売買シグナルなし）
+// ---------------------------------------------------------------------------
+
+export interface PremarketPrediction {
+  pair: string;
+  bias: 'BULLISH' | 'BEARISH' | 'NEUTRAL';
+  confidence: number;  // 0-100
+  reasoning: string;   // 日本語50文字以内
+}
+
+export interface PremarketAnalysisResult {
+  predictions: PremarketPrediction[];
+  market_summary: string;  // 日本語200文字以内
+  risk_events: string[];
+}
+
+/**
+ * 週末蓄積ニュースを基に月曜の方向性を事前判定（Gemini→GPT→Claude フォールバック）
+ * 売買シグナル（TP/SL）は出さない。方向性と確信度のみ。
+ */
+export async function premarketAnalysis(params: {
+  weekendNews: string;
+  instrumentList: string;
+  apiKey: string;
+  openaiApiKey?: string;
+  anthropicApiKey?: string;
+  db?: D1Database;
+}): Promise<PremarketAnalysisResult & { provider: string }> {
+  const systemPrompt = `あなたは週末プレマーケットアナリストです。
+週末中に蓄積されたニュースを分析し、月曜の市場オープンに向けた方向性予測を行ってください。
+
+ルール:
+- 売買シグナル（BUY/SELL/HOLD）は出さないでください
+- 各銘柄の方向性（BULLISH/BEARISH/NEUTRAL）と確信度（0-100）のみ返してください
+- 確信度70以上は根拠が明確な場合のみ
+- market_summaryは今週のマクロテーマを200文字以内で日本語で要約
+- risk_eventsは月曜以降の注意イベントをリストアップ
+- reasoningは各銘柄50文字以内の日本語
+
+JSON形式で返してください:
+{
+  "predictions": [{"pair":"USD/JPY","bias":"BEARISH","confidence":75,"reasoning":"FRB利下げ観測強化で..."}],
+  "market_summary": "...",
+  "risk_events": ["月曜 ISM製造業", "火曜 JOLTS"]
+}`;
+
+  const userMessage = [
+    '【週末蓄積ニュース】',
+    params.weekendNews,
+    '',
+    '【対象銘柄】',
+    params.instrumentList,
+    '',
+    '※ 市場は現在クローズ中。月曜オープン時の方向性予測のみ行ってください。',
+    '※ 一部指標は金曜終値のキャッシュです。',
+  ].join('\n');
+
+  // 1. Gemini
+  try {
+    const result = await callPremarketGemini(params.apiKey, systemPrompt, userMessage, params.db);
+    return { ...result, provider: 'gemini' };
+  } catch (e) {
+    console.warn(`[premarket] Gemini failed: ${String(e).slice(0, 80)}`);
+  }
+
+  // 2. GPT フォールバック
+  if (params.openaiApiKey) {
+    try {
+      const result = await callPremarketGPT(params.openaiApiKey, systemPrompt, userMessage, params.db);
+      return { ...result, provider: 'gpt' };
+    } catch (e) {
+      console.warn(`[premarket] GPT failed: ${String(e).slice(0, 80)}`);
+    }
+  }
+
+  // 3. Claude フォールバック
+  if (params.anthropicApiKey) {
+    try {
+      const result = await callPremarketClaude(params.anthropicApiKey, systemPrompt, userMessage, params.db);
+      return { ...result, provider: 'claude' };
+    } catch (e) {
+      console.warn(`[premarket] Claude failed: ${String(e).slice(0, 80)}`);
+    }
+  }
+
+  throw new Error('premarketAnalysis: all providers failed');
+}
+
+async function callPremarketGemini(apiKey: string, system: string, user: string, db?: D1Database): Promise<PremarketAnalysisResult> {
+  const res = await fetchWithTimeout(
+    `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        systemInstruction: { parts: [{ text: system }] },
+        contents: [{ parts: [{ text: user }] }],
+        generationConfig: { responseMimeType: 'application/json', temperature: 0.3 },
+      }),
+    },
+  );
+  if (!res.ok) throw new Error(`Gemini ${res.status}`);
+  const data = await res.json() as any;
+  if (db && data.usageMetadata) {
+    void insertTokenUsage(db, 'gemini-2.5-flash', 'PREMARKET',
+      data.usageMetadata.promptTokenCount ?? 0,
+      data.usageMetadata.candidatesTokenCount ?? 0);
+  }
+  const text = data.candidates?.[0]?.content?.parts?.[0]?.text ?? '';
+  return parsePremarketResult(text);
+}
+
+async function callPremarketGPT(apiKey: string, system: string, user: string, db?: D1Database): Promise<PremarketAnalysisResult> {
+  const res = await fetchWithTimeout('https://api.openai.com/v1/chat/completions', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` },
+    body: JSON.stringify({
+      model: 'gpt-4.1-mini',
+      messages: [{ role: 'system', content: system }, { role: 'user', content: user }],
+      response_format: { type: 'json_object' },
+      temperature: 0.3,
+    }),
+  });
+  if (!res.ok) throw new Error(`GPT ${res.status}`);
+  const data = await res.json() as any;
+  if (db && data.usage) {
+    void insertTokenUsage(db, 'gpt-4.1-mini', 'PREMARKET',
+      data.usage.prompt_tokens ?? 0, data.usage.completion_tokens ?? 0);
+  }
+  const text = data.choices?.[0]?.message?.content ?? '';
+  return parsePremarketResult(text);
+}
+
+async function callPremarketClaude(apiKey: string, system: string, user: string, db?: D1Database): Promise<PremarketAnalysisResult> {
+  const res = await fetchWithTimeout('https://api.anthropic.com/v1/messages', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'x-api-key': apiKey,
+      'anthropic-version': '2023-06-01',
+    },
+    body: JSON.stringify({
+      model: 'claude-sonnet-4-6',
+      max_tokens: 4096,
+      system,
+      messages: [{ role: 'user', content: user }],
+      temperature: 0.3,
+    }),
+  });
+  if (!res.ok) throw new Error(`Claude ${res.status}`);
+  const data = await res.json() as any;
+  if (db && data.usage) {
+    void insertTokenUsage(db, 'claude-sonnet-4-6', 'PREMARKET',
+      data.usage.input_tokens ?? 0, data.usage.output_tokens ?? 0);
+  }
+  const text = data.content?.[0]?.text ?? '';
+  return parsePremarketResult(text);
+}
+
+function parsePremarketResult(text: string): PremarketAnalysisResult {
+  const jsonMatch = text.match(/\{[\s\S]*\}/);
+  if (!jsonMatch) throw new Error('premarketAnalysis: no JSON found');
+  const parsed = JSON.parse(jsonMatch[0]);
+  return {
+    predictions: (parsed.predictions ?? []).map((p: any) => ({
+      pair: String(p.pair ?? ''),
+      bias: (['BULLISH', 'BEARISH', 'NEUTRAL'].includes(p.bias) ? p.bias : 'NEUTRAL') as 'BULLISH' | 'BEARISH' | 'NEUTRAL',
+      confidence: Math.min(100, Math.max(0, Number(p.confidence) || 0)),
+      reasoning: String(p.reasoning ?? '').slice(0, 100),
+    })),
+    market_summary: String(parsed.market_summary ?? '').slice(0, 400),
+    risk_events: Array.isArray(parsed.risk_events) ? parsed.risk_events.map(String).slice(0, 10) : [],
+  };
+}
