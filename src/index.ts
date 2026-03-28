@@ -1121,8 +1121,10 @@ async function run(env: Env): Promise<void> {
     }
 
     // Ph.4: パラメーターレビュー（PATH_A完了後・1銘柄のみ）
+    // Tier D銘柄はlot×0.1で実質除外済み → PARAM_REVIEW対象外（429防止）
     try {
-      const reviewResult = await runParamReview(env.DB, getApiKey(env), env.OPENAI_API_KEY);
+      const tierDPairs = INSTRUMENTS.filter(i => i.tier === 'D').map(i => i.pair);
+      const reviewResult = await runParamReview(env.DB, getApiKey(env), env.OPENAI_API_KEY, tierDPairs);
       if (reviewResult.reviewed) {
         console.log(`[fx-sim] PARAM_REVIEW: ${reviewResult.pair} updated — ${reviewResult.summary}`);
       }

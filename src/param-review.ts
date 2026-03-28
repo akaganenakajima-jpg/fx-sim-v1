@@ -7,7 +7,7 @@
 //                     実務的に30件以上で方向性を判断し小幅調整（±20%）
 //   fx-strategy.md §2.2: 目標RR ≥ 2.0 → 勝率40%でもEV=+0.20
 
-import { insertSystemLog } from './db';
+import { insertSystemLog, getCacheValue, setCacheValue } from './db';
 import { RR_DEFINITION_PROMPT } from './gemini';
 import type { InstrumentParamsRow } from './logic-indicators';
 
@@ -31,9 +31,13 @@ interface ReviewCandidate {
  *   1. trades_since_review >= review_trade_count（トレード数ベース）
  *   2. last_reviewed_at IS NULL かつ totalHistoricalTrades >= 10（初回ブートストラップ）
  *   3. last_reviewed_at が 7日以上前かつ totalHistoricalTrades >= 10（時間ベース）
+ * 除外条件:
+ *   - excludedPairs に含まれる銘柄（Tier D等、取引頻度が低く最適化コスト対効果が低い）
+ *   - 直近のレビュー失敗後クールダウン中の銘柄（market_cache: param_review_cd:{pair}）
  */
 export async function findPairNeedingReview(
   db: D1Database,
+  excludedPairs?: string[],
 ): Promise<ReviewCandidate | null> {
   const rows = await db
     .prepare(`SELECT * FROM instrument_params ORDER BY trades_since_review DESC`)
@@ -43,6 +47,13 @@ export async function findPairNeedingReview(
   const sevenDaysMs = 7 * 24 * 60 * 60 * 1000;
 
   for (const row of rows.results ?? []) {
+    // Tier D等の除外銘柄はスキップ（最適化コスト対効果が低い）
+    if (excludedPairs?.includes(row.pair)) continue;
+
+    // DB永続クールダウンチェック（429等AI失敗後4h再試行しない）
+    const cdVal = await getCacheValue(db, `param_review_cd:${row.pair}`);
+    if (cdVal && new Date(cdVal).getTime() > now) continue;
+
     // 取引履歴件数を取得
     const countRow = await db
       .prepare(`SELECT COUNT(*) as cnt FROM positions WHERE pair = ? AND status = 'CLOSED' AND pnl IS NOT NULL`)
@@ -694,9 +705,10 @@ export async function runParamReview(
   db: D1Database,
   geminiApiKey: string,
   openaiApiKey?: string,
+  excludedPairs?: string[],
 ): Promise<{ reviewed: boolean; pair?: string; summary?: string }> {
   // レビューが必要な銘柄を1件取得（cron 1回に1銘柄ずつ処理）
-  const candidate = await findPairNeedingReview(db);
+  const candidate = await findPairNeedingReview(db, excludedPairs);
   if (!candidate) return { reviewed: false };
 
   const { pair } = candidate;
@@ -733,8 +745,12 @@ export async function runParamReview(
   }
 
   if (!rawResult) {
+    // DB永続クールダウンを設定（4時間後まで再試行しない）
+    // Worker再起動後もD1に保存されているため429ループを防止できる
+    const retryAfter = new Date(Date.now() + 4 * 60 * 60 * 1000).toISOString();
+    await setCacheValue(db, `param_review_cd:${pair}`, retryAfter);
     await insertSystemLog(db, 'WARN', 'PARAM_REVIEW',
-      `AIレビュー全失敗: ${pair}`, 'Gemini/GPT両方応答なし');
+      `AIレビュー全失敗: ${pair}`, `Gemini/GPT両方応答なし → 4h CDセット(${retryAfter}まで)`);
     return { reviewed: false };
   }
 
