@@ -548,7 +548,7 @@ const STAGE1_TIMEOUT_MS = 10_000;
 export async function newsStage1(params: {
   news: NewsItem[];
   indicators: MarketIndicators;
-  instruments: Array<{ pair: string; hasOpenPosition: boolean; tpSlHint?: string }>;
+  instruments: Array<{ pair: string; hasOpenPosition: boolean; tpSlHint?: string; correlationGroup?: string }>;
   apiKey: string;
   db?: D1Database;
   // 施策6: テクニカル環境認識テキスト（ADX/ATR/RSI/レジーム分類）
@@ -562,9 +562,12 @@ export async function newsStage1(params: {
     `[${i}] ${n.title_ja || n.title}${(n as any).source ? ` (${(n as any).source})` : ''}`
   ).join('\n');
 
+  const THEME_STOCK_GROUPS = ['jp_ai_dc', 'jp_defense', 'jp_entertainment'];
   const instrumentList = instruments.map(inst => {
     const base = inst.hasOpenPosition ? `${inst.pair}[OP]` : inst.pair;
-    return inst.tpSlHint ? `${base}(${inst.tpSlHint})` : base;
+    const hint = inst.tpSlHint ? `(${inst.tpSlHint})` : '';
+    const tag = THEME_STOCK_GROUPS.includes(inst.correlationGroup ?? '') ? '[テーマ株・モメンタム重視]' : '';
+    return `${base}${hint}${tag}`;
   }).join('\n');
 
   const userMessage = [
@@ -634,7 +637,8 @@ export async function newsStage1(params: {
     '- 確信度が低いニュースはtrade_signalsに含めない\n' +
     '- 【送信前絶対検証・省略禁止】各シグナルを送信する前に必ず: (1)BUYなら tp_rate > entry_rate を確認 / (2)SELLなら tp_rate < entry_rate を確認 / 条件を満たさないシグナルは送信せず削除する\n' +
     '- attention:falseのニュースはimpact/impact_level/affected_pairsを空にする\n' +
-    '- affected_pairs選定: 直接影響だけでなく間接影響も含める。地政学リスク・原油高・米金利急変はNikkei225/S&P500/NASDAQ/DAXにも影響する。為替と株式指数は同じニュースで同時に動くことが多い';
+    '- affected_pairs選定: 直接影響だけでなく間接影響も含める。地政学リスク・原油高・米金利急変はNikkei225/S&P500/NASDAQ/DAXにも影響する。為替と株式指数は同じニュースで同時に動くことが多い\n' +
+    '- 【テーマ株モード】[テーマ株・モメンタム重視]タグの銘柄はテスタ流の小型テーマ株です。判断基準: (1)ファンダメンタルズよりモメンタム（出来高変化・投資家の注目度）を最重視 (2)ニュースの「話題性」と「投資家殺到度」で方向判断 (3)乱高下を恐れず方向が明確なら積極エントリー (4)RR2.0以上を狙いSLはATR×1.0〜1.5で広めにOK';
 
   const res = await fetchWithTimeout(`${GEMINI_ENDPOINT}?key=${apiKey}`, {
     method: 'POST',
@@ -758,7 +762,7 @@ export async function newsStage2(params: {
 export async function newsStage1WithHedge(params: {
   news: NewsItem[];
   indicators: MarketIndicators;
-  instruments: Array<{ pair: string; hasOpenPosition: boolean; tpSlHint?: string }>;
+  instruments: Array<{ pair: string; hasOpenPosition: boolean; tpSlHint?: string; correlationGroup?: string }>;
   apiKey: string;
   openaiApiKey?: string;
   anthropicApiKey?: string;
@@ -804,7 +808,7 @@ export async function newsStage1WithHedge(params: {
 async function newsStage1GPT(params: {
   news: NewsItem[];
   indicators: MarketIndicators;
-  instruments: Array<{ pair: string; hasOpenPosition: boolean; tpSlHint?: string }>;
+  instruments: Array<{ pair: string; hasOpenPosition: boolean; tpSlHint?: string; correlationGroup?: string }>;
   apiKey: string;
   regimeText?: string;
   regimeProhibitions?: string;
@@ -815,9 +819,12 @@ async function newsStage1GPT(params: {
     `[${i}] ${n.title_ja || n.title}${(n as any).source ? ` (${(n as any).source})` : ''}`
   ).join('\n');
 
+  const THEME_STOCK_GROUPS = ['jp_ai_dc', 'jp_defense', 'jp_entertainment'];
   const instrumentList = instruments.map(inst => {
     const base = inst.hasOpenPosition ? `${inst.pair}[OP]` : inst.pair;
-    return inst.tpSlHint ? `${base}(${inst.tpSlHint})` : base;
+    const hint = inst.tpSlHint ? `(${inst.tpSlHint})` : '';
+    const tag = THEME_STOCK_GROUPS.includes(inst.correlationGroup ?? '') ? '[テーマ株・モメンタム重視]' : '';
+    return `${base}${hint}${tag}`;
   }).join('\n');
 
   const userMessage = [
@@ -875,7 +882,8 @@ async function newsStage1GPT(params: {
     '- 【SL距離の厳守・自動拒否回避】SL距離は必ずtpSlMin以上tpSlMax以下でなければならない（この範囲外は値の大小を問わず例外なく即自動拒否）。USD/JPYの場合: 0.2≤SL距離≤1.2が必須。下限違反例: 0.19, 0.16, 0.08（0.2未満）/ 上限違反例: 1.21, 1.25, 1.38, 1.50, 2.00, 2.38, 2.40（1.2超はどんな値でも拒否）。安全な推奨範囲: 0.30〜0.80（迷ったら必ずこの範囲で設定すること）\n' +
     '- 【方向最終チェック・送信前必須】BUY: sl_rate < entry_rate でなければ即自動拒否（sl_rate ≥ entry_rateは全て拒否。例: entry=158.337でsl=158.5はBUYとして拒否）。SELL: sl_rate > entry_rate でなければ即自動拒否（sl_rate ≤ entry_rateは全て拒否）。送信前に必ずsl_rateとentry_rateの大小を数値で確認すること\n' +
     '- 確信度が低いニュースはtrade_signalsに含めない\n' +
-    '- affected_pairs選定: 直接影響だけでなく間接影響も含める。地政学リスク・原油高・米金利急変はNikkei225/S&P500/NASDAQ/DAXにも影響する。為替と株式指数は同じニュースで同時に動くことが多い';
+    '- affected_pairs選定: 直接影響だけでなく間接影響も含める。地政学リスク・原油高・米金利急変はNikkei225/S&P500/NASDAQ/DAXにも影響する。為替と株式指数は同じニュースで同時に動くことが多い\n' +
+    '- 【テーマ株モード】[テーマ株・モメンタム重視]タグの銘柄はテスタ流の小型テーマ株です。判断基準: (1)ファンダメンタルズよりモメンタム（出来高変化・投資家の注目度）を最重視 (2)ニュースの「話題性」と「投資家殺到度」で方向判断 (3)乱高下を恐れず方向が明確なら積極エントリー (4)RR2.0以上を狙いSLはATR×1.0〜1.5で広めにOK';
 
   const res = await fetchWithTimeout('https://api.openai.com/v1/chat/completions', {
     method: 'POST',
@@ -921,7 +929,7 @@ async function newsStage1GPT(params: {
 async function newsStage1Claude(params: {
   news: NewsItem[];
   indicators: MarketIndicators;
-  instruments: Array<{ pair: string; hasOpenPosition: boolean; tpSlHint?: string }>;
+  instruments: Array<{ pair: string; hasOpenPosition: boolean; tpSlHint?: string; correlationGroup?: string }>;
   apiKey: string;
   db?: D1Database;
   regimeText?: string;
@@ -933,9 +941,12 @@ async function newsStage1Claude(params: {
     `[${i}] ${n.title_ja || n.title}${(n as any).source ? ` (${(n as any).source})` : ''}`
   ).join('\n');
 
+  const THEME_STOCK_GROUPS = ['jp_ai_dc', 'jp_defense', 'jp_entertainment'];
   const instrumentList = instruments.map(inst => {
     const base = inst.hasOpenPosition ? `${inst.pair}[OP]` : inst.pair;
-    return inst.tpSlHint ? `${base}(${inst.tpSlHint})` : base;
+    const hint = inst.tpSlHint ? `(${inst.tpSlHint})` : '';
+    const tag = THEME_STOCK_GROUPS.includes(inst.correlationGroup ?? '') ? '[テーマ株・モメンタム重視]' : '';
+    return `${base}${hint}${tag}`;
   }).join('\n');
 
   const userMessage = [
@@ -981,7 +992,8 @@ async function newsStage1Claude(params: {
     '- 【⚠️ SLを狭くしてRRを稼ぐのは絶対禁止】RRを2.0以上にする方法はTPを遠くすることのみ。SL距離は必ずtpSlMin以上を維持し、TP距離=SL距離×2.0以上で設定する。例: MSFT(tpSlMin=2.0)でRR2.0 → SL=entry±2.0(最低ライン), TP=entry±4.0以上。SL=entry±0.03のような極端に狭いSLは即自動拒否される（距離クランプ補正が入るが確実なエントリーのため自分で正しく設定すること）\n' +
     '- 【SL距離の厳守・自動拒否回避】SL距離は必ずtpSlMin以上tpSlMax以下でなければならない（この範囲外は値の大小を問わず例外なく即自動拒否）。USD/JPYの場合: 0.2≤SL距離≤1.2が必須。下限違反例: 0.19, 0.16, 0.08（0.2未満）/ 上限違反例: 1.21, 1.25, 1.38, 1.50, 2.00, 2.38, 2.40（1.2超はどんな値でも拒否）。安全な推奨範囲: 0.30〜0.80（迷ったら必ずこの範囲で設定すること）\n' +
     '- 【方向最終チェック・送信前必須】BUY: sl_rate < entry_rate でなければ即自動拒否（sl_rate ≥ entry_rateは全て拒否。例: entry=158.337でsl=158.5はBUYとして拒否）。SELL: sl_rate > entry_rate でなければ即自動拒否（sl_rate ≤ entry_rateは全て拒否）。送信前に必ずsl_rateとentry_rateの大小を数値で確認すること\n' +
-    '- affected_pairs選定: 直接影響だけでなく間接影響も含める。地政学リスク・原油高・米金利急変はNikkei225/S&P500/NASDAQ/DAXにも影響する。為替と株式指数は同じニュースで同時に動くことが多い';
+    '- affected_pairs選定: 直接影響だけでなく間接影響も含める。地政学リスク・原油高・米金利急変はNikkei225/S&P500/NASDAQ/DAXにも影響する。為替と株式指数は同じニュースで同時に動くことが多い\n' +
+    '- 【テーマ株モード】[テーマ株・モメンタム重視]タグの銘柄はテスタ流の小型テーマ株です。判断基準: (1)ファンダメンタルズよりモメンタム（出来高変化・投資家の注目度）を最重視 (2)ニュースの「話題性」と「投資家殺到度」で方向判断 (3)乱高下を恐れず方向が明確なら積極エントリー (4)RR2.0以上を狙いSLはATR×1.0〜1.5で広めにOK';
 
   const res = await fetchWithTimeout('https://api.anthropic.com/v1/messages', {
     method: 'POST',

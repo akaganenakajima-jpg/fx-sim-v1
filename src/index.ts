@@ -302,7 +302,7 @@ async function fetchMarketData(env: Env, now: Date): Promise<MarketData | null> 
   // Haiku でフィルタ + タイトル・概要の日本語化を一括処理（title_ja・desc_ja付与）
   const news = await filterAndTranslateWithHaiku(newsData.items, env.ANTHROPIC_API_KEY, env.DB);
   const activeNewsSources = [...new Set(news.map(n => n.source))].join(',');
-  const indicators = indicatorsResult.status === 'fulfilled' ? indicatorsResult.value : { vix: null, us10y: null, nikkei: null, sp500: null, usdjpy: null, btcusd: null, gold: null, eurusd: null, ethusd: null, crudeoil: null, natgas: null, copper: null, silver: null, gbpusd: null, audusd: null, solusd: null, dax: null, nasdaq: null, uk100: null, hk33: null, eurjpy: null, gbpjpy: null, audjpy: null, kawasaki_kisen: null, nippon_yusen: null, softbank_g: null, lasertec: null, tokyo_electron: null, disco: null, advantest: null, fast_retailing: null, nippon_steel: null, mufg: null, mitsui_osk: null, tokio_marine: null, mitsubishi_corp: null, toyota: null, nvda: null, tsla: null, aapl: null, amzn: null, amd: null, meta: null, msft: null, googl: null, fearGreed: null, fearGreedLabel: null, cftcJpyNetLong: null };
+  const indicators = indicatorsResult.status === 'fulfilled' ? indicatorsResult.value : { vix: null, us10y: null, nikkei: null, sp500: null, usdjpy: null, btcusd: null, gold: null, eurusd: null, ethusd: null, crudeoil: null, natgas: null, copper: null, silver: null, gbpusd: null, audusd: null, solusd: null, dax: null, nasdaq: null, uk100: null, hk33: null, eurjpy: null, gbpjpy: null, audjpy: null, kawasaki_kisen: null, nippon_yusen: null, softbank_g: null, lasertec: null, tokyo_electron: null, disco: null, advantest: null, fast_retailing: null, nippon_steel: null, mufg: null, mitsui_osk: null, tokio_marine: null, mitsubishi_corp: null, toyota: null, sakura_internet: null, mhi: null, ihi: null, anycolor: null, cover_corp: null, nvda: null, tsla: null, aapl: null, amzn: null, amd: null, meta: null, msft: null, googl: null, fearGreed: null, fearGreedLabel: null, cftcJpyNetLong: null };
   const frankfurterRate = frankfurterResult.status === 'fulfilled' ? frankfurterResult.value : null;
 
   const usdJpyRate = indicators.usdjpy ?? frankfurterRate;
@@ -351,6 +351,11 @@ async function fetchMarketData(env: Env, now: Date): Promise<MarketData | null> 
     ['東京海上HD',      indicators.tokio_marine],
     ['三菱商事',        indicators.mitsubishi_corp],
     ['トヨタ',          indicators.toyota],
+    ['さくらインターネット', indicators.sakura_internet],
+    ['三菱重工',        indicators.mhi],
+    ['IHI',            indicators.ihi],
+    ['ANYCOLOR',       indicators.anycolor],
+    ['カバー',          indicators.cover_corp],
     // 米国個別株
     ['NVDA',      indicators.nvda],
     ['TSLA',      indicators.tsla],
@@ -442,6 +447,7 @@ async function runPathB(
     pair: i.pair,
     hasOpenPosition: openPairs.has(i.pair),
     tpSlHint: i.tpSlHint,
+    correlationGroup: i.correlationGroup,
   }));
 
   // B1: タイトル即断（タイムアウト10秒）— キャッシュ付き
