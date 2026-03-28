@@ -92,6 +92,7 @@ export async function checkAndCloseAllPositions(
         const timeRealizedRR = pos.sl_rate != null ? calcRealizedRR(pos.direction, pos.entry_rate, currentRate, pos.sl_rate) : 0;
         console.log(`[position] TIME_STOP: ${pos.pair} id=${pos.id} held=${Math.round(holdMinutes)}min > ${maxHold}min pnl=${pnl.toFixed(2)}`);
         await closePosition(db, pos.id, currentRate, 'TIME_STOP', pnl, lr, timeRealizedRR);
+        await updateDecisionOutcome(db, pos.pair, pos.direction, pos.entry_at, timeRealizedRR >= 1.0 ? 'WIN' : 'LOSE');
         await insertSystemLog(db, 'INFO', 'POSITION',
           `時間切れ決済: ${pos.pair} ${pos.direction} ${Math.round(holdMinutes)}分保有 PnL ${pnl >= 0 ? '+' : ''}${pnl.toFixed(2)}`,
           JSON.stringify({ id: pos.id, holdMinutes: Math.round(holdMinutes), maxHold, pnl }));
