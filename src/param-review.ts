@@ -745,12 +745,12 @@ export async function runParamReview(
   }
 
   if (!rawResult) {
-    // DB永続クールダウンを設定（4時間後まで再試行しない）
+    // DB永続クールダウンを設定（24時間後まで再試行しない）
     // Worker再起動後もD1に保存されているため429ループを防止できる
-    const retryAfter = new Date(Date.now() + 4 * 60 * 60 * 1000).toISOString();
+    const retryAfter = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
     await setCacheValue(db, `param_review_cd:${pair}`, retryAfter);
     await insertSystemLog(db, 'WARN', 'PARAM_REVIEW',
-      `AIレビュー全失敗: ${pair}`, `Gemini/GPT両方応答なし → 4h CDセット(${retryAfter}まで)`);
+      `AIレビュー全失敗: ${pair}`, `Gemini/GPT両方応答なし → 24h CDセット(${retryAfter}まで)`);
     return { reviewed: false };
   }
 

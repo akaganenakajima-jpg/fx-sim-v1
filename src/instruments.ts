@@ -446,7 +446,7 @@ export const INSTRUMENTS: InstrumentConfig[] = [
     tradingHoursJST: { open: 9, close: 15 },
   },
 
-  // B群: テスタ手法適合銘柄（高ATR×高売買代金）
+  // B群: 高ATR×高売買代金
   {
     pair: 'レーザーテック',
     broker: 'paper',
@@ -548,7 +548,7 @@ export const INSTRUMENTS: InstrumentConfig[] = [
     tradingHoursJST: { open: 9, close: 15 },
   },
 
-  // C群: テスタ配当銘柄のうちデイトレも可能な銘柄
+  // C群: 配当株（テスタ保有推定）のうちデイトレも可能な銘柄
   {
     pair: '日本製鉄',
     broker: 'paper',
@@ -672,7 +672,7 @@ export const INSTRUMENTS: InstrumentConfig[] = [
     tradingHoursJST: { open: 9, close: 15 },
   },
 
-  // D群: テスタ初期スタイル — テーマ株・小型高ボラ（モメンタム駆動）
+  // D群: 小型高ボラ・テーマ株（モメンタム型）
   {
     pair: 'さくらインターネット',
     broker: 'paper',
@@ -776,7 +776,7 @@ export const INSTRUMENTS: InstrumentConfig[] = [
 
   // ─── 米国個別株（Phase 2a: paper-only） ───────────
 
-  // D群: テスタ手法最適合（高ATR×売買代金世界トップ）
+  // D群: 高ATR×高流動性（売買代金世界トップ）
   {
     pair: 'NVDA',
     broker: 'paper',
