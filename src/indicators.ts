@@ -49,6 +49,10 @@ export interface MarketIndicators {
   fast_retailing: number | null;   // ファーストリテイリング 9983.T
   nippon_steel: number | null;     // 日本製鉄 5401.T
   mufg: number | null;             // 三菱UFJ 8306.T
+  mitsui_osk: number | null;       // 商船三井 9104.T
+  tokio_marine: number | null;     // 東京海上HD 8766.T
+  mitsubishi_corp: number | null;  // 三菱商事 8058.T
+  toyota: number | null;           // トヨタ 7203.T
   // 米国個別株
   nvda: number | null;
   tsla: number | null;
@@ -190,6 +194,7 @@ export async function getMarketIndicators(twelveDataApiKey?: string): Promise<Ma
     // 日本個別株
     kawasaki_kisen, nippon_yusen, softbank_g, lasertec, tokyo_electron,
     disco, advantest, fast_retailing, nippon_steel, mufg,
+    mitsui_osk, tokio_marine, mitsubishi_corp, toyota,
     // 米国個別株
     nvda, tsla, aapl, amzn, amd, meta, msft, googl,
     fearGreedData,
@@ -230,6 +235,10 @@ export async function getMarketIndicators(twelveDataApiKey?: string): Promise<Ma
     fetchYahoo('9983.T'),     // ファーストリテイリング
     fetchYahoo('5401.T'),     // 日本製鉄
     fetchYahoo('8306.T'),     // 三菱UFJ
+    fetchYahoo('9104.T'),     // 商船三井
+    fetchYahoo('8766.T'),     // 東京海上HD
+    fetchYahoo('8058.T'),     // 三菱商事
+    fetchYahoo('7203.T'),     // トヨタ
     // 米国個別株
     fetchYahoo('NVDA'),
     fetchYahoo('TSLA'),
@@ -250,6 +259,7 @@ export async function getMarketIndicators(twelveDataApiKey?: string): Promise<Ma
     eurjpy, gbpjpy, audjpy,
     kawasaki_kisen, nippon_yusen, softbank_g, lasertec, tokyo_electron,
     disco, advantest, fast_retailing, nippon_steel, mufg,
+    mitsui_osk, tokio_marine, mitsubishi_corp, toyota,
     nvda, tsla, aapl, amzn, amd, meta, msft, googl,
     fearGreed: fearGreedData.value,
     fearGreedLabel: fearGreedData.label,
