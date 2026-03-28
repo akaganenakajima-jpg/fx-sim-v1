@@ -162,9 +162,21 @@ function newsHash(items: Array<{ title: string }>): string {
     .join('|');
 }
 
+/** 全レスポンスにセキュリティヘッダーを付与 */
+function withSec(res: Response): Response {
+  const h = new Headers(res.headers);
+  h.set('X-Frame-Options', 'DENY');
+  h.set('X-Content-Type-Options', 'nosniff');
+  h.set('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
+  h.set('X-XSS-Protection', '1; mode=block');
+  h.set('Referrer-Policy', 'strict-origin-when-cross-origin');
+  return new Response(res.body, { status: res.status, statusText: res.statusText, headers: h });
+}
+
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     const url = new URL(request.url);
+    const res = await (async (): Promise<Response> => {
     switch (url.pathname) {
       case '/':
         return new Response(getDashboardHtml(), {
@@ -261,6 +273,11 @@ export default {
         if (request.method === 'POST') {
           try {
             const body = await request.json() as { id: number; action: 'approve' | 'reject' };
+            if (!body.id || typeof body.id !== 'number' || !['approve', 'reject'].includes(body.action)) {
+              return new Response(JSON.stringify({ success: false, message: 'Invalid input' }), {
+                status: 400, headers: { 'Content-Type': 'application/json' },
+              });
+            }
             const result = await decideRotation(env.DB, body.id, body.action);
             return new Response(JSON.stringify(result), {
               headers: { 'Content-Type': 'application/json' },
@@ -306,6 +323,8 @@ export default {
       default:
         return new Response('Not Found', { status: 404 });
     }
+    })();
+    return withSec(res);
   },
 
   async scheduled(
