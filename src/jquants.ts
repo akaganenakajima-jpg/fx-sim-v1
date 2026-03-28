@@ -227,26 +227,31 @@ export async function fetchEarningsAnnouncements(
   }
 
   const code = symbol.replace('.T', '');
-  const res = await fetch(`${JQUANTS_BASE}/fins/announcement?code=${code}`, {
-    headers: { Authorization: `Bearer ${idToken}` },
-    signal: AbortSignal.timeout(5000),
-  });
+  try {
+    const res = await fetch(`${JQUANTS_BASE}/fins/announcement?code=${code}`, {
+      headers: { Authorization: `Bearer ${idToken}` },
+      signal: AbortSignal.timeout(5000),
+    });
 
-  if (!res.ok) return null;
+    if (!res.ok) return null;
 
-  const data = await res.json() as {
-    announcement?: Array<{ PeriodEndDate: string; DisclosedDate: string }>;
-  };
+    const data = await res.json() as {
+      announcement?: Array<{ PeriodEndDate: string; DisclosedDate: string }>;
+    };
 
-  const announcements = data.announcement ?? [];
-  if (announcements.length === 0) return null;
+    const announcements = data.announcement ?? [];
+    if (announcements.length === 0) return null;
 
-  // 最も直近の予定日
-  const future = announcements
-    .filter(a => new Date(a.DisclosedDate) >= new Date())
-    .sort((a, b) => a.DisclosedDate.localeCompare(b.DisclosedDate));
+    // 最も直近の予定日
+    const future = announcements
+      .filter(a => new Date(a.DisclosedDate) >= new Date())
+      .sort((a, b) => a.DisclosedDate.localeCompare(b.DisclosedDate));
 
-  return future[0]?.DisclosedDate ?? null;
+    return future[0]?.DisclosedDate ?? null;
+  } catch (e) {
+    console.warn(`[jquants] fetchEarningsAnnouncements for ${symbol}:`, e);
+    return null;
+  }
 }
 
 /** TypeOfDocumentを四半期コードに変換 */
