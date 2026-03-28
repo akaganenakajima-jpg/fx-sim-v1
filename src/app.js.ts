@@ -266,6 +266,17 @@ export const JS = `
       if (at) at.style.color = 'var(--blue)';
     }
 
+    // PC tabbar active状態同期
+    var pcItems = document.querySelectorAll('.pc-tabbar-item');
+    for (var p = 0; p < pcItems.length; p++) {
+      pcItems[p].classList.toggle('active', pcItems[p].getAttribute('data-tab') === tabId);
+    }
+    // PC sidebar active状態同期
+    var sbItems = document.querySelectorAll('.sidebar-tab');
+    for (var s = 0; s < sbItems.length; s++) {
+      sbItems[s].classList.toggle('active', sbItems[s].getAttribute('data-tab') === tabId);
+    }
+
     // ニュースドロワー: 今タブのみ表示
     var drawer = document.getElementById('news-drawer');
     if (drawer) drawer.style.display = (tabId === 'tab-portfolio') ? '' : 'none';
@@ -331,6 +342,23 @@ export const JS = `
         })
       : (data.latestNews || []);
     if (window._renderNews) window._renderNews(newsForDrawer, data.newsAnalysis || []);
+
+    // PC panel (>=1920px) データ更新
+    var panelRate = el('panel-rate');
+    if (panelRate && data.rate) panelRate.textContent = data.rate.toFixed(3);
+    var panelVix = el('panel-vix');
+    if (panelVix && data.latestDecision && data.latestDecision.vix != null) panelVix.textContent = data.latestDecision.vix.toFixed(1);
+    var panelNewsList = el('panel-news-list');
+    if (panelNewsList) {
+      var pnews = newsForDrawer.slice(0, 10);
+      panelNewsList.innerHTML = pnews.map(function(n) {
+        var isAtt = (data.newsAnalysis || []).some(function(a) { return a.title === (n.title_ja || n.title) && a.impact_level >= 3; });
+        return '<div class="panel-news-item' + (isAtt ? ' panel-news-attention' : '') + '">' +
+          '<div class="panel-news-title">' + escHtml(n.title_ja || n.title || '') + '</div>' +
+          '<div class="panel-news-meta">' + escHtml(n.source || '') + ' · ' + fmtTimeAgo(n.pubDate) + '</div>' +
+        '</div>';
+      }).join('');
+    }
   }
 
   // ══════════════════════════════════════════
@@ -1166,7 +1194,7 @@ export const JS = `
         + '<span style="font-size:11px;color:var(--secondary)">PnL</span>'
         + '<span style="font-size:13px;font-weight:700;color:' + pnlColor + '">' + (e.pnl >= 0 ? '+' : '') + e.pnl.toLocaleString() + '円</span></div>'
         + '<div style="display:flex;justify-content:space-between;margin-bottom:4px">'
-        + '<span style="font-size:11px;color:var(--secondary)">勝率</span>'
+        + '<span style="font-size:11px;color:var(--secondary)">勝率(RR\\u22651.0)</span>'
         + '<span style="font-size:13px;font-weight:700;color:' + wrColor + '">' + e.win_rate.toFixed(1) + '%</span></div>'
         + '<div style="display:flex;justify-content:space-between;margin-bottom:4px">'
         + '<span style="font-size:11px;color:var(--secondary)">avgRR</span>'
