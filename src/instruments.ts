@@ -128,7 +128,7 @@ export const INSTRUMENTS: InstrumentConfig[] = [
     trailingActivation: 30,    // ATR(20)×1.5=$30。旧7はtpSlMin=15の半分以下で致命的バグ→修正
     trailingDistance: 15,      // ATR×0.75=$15。breakeven保証
     correlationGroup: 'precious',
-    tier: 'B', tierLotMultiplier: 0.7,  // 実績: avg_rr=-1.21・total_pnl=-2,912円(172取引) → Tier Bに降格
+    tier: 'D', tierLotMultiplier: 0.1,  // 実績: avg_rr=0.104・tp率4.4%(8/182) → Tier D降格（方向性壊滅）
   },
   {
     pair: 'EUR/USD',
@@ -166,7 +166,7 @@ export const INSTRUMENTS: InstrumentConfig[] = [
     trailingActivation: 1.0,   // ATR(0.7)×1.5≈1.0。RR≥1.0保証のため引き上げ
     trailingDistance: 0.5,     // ATR×0.75≈0.5。breakeven保証
     correlationGroup: 'energy',
-    tier: 'C', tierLotMultiplier: 0.5,
+    tier: 'D', tierLotMultiplier: 0.1,  // 実績: avg_rr=0.069・tp率11%(5/45) → Tier D降格
   },
   {
     pair: 'NatGas',
@@ -198,7 +198,7 @@ export const INSTRUMENTS: InstrumentConfig[] = [
     trailingActivation: 0.06,  // ATR(0.04)×1.5=0.06。RR≥1.0保証のため引き上げ
     trailingDistance: 0.03,    // ATR×0.75=0.03。breakeven保証
     correlationGroup: 'precious',
-    tier: 'C', tierLotMultiplier: 0.5,
+    tier: 'D', tierLotMultiplier: 0.1,  // 実績: avg_rr=0.106・tp率0%(0/12) → Tier D降格
   },
   {
     pair: 'Silver',
@@ -214,7 +214,7 @@ export const INSTRUMENTS: InstrumentConfig[] = [
     trailingActivation: 0.60,  // ATR(0.4)×1.5=0.60。RR≥1.0保証のため引き上げ
     trailingDistance: 0.30,    // ATR×0.75=0.30。breakeven保証
     correlationGroup: 'precious',
-    tier: 'C', tierLotMultiplier: 0.5,
+    tier: 'D', tierLotMultiplier: 0.1,  // 実績: avg_rr=0.202・tp率6%(6/99) → Tier D降格
   },
   {
     pair: 'GBP/USD',
@@ -230,7 +230,7 @@ export const INSTRUMENTS: InstrumentConfig[] = [
     trailingActivation: 0.010, // ATR(0.007)×1.5≈0.010。旧0.003はtpSlMin=0.005より低くバグ→修正
     trailingDistance: 0.005,   // ATR×0.75≈0.005。breakeven保証
     correlationGroup: 'europe',
-    tier: 'C', tierLotMultiplier: 0.5,  // 実績: total_pnl=-64円(10取引) → Tier Cに降格
+    tier: 'D', tierLotMultiplier: 0.1,  // 実績: avg_rr=0.074・tp率9%(1/11) → Tier D降格
   },
   {
     pair: 'AUD/USD',
@@ -246,7 +246,7 @@ export const INSTRUMENTS: InstrumentConfig[] = [
     trailingActivation: 0.0075, // ATR(0.005)×1.5=0.0075。旧0.003はtpSlMin=0.004より低くバグ→修正
     trailingDistance: 0.0038,   // ATR×0.75=0.0038。breakeven保証
     correlationGroup: 'risk_on',
-    tier: 'C', tierLotMultiplier: 0.5,  // 実績: total_pnl=-39円(8取引) → Tier Cに降格
+    tier: 'D', tierLotMultiplier: 0.1,  // 実績: avg_rr=-0.313・total_pnl=-39円 → Tier D降格（マイナスRR）
   },
   {
     pair: 'SOL/USD',
@@ -328,7 +328,7 @@ export const INSTRUMENTS: InstrumentConfig[] = [
     trailingActivation: 150,   // ATR(100)×1.5=150pt。RR≥1.0保証のため引き上げ
     trailingDistance: 75,      // ATR×0.75=75pt。breakeven保証
     correlationGroup: 'risk_on',
-    tier: 'C', tierLotMultiplier: 0.5,
+    tier: 'D', tierLotMultiplier: 0.1,  // 実績: avg_rr=-0.362・tp率30%(3/10) → Tier D降格（マイナスRR）
   },
 
   // ─── 円クロス（Phase 1: OANDA即実装） ─────────────
