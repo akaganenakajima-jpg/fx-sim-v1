@@ -5,6 +5,7 @@
 
 import { insertSystemLog } from './db';
 import type { InstrumentConfig } from './instruments';
+import { INITIAL_CAPITAL } from './constants';
 
 // ─── DD段階（5段階: DDベース段階縮小 + Kelly基準） ────
 // ※ テスタ語録「守りを考えた方が結果として増える」の実装。
@@ -42,7 +43,7 @@ async function setRiskStateValue(db: D1Database, key: string, value: string): Pr
 
 // ─── HWM管理 ────────────────────────────────────
 
-const INITIAL_BALANCE = 10000;
+const INITIAL_BALANCE = INITIAL_CAPITAL;
 
 export async function getHWM(db: D1Database): Promise<number> {
   const val = await getRiskStateValue(db, 'hwm');

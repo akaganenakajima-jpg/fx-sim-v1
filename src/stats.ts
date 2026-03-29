@@ -1,6 +1,7 @@
 // 統計計算モジュール（T003: 統計学的評価改善）
 // Wilson CI, Sharpe SE, VaR/CVaR, Kelly基準, マルコフ遷移
 // ローリングリターン, 最大DD%, 期間別パフォーマンス, PnLボラティリティ
+import { INITIAL_CAPITAL } from './constants';
 
 /** Wilsonスコア区間（勝率=RR≥1.0の95%信頼区間） */
 export function wilsonCI(wins: number, total: number, z = 1.96): { lower: number; upper: number } {
@@ -47,7 +48,7 @@ export function kellyFraction(winRate: number, avgRR: number): number {
 
 /** 最大ドローダウン（資産曲線からピーク→谷の最大下落率%）
  *  時系列解析の定常性チェック: 累積リターンの非定常性を可視化 */
-export function maxDrawdown(pnls: number[], initialBalance = 10000): {
+export function maxDrawdown(pnls: number[], initialBalance = INITIAL_CAPITAL): {
   maxDD: number;       // 最大DD額
   maxDDPct: number;    // 最大DD%
   currentDD: number;   // 現在DD額
@@ -79,7 +80,7 @@ export function maxDrawdown(pnls: number[], initialBalance = 10000): {
 export function rollingReturns(
   pnls: number[],
   windows: number[],
-  initialBalance = 10000,
+  initialBalance = INITIAL_CAPITAL,
   /** RR≥1.0 基準の勝敗配列（pnls と同じ長さ）。省略時は pnl > 0 で判定（後方互換） */
   rrOutcomes?: boolean[],
 ): Record<number, { roi: number; sharpe: number; winRate: number; count: number }> {
@@ -188,7 +189,7 @@ export function aiAccuracy(outcomes: Array<'WIN' | 'LOSE'>): {
  */
 export function bootstrapROI(
   pnls: number[],
-  initialBalance = 10000,
+  initialBalance = INITIAL_CAPITAL,
   B = 1000,
 ): { roi: number; ciLower: number; ciUpper: number; n: number } {
   const n = pnls.length;
