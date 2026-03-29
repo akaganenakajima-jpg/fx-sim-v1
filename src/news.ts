@@ -4,6 +4,7 @@
 //     各ソースに enabled フラグ追加（false でスキップ）
 
 import { insertSystemLog, insertTokenUsage } from './db';
+import { CRYPTO_PAIRS } from './weekend';
 
 export interface NewsItem {
   title: string;
@@ -53,8 +54,7 @@ export interface NewsApiKeys {
   cryptopanic?: string;
 }
 
-// 暗号資産ペア一覧（ペア別ニュースのタグ付けに使用）
-const CRYPTO_PAIRS = ['BTC/USD', 'ETH/USD', 'SOL/USD'];
+// 暗号資産ペア一覧: weekend.ts の CRYPTO_PAIRS を使用（Single Source of Truth）
 
 // ─────────────────────────────────────────────────────────────────────────────
 // ニュースソース設定
