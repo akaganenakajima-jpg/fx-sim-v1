@@ -127,8 +127,8 @@ body{background:var(--bg);color:var(--text);font-size:15px;line-height:1.47;
 .pnl{font-size:48px;font-weight:800;letter-spacing:-2px;line-height:1;font-variant-numeric:tabular-nums}
 .pnl.pos{color:var(--green)}.pnl.neg{color:var(--red);text-shadow:0 0 40px rgba(255,69,58,0.15)}
 .pnl-sub{font-size:13px;color:var(--secondary);margin-top:4px}
-.metrics{display:flex;gap:1px;margin:16px 16px 0}
-.m{flex:1;text-align:center;padding:8px 0;background:var(--surface)}.m:first-child{border-radius:var(--rs) 0 0 var(--rs)}.m:last-child{border-radius:0 var(--rs) var(--rs) 0}
+.metrics{display:flex;flex-wrap:wrap;gap:1px;margin:16px 16px 0}
+.m{flex:1;min-width:72px;text-align:center;padding:8px 0;background:var(--surface)}.m:first-child{border-radius:var(--rs) 0 0 var(--rs)}.m:last-child{border-radius:0 var(--rs) var(--rs) 0}
 .m-val{font-size:14px;font-weight:600;font-variant-numeric:tabular-nums}.m-lbl{font-size:11px;color:var(--tertiary);text-transform:uppercase;letter-spacing:0.4px;margin-top:4px}
 .sig{margin:8px 16px 0;display:flex;align-items:center;gap:8px}.sig-track{flex:1;height:3px;background:var(--tertiary);border-radius:2px;overflow:hidden}.sig-fill{height:100%;border-radius:2px;background:linear-gradient(90deg,var(--orange),var(--green))}.sig-lbl{font-size:11px;color:var(--tertiary)}
 .story{margin:16px 16px 0;padding:16px;background:var(--surface);border-radius:var(--r);border-left:3px solid var(--blue)}
