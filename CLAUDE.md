@@ -551,6 +551,7 @@ chmod +x setup.sh
 | Apple HIG | 44pt タッチターゲット・8pt グリッド・SF Pro |
 | UX心理学 | Peak-End・Variable Reward・Goal Gradient・Loss Aversion |
 | スマホ表示 | `preview_resize preset:mobile` でモバイルプレビュー確認 |
+| **週末クローズ** | **土日に FX/株指数ペアへの新規エントリーが発生していないこと（`npm test` で確認）** |
 
 ---
 
