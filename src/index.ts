@@ -176,6 +176,11 @@ function withSec(res: Response): Response {
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     const url = new URL(request.url);
+    // GET専用ルートへの非GETメソッドを早期リジェクト（PUT/DELETE/PATCH → 405）
+    const GET_ONLY_ROUTES = ['/api/status', '/api/params', '/api/scores', '/api/rotation/pending', '/api/rotation/history'];
+    if (GET_ONLY_ROUTES.includes(url.pathname) && request.method !== 'GET' && request.method !== 'HEAD') {
+      return withSec(new Response('Method Not Allowed', { status: 405 }));
+    }
     const res = await (async (): Promise<Response> => {
     switch (url.pathname) {
       case '/':
@@ -274,14 +279,22 @@ export default {
         }
       case '/api/rotation':
         if (request.method === 'POST') {
+          // JSONパース失敗（空body含む）は 400 で返す
+          let rotationBody: { id: number; action: 'approve' | 'reject' };
           try {
-            const body = await request.json() as { id: number; action: 'approve' | 'reject' };
-            if (!body.id || typeof body.id !== 'number' || !['approve', 'reject'].includes(body.action)) {
-              return new Response(JSON.stringify({ success: false, message: 'Invalid input' }), {
-                status: 400, headers: { 'Content-Type': 'application/json' },
-              });
-            }
-            const result = await decideRotation(env.DB, body.id, body.action);
+            rotationBody = await request.json() as { id: number; action: 'approve' | 'reject' };
+          } catch {
+            return new Response(JSON.stringify({ success: false, message: 'Invalid JSON body' }), {
+              status: 400, headers: { 'Content-Type': 'application/json' },
+            });
+          }
+          if (!rotationBody.id || typeof rotationBody.id !== 'number' || !['approve', 'reject'].includes(rotationBody.action)) {
+            return new Response(JSON.stringify({ success: false, message: 'Invalid input' }), {
+              status: 400, headers: { 'Content-Type': 'application/json' },
+            });
+          }
+          try {
+            const result = await decideRotation(env.DB, rotationBody.id, rotationBody.action);
             return new Response(JSON.stringify(result), {
               headers: { 'Content-Type': 'application/json' },
               status: result.success ? 200 : 404,
@@ -1456,27 +1469,38 @@ async function run(env: Env): Promise<void> {
     newsMs = Date.now() - t2;
 
     const totalMs = Date.now() - cronStart;
-    const timings = { fetchMs, tpSlMs, newsMs, aiLoopMs: 0, totalMs };
-    await setCacheValue(env.DB, 'cron_phase_timings', JSON.stringify(timings));
     console.log(`[fx-sim] timings: fetch=${fetchMs}ms tpsl=${tpSlMs}ms news=${newsMs}ms total=${totalMs}ms`);
 
-    const elapsed = totalMs;
-    console.log(`[fx-sim] cron done in ${elapsed}ms`);
-    // 実行時間が30秒超はWARN
-    if (elapsed > 30000) {
-      await insertSystemLog(env.DB, 'WARN', 'CRON', `実行時間超過: ${elapsed}ms`);
-    }
+    console.log(`[fx-sim] cron done in ${totalMs}ms`);
 
     // Ph.4: パラメーターレビュー（PATH_A完了後・1銘柄のみ）
     // Tier D銘柄はlot×0.1で実質除外済み → PARAM_REVIEW対象外（429防止）
-    try {
-      const tierDPairs = INSTRUMENTS.filter(i => i.tier === 'D').map(i => i.pair);
-      const reviewResult = await runParamReview(env.DB, getApiKey(env), env.OPENAI_API_KEY, tierDPairs);
-      if (reviewResult.reviewed) {
-        console.log(`[fx-sim] PARAM_REVIEW: ${reviewResult.pair} updated — ${reviewResult.summary}`);
+    // totalMs > 20000ms の場合はスキップ（PATH_B遅延時のタイムアウト連鎖防止）
+    let paramReviewMs = 0;
+    if (totalMs <= 20000) {
+      try {
+        const tParam = Date.now();
+        const tierDPairs = INSTRUMENTS.filter(i => i.tier === 'D').map(i => i.pair);
+        const reviewResult = await runParamReview(env.DB, getApiKey(env), env.OPENAI_API_KEY, tierDPairs);
+        paramReviewMs = Date.now() - tParam;
+        if (reviewResult.reviewed) {
+          console.log(`[fx-sim] PARAM_REVIEW: ${reviewResult.pair} updated — ${reviewResult.summary}`);
+        }
+      } catch (e) {
+        console.warn(`[fx-sim] runParamReview error: ${String(e).slice(0, 100)}`);
       }
-    } catch (e) {
-      console.warn(`[fx-sim] runParamReview error: ${String(e).slice(0, 100)}`);
+    } else {
+      console.log(`[fx-sim] PARAM_REVIEW: スキップ（totalMs=${totalMs}ms > 20s）`);
+    }
+
+    // 実行時間が45秒超はWARN（wall-clock: I/O待ち含む。Cloudflare paid plan limit = 15min）
+    const grandTotal = totalMs + paramReviewMs;
+    const timingsWithParam = { fetchMs, tpSlMs, newsMs, paramReviewMs, grandTotalMs: grandTotal };
+    await setCacheValue(env.DB, 'cron_phase_timings', JSON.stringify(timingsWithParam));
+    if (grandTotal > 45000) {
+      await insertSystemLog(env.DB, 'WARN', 'CRON',
+        `実行時間超過: ${grandTotal}ms`,
+        JSON.stringify({ fetchMs, tpSlMs, newsMs, paramReviewMs }));
     }
 
     // 日次処理（JST 0:00 = UTC 15:00 に実行）
@@ -1504,6 +1528,15 @@ async function runDailyTasks(env: Env, _now: Date): Promise<void> {
   try {
     await env.DB.prepare(`DELETE FROM system_logs WHERE id NOT IN (SELECT id FROM system_logs ORDER BY id DESC LIMIT 500)`).run();
     await env.DB.prepare(`DELETE FROM news_fetch_log WHERE id NOT IN (SELECT id FROM news_fetch_log ORDER BY id DESC LIMIT 5000)`).run();
+    // news_haiku_* キャッシュパージ（3日以上前のものを削除 → 無限蓄積防止）
+    await env.DB.prepare(`DELETE FROM market_cache WHERE key LIKE 'news_haiku_%' AND updated_at < datetime('now', '-3 days')`).run();
+    // b2_consecutive_fails リセット（CB解除済み且つ古い場合）
+    await env.DB.prepare(
+      `DELETE FROM market_cache WHERE key = 'b2_consecutive_fails' AND NOT EXISTS (
+        SELECT 1 FROM market_cache WHERE key = 'b2_circuit_breaker_until'
+          AND CAST(value AS INTEGER) > CAST(strftime('%s','now')*1000 AS INTEGER)
+      )`
+    ).run();
   } catch {}
 
   // 日次サマリー記録
@@ -1804,6 +1837,8 @@ async function updateInstrumentScores(db: D1Database): Promise<void> {
 async function runDailyScoring(env: Env): Promise<void> {
   if (!env.JQUANTS_REFRESH_TOKEN) {
     console.warn('[daily-scoring] JQUANTS_REFRESH_TOKEN not set, skipping');
+    await insertSystemLog(env.DB, 'WARN', 'SCORING',
+      'daily-scoring スキップ: JQUANTS_REFRESH_TOKEN 未設定', '');
     return;
   }
 
