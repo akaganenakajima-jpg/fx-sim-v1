@@ -1529,7 +1529,9 @@ async function run(env: Env): Promise<void> {
     const grandTotal = totalMs + paramReviewMs;
     const timingsWithParam = { fetchMs, tpSlMs, newsMs, paramReviewMs, grandTotalMs: grandTotal };
     await setCacheValue(env.DB, 'cron_phase_timings', JSON.stringify(timingsWithParam));
-    if (grandTotal > 45000) {
+    // Cloudflare Workers はI/O待ち（fetch/D1）がCPU時間にカウントされないため
+    // wall clock 60秒を超えた場合のみWARN（実CPU時間は通常5〜10秒以内）
+    if (grandTotal > 60000) {
       await insertSystemLog(env.DB, 'WARN', 'CRON',
         `実行時間超過: ${grandTotal}ms`,
         JSON.stringify({ fetchMs, tpSlMs, newsMs, paramReviewMs }));
@@ -1558,7 +1560,7 @@ async function run(env: Env): Promise<void> {
 async function runDailyTasks(env: Env, _now: Date): Promise<void> {
   // ログパージ
   try {
-    await env.DB.prepare(`DELETE FROM system_logs WHERE id NOT IN (SELECT id FROM system_logs ORDER BY id DESC LIMIT 500)`).run();
+    await env.DB.prepare(`DELETE FROM system_logs WHERE id NOT IN (SELECT id FROM system_logs ORDER BY id DESC LIMIT 1000)`).run();
     await env.DB.prepare(`DELETE FROM news_fetch_log WHERE id NOT IN (SELECT id FROM news_fetch_log ORDER BY id DESC LIMIT 5000)`).run();
     // news_haiku_* キャッシュパージ（3日以上前のものを削除 → 無限蓄積防止）
     await env.DB.prepare(`DELETE FROM market_cache WHERE key LIKE 'news_haiku_%' AND updated_at < datetime('now', '-3 days')`).run();
