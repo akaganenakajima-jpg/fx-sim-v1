@@ -13,7 +13,7 @@ export function getDashboardHtml(): string {
   <meta name="theme-color" content="#000000" media="(prefers-color-scheme: dark)">
   <meta name="theme-color" content="#F2F2F7" media="(prefers-color-scheme: light)">
   <link rel="manifest" href="/manifest.json">
-  <link rel="apple-touch-icon" href="/icon-192.png">
+  <link rel="apple-touch-icon" href="/icon-192.svg">
   <title>FX Sim</title>
   <meta name="description" content="FX仮想トレードシミュレーター — Gemini AIによるUSD/JPYリアルタイム売買判断">
   <meta property="og:title" content="FX Sim — AI FX Trading Simulator">
