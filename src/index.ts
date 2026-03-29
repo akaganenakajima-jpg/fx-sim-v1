@@ -754,11 +754,26 @@ async function runPathB(
     }
   }
 
+  // 週末クローズガード: B1キャッシュヒット時でも取引可能銘柄のみにフィルタ
+  // ⚠️ CLAUDE.md §週末市場クローズ制約: B1キャッシュは平日生成シグナルを含む可能性がある。
+  //    再利用時に instrumentList（getTradeableInstruments()適用済み）で再フィルタして
+  //    週末クローズ中に非クリプトペアがエントリーされるのを防ぐ。
+  //    参考: 2026-03-29 Nikkei225 日曜エントリー（B1キャッシュ週末ガード欠落）の再発防止。
+  const tradeablePairSet = new Set(instrumentList.map(i => i.pair));
+  const filteredSignals = stage1.trade_signals.filter(s => tradeablePairSet.has(s.pair));
+  if (b1CacheHit && filteredSignals.length < stage1.trade_signals.length) {
+    const blocked = stage1.trade_signals.filter(s => !tradeablePairSet.has(s.pair)).map(s => s.pair);
+    console.log(`[fx-sim] Path B: B1キャッシュ週末ガード — ${blocked.join(',')} をブロック`);
+    await insertSystemLog(env.DB, 'INFO', 'PATH_B',
+      `B1キャッシュ週末ガード: ${blocked.join(',')} をフィルタ（週末クローズ中）`,
+    ).catch(() => {});
+  }
+
   // 過剰検出ガード: 10件超は先頭5件のみ採用
-  let signals = stage1.trade_signals;
+  let signals = filteredSignals;
   if (signals.length > 10) {
     signals = signals.slice(0, 5);
-    console.log(`[fx-sim] Path B: 過剰検出ガード (${stage1.trade_signals.length}件→5件)`);
+    console.log(`[fx-sim] Path B: 過剰検出ガード (${filteredSignals.length}件→5件)`);
   }
 
   if (signals.length === 0) {
