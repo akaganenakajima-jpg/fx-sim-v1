@@ -571,6 +571,8 @@ interface PathBResult {
  * Path B: ニュースハッシュ変化時に起動
  * B1（タイトル即断）→ og:description取得 → B2（補正）の2段階で売買シグナルを生成
  */
+const CRYPTO_PAIRS = new Set(['BTC/USD', 'ETH/USD', 'SOL/USD']);
+
 async function runPathB(
   env: Env,
   sharedNewsStore: SharedNewsStore,
@@ -580,6 +582,7 @@ async function runPathB(
   hedgeKeys?: { openaiApiKey?: string; anthropicApiKey?: string },
   regimeContext?: { text: string; prohibitions: string },
   prices?: Map<string, number | null>,
+  cryptoOnlyMode?: boolean,
 ): Promise<PathBResult> {
   const news = sharedNewsStore.items;
   if (news.length === 0) return { decisions: [], reversals: [], newsAnalysis: [] };
@@ -609,7 +612,15 @@ async function runPathB(
     biasMap.set(row.pair, existing);
   }
 
-  const instrumentList = INSTRUMENTS.map(i => ({
+  // 週末クローズ中は暗号資産のみ対象（FX・株指数は市場クローズのため除外）
+  const activeInstruments = cryptoOnlyMode
+    ? INSTRUMENTS.filter(i => CRYPTO_PAIRS.has(i.pair))
+    : INSTRUMENTS;
+  if (cryptoOnlyMode) {
+    console.log(`[fx-sim] Path B: 暗号資産のみモード (${activeInstruments.length}銘柄)`);
+  }
+
+  const instrumentList = activeInstruments.map(i => ({
     pair: i.pair,
     hasOpenPosition: openPairs.has(i.pair),
     tpSlHint: i.tpSlHint,
@@ -1447,7 +1458,7 @@ async function run(env: Env): Promise<void> {
         pathBResult = await runPathB(env, sharedNewsStore, indicators, openPairsForPathB, getApiKey(env), {
           openaiApiKey: env.OPENAI_API_KEY,
           anthropicApiKey: env.ANTHROPIC_API_KEY,
-        }, regimeContext, prices);
+        }, regimeContext, prices, cryptoOnlyMode);
         await setCacheValue(env.DB, 'last_path_b_at', String(Date.now()));
         console.log(`[fx-sim] Path B: ${pathBResult.decisions.length}件シグナル, ${pathBResult.reversals.length}件REVERSE`);
       } catch (e) {
