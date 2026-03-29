@@ -440,7 +440,7 @@ export const JS = `
     if (pnlEl) {
       var todayPnl = perf.todayPnl || 0;
       var pnlAbs = Math.abs(Math.round(todayPnl));
-      pnlEl.textContent = (todayPnl < 0 ? '-¥' : '+¥') + pnlAbs.toLocaleString('ja-JP');
+      pnlEl.textContent = (todayPnl > 0 ? '+¥' : todayPnl < 0 ? '-¥' : '¥') + pnlAbs.toLocaleString('ja-JP');
       pnlEl.className = 'pnl ' + (todayPnl > 0 ? 'pos' : todayPnl < 0 ? 'neg' : '');
     }
 
