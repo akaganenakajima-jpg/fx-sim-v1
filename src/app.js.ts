@@ -1229,7 +1229,7 @@ export const JS = `
       var border = isPost ? 'rgba(48,209,88,0.3)' : 'rgba(142,142,147,0.2)';
       var badge = isPost ? '<span style="font-size:9px;background:var(--green);color:#000;border-radius:4px;padding:1px 5px;margin-left:4px;font-weight:700">現行</span>' : '';
       var pnlColor = e.pnl >= 0 ? 'var(--green)' : 'var(--red)';
-      var wrColor = e.win_rate >= 35 ? 'var(--green)' : 'var(--red)';
+      var wrColor = e.win_rate >= WIN_RATE_GREEN ? 'var(--green)' : 'var(--red)';
       html += '<div style="flex:1;background:var(--surface);border-radius:var(--rs);padding:10px;border:1px solid ' + border + '">'
         + '<div style="font-size:10px;color:var(--tertiary);font-weight:600;margin-bottom:6px">' + e.label + badge + '</div>'
         + '<div style="display:flex;justify-content:space-between;margin-bottom:4px">'
