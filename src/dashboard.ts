@@ -1,5 +1,7 @@
 // GET / — ダッシュボード HTML（v7 Liquid Glass 6タブ構造）
 
+import { CSS_VERSION } from './constants';
+
 export function getDashboardHtml(): string {
   return `<!DOCTYPE html>
 <html lang="ja">
@@ -21,7 +23,7 @@ export function getDashboardHtml(): string {
   <meta property="og:description" content="Gemini AIがリアルタイムにFX相場を分析する仮想トレードシミュレーター">
   <meta property="og:type" content="website">
   <meta property="og:image" content="https://fx-sim-v1.ai-battle-sim.workers.dev/icon-512.svg">
-  <link rel="stylesheet" href="/style.css?v=17">
+  <link rel="stylesheet" href="/style.css?v=${CSS_VERSION}">
 </head>
 <body>
 

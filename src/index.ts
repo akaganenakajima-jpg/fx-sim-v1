@@ -38,6 +38,7 @@ import { runNewsTrigger, consumeEmergencyForceFlag } from './news-trigger';
 import { fetchFundamentals, saveFundamentals, fetchAllListedStocks, cleanupOldFundamentals } from './jquants';
 import { calcStockScore, saveScores, countNewsForSymbol, getSectorAvgPer, type StockScoreInput } from './scoring';
 import { getTrackingList, getCandidateList, detectPromotionCandidates, detectDemotionCandidates, proposeRotation, processAutoApproval as autoApprove, recordResultPnl, decideRotation, getPendingRotations } from './rotation';
+import { INITIAL_CAPITAL } from './constants';
 
 interface Env {
   DB: D1Database;
@@ -1562,10 +1563,10 @@ async function runDailyTasks(env: Env, _now: Date): Promise<void> {
        COALESCE(SUM(pnl), 0) AS totalPnl FROM positions WHERE status = 'CLOSED'`
     ).first<{ total: number; wins: number; totalPnl: number }>();
     const openCount = (await env.DB.prepare(`SELECT COUNT(*) AS c FROM positions WHERE status = 'OPEN'`).first<{ c: number }>())?.c ?? 0;
-    const balance = 10000 + (dailyPerf?.totalPnl ?? 0);
+    const balance = INITIAL_CAPITAL + (dailyPerf?.totalPnl ?? 0);
     const wr = dailyPerf && dailyPerf.total > 0 ? (dailyPerf.wins / dailyPerf.total * 100).toFixed(1) : '0';
     await insertSystemLog(env.DB, 'INFO', 'DAILY',
-      `日次サマリー: ¥${Math.round(balance).toLocaleString()} ROI ${((balance - 10000) / 100).toFixed(1)}% 勝率(RR≥1.0)${wr}% ${dailyPerf?.total ?? 0}件 OP${openCount}`);
+      `日次サマリー: ¥${Math.round(balance).toLocaleString()} ROI ${((balance - INITIAL_CAPITAL) / 100).toFixed(1)}% 勝率(RR≥1.0)${wr}% ${dailyPerf?.total ?? 0}件 OP${openCount}`);
   } catch {}
 
   // 銘柄スコア更新

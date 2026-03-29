@@ -1,6 +1,28 @@
 // ダッシュボード フロントエンド JS
 // v7 Liquid Glass 6タブ構造 — render関数群
 
+import {
+  INITIAL_CAPITAL,
+  WIN_RATE_GREEN_THRESHOLD,
+  WIN_RATE_MATRIX_HIGH,
+  WIN_RATE_MATRIX_LOW,
+  RR_BADGE_GREEN,
+  RR_BADGE_BLUE,
+  NEWS_SCORE_EMERGENCY,
+  NEWS_SCORE_TREND,
+  VIX_EFFECT_HIGH,
+  VIX_EFFECT_LOW,
+  UI_NEWS_PANEL_LIMIT,
+  UI_ERROR_CHECK_COUNT,
+  ANIMATION_DURATION_MS,
+  SCROLL_DELAY_MS,
+  ROTATION_POLL_MS,
+  PARAMS_POLL_MS,
+  EMERGENCY_BANNER_TTL_MS,
+  RELIABILITY_TRUSTED,
+  RELIABILITY_TENTATIVE,
+} from './constants';
+
 export const JS = `
 (function () {
   'use strict';
@@ -67,7 +89,27 @@ export const JS = `
   // render(data) の冒頭で上書きされるため、初期値は空配列
   var INSTRUMENTS = [];
 
-  var INITIAL_CAPITAL = 10000;
+  // ─── アプリ設定（src/constants.ts からビルド時に自動注入）──────────────────
+  var INITIAL_CAPITAL  = ${INITIAL_CAPITAL};
+  var WIN_RATE_GREEN   = ${WIN_RATE_GREEN_THRESHOLD};
+  var WIN_RATE_MH      = ${WIN_RATE_MATRIX_HIGH};
+  var WIN_RATE_ML      = ${WIN_RATE_MATRIX_LOW};
+  var RR_GREEN         = ${RR_BADGE_GREEN};
+  var RR_BLUE          = ${RR_BADGE_BLUE};
+  var NEWS_EMERGENCY   = ${NEWS_SCORE_EMERGENCY};
+  var NEWS_TREND       = ${NEWS_SCORE_TREND};
+  var VIX_HIGH         = ${VIX_EFFECT_HIGH};
+  var VIX_LOW          = ${VIX_EFFECT_LOW};
+  var NEWS_LIMIT       = ${UI_NEWS_PANEL_LIMIT};
+  var ERR_LIMIT        = ${UI_ERROR_CHECK_COUNT};
+  var ANIM_MS          = ${ANIMATION_DURATION_MS};
+  var SCROLL_MS        = ${SCROLL_DELAY_MS};
+  var ROT_POLL_MS      = ${ROTATION_POLL_MS};
+  var PARAM_POLL_MS    = ${PARAMS_POLL_MS};
+  var BANNER_TTL       = ${EMERGENCY_BANNER_TTL_MS};
+  var REL_TRUSTED      = ${RELIABILITY_TRUSTED};
+  var REL_TENTATIVE    = ${RELIABILITY_TENTATIVE};
+  // ─────────────────────────────────────────────────────────────────────────
 
   // ══════════════════════════════════════════
   // ユーティリティ
@@ -228,7 +270,7 @@ export const JS = `
     elem.dataset.animVal = toVal;
     if (fromVal === toVal && !isFirst) return;
     if (fromVal === toVal) { elem.textContent = formatter(toVal); return; }
-    var duration = 800;
+    var duration = ANIM_MS;
     var start = null;
     function step(ts) {
       if (!start) start = ts;
@@ -300,9 +342,9 @@ export const JS = `
         if (scrollEl) {
           scrollEl.scrollIntoView({ behavior: 'smooth', block: 'start' });
           scrollEl.classList.add('highlight-flash');
-          setTimeout(function() { scrollEl.classList.remove('highlight-flash'); }, 800);
+          setTimeout(function() { scrollEl.classList.remove('highlight-flash'); }, ANIM_MS);
         }
-      }, 150);
+      }, SCROLL_MS);
     }
   }
 
@@ -350,7 +392,7 @@ export const JS = `
     if (panelVix && data.latestDecision && data.latestDecision.vix != null) panelVix.textContent = data.latestDecision.vix.toFixed(1);
     var panelNewsList = el('panel-news-list');
     if (panelNewsList) {
-      var pnews = newsForDrawer.slice(0, 10);
+      var pnews = newsForDrawer.slice(0, NEWS_LIMIT);
       panelNewsList.innerHTML = pnews.map(function(n) {
         var isAtt = (data.newsAnalysis || []).some(function(a) { return a.title === (n.title_ja || n.title) && a.impact_level >= 3; });
         return '<div class="panel-news-item' + (isAtt ? ' panel-news-attention' : '') + '">' +
@@ -401,7 +443,7 @@ export const JS = `
 
     if (data.newsAnalysis) {
       var now = Date.now();
-      var tenMin = 10 * 60 * 1000;
+      var tenMin = BANNER_TTL;
       for (var ni = 0; ni < data.newsAnalysis.length; ni++) {
         var n = data.newsAnalysis[ni];
         if (n.attention && n.analyzed_at) {
@@ -414,7 +456,7 @@ export const JS = `
     }
 
     if (data.systemLogs) {
-      var recentErrors = data.systemLogs.slice(0, 5).filter(function(l) { return l.level === 'ERROR'; });
+      var recentErrors = data.systemLogs.slice(0, ERR_LIMIT).filter(function(l) { return l.level === 'ERROR'; });
       if (recentErrors.length > 0) {
         alerts.push({ cls: 'alert-orange', text: '\\uD83D\\uDD27 システムエラー検出: ' + (recentErrors[0].message || '') });
       }
@@ -470,7 +512,7 @@ export const JS = `
     if (wrEl) {
       wrEl.textContent = (perf.winRate != null ? perf.winRate.toFixed(1) + '%' : '—');
       // RR≥1.0基準: 勝率35%でもavgRR≥2.0ならEV正 → 35%を緑閾値に
-      if (perf.winRate != null) wrEl.style.color = perf.winRate >= 35 ? 'var(--green)' : 'var(--red)';
+      if (perf.winRate != null) wrEl.style.color = perf.winRate >= WIN_RATE_GREEN ? 'var(--green)' : 'var(--red)';
     }
 
     var pfEl = el('m-pf');
@@ -625,8 +667,8 @@ export const JS = `
       if (val < 0) return 'rgba(255,69,58,' + Math.min(Math.abs(val) / 500, 0.6) + ')';
     }
     // vix_effectは0.65以上で警告オレンジ、0.4-0.65は薄いオレンジ、0.4未満は無色（情報ノイズを減らす）
-    if (key === 'vix_effect' && val >= 0.65) return 'rgba(255,159,10,' + Math.min(val, 0.6) + ')';
-    if (key === 'vix_effect' && val >= 0.4) return 'rgba(255,159,10,0.18)';
+    if (key === 'vix_effect' && val >= VIX_HIGH) return 'rgba(255,159,10,' + Math.min(val, 0.6) + ')';
+    if (key === 'vix_effect' && val >= VIX_LOW) return 'rgba(255,159,10,0.18)';
     if (key === 'param_changed' && val > 0) return 'rgba(10,132,255,0.3)';
     if (key === 'news_impact' && val > 0) return 'rgba(255,69,58,' + Math.min(val / 100 * 0.6, 0.6) + ')';
     return 'transparent';
@@ -653,9 +695,9 @@ export const JS = `
     feedEl.innerHTML = items.map(function(n) {
       var score = n.impact ? parseInt(n.impact) : 0;
       if (isNaN(score)) score = 0;
-      var badgeCls = score >= 90 ? 'nf-badge-emergency' : score >= 70 ? 'nf-badge-trend' : 'nf-badge-info';
-      var badgeText = score >= 90 ? '緊急' : score >= 70 ? 'トレンド' : '情報';
-      var borderCls = score >= 90 ? 'nf-emergency' : score >= 70 ? 'nf-trend' : '';
+      var badgeCls = score >= NEWS_EMERGENCY ? 'nf-badge-emergency' : score >= NEWS_TREND ? 'nf-badge-trend' : 'nf-badge-info';
+      var badgeText = score >= NEWS_EMERGENCY ? '緊急' : score >= NEWS_TREND ? 'トレンド' : '情報';
+      var borderCls = score >= NEWS_EMERGENCY ? 'nf-emergency' : score >= NEWS_TREND ? 'nf-trend' : '';
       var headline = n.title_ja || n.title || '';
       var aiText = n.desc_ja || n.title_ja || n.title || '';
 
@@ -747,8 +789,8 @@ export const JS = `
       var rrBadge = '';
       if (rrText) {
         var rrVal = pos.tp_rate != null && pos.sl_rate != null && pos.entry_rate ? Math.abs(pos.tp_rate - pos.entry_rate) / Math.abs(pos.sl_rate - pos.entry_rate) : 0;
-        var rrBg = rrVal >= 2.0 ? 'rgba(48,209,88,0.15)' : rrVal >= 1.0 ? 'rgba(10,132,255,0.15)' : 'rgba(255,69,58,0.15)';
-        var rrColor = rrVal >= 2.0 ? 'var(--green)' : rrVal >= 1.0 ? 'var(--blue)' : 'var(--red)';
+        var rrBg = rrVal >= RR_GREEN ? 'rgba(48,209,88,0.15)' : rrVal >= RR_BLUE ? 'rgba(10,132,255,0.15)' : 'rgba(255,69,58,0.15)';
+        var rrColor = rrVal >= RR_GREEN ? 'var(--green)' : rrVal >= RR_BLUE ? 'var(--blue)' : 'var(--red)';
         rrBadge = '<span class="pos-rr-badge" style="background:' + rrBg + ';color:' + rrColor + '">' + rrText + '</span>';
       }
 
@@ -906,7 +948,7 @@ export const JS = `
     if (analyzed) {
       var noImpact = analysis.filter(function(n) { return !n.attention; });
       analyzed.innerHTML = noImpact.length > 0
-        ? noImpact.slice(0, 10).map(function(n, i) { return newsCard(n, false, 'noi-' + i); }).join('')
+        ? noImpact.slice(0, NEWS_LIMIT).map(function(n, i) { return newsCard(n, false, 'noi-' + i); }).join('')
         : '<div style="padding:16px;font-size:12px;color:var(--tertiary)">なし</div>';
     }
 
@@ -1043,7 +1085,7 @@ export const JS = `
     if (skWr) {
       skWr.textContent = perf.winRate != null ? perf.winRate.toFixed(1) + '%' : '—';
       // RR≥1.0基準: 勝率35%でもavgRR≥2.0ならEV正 → 35%を緑閾値に
-      if (perf.winRate != null) skWr.style.color = perf.winRate >= 35 ? 'var(--green)' : 'var(--red)';
+      if (perf.winRate != null) skWr.style.color = perf.winRate >= WIN_RATE_GREEN ? 'var(--green)' : 'var(--red)';
     }
     // EV指標を勝率KPIの下に補足表示
     var skWrParent = skWr && skWr.parentElement;
@@ -1187,7 +1229,7 @@ export const JS = `
       var border = isPost ? 'rgba(48,209,88,0.3)' : 'rgba(142,142,147,0.2)';
       var badge = isPost ? '<span style="font-size:9px;background:var(--green);color:#000;border-radius:4px;padding:1px 5px;margin-left:4px;font-weight:700">現行</span>' : '';
       var pnlColor = e.pnl >= 0 ? 'var(--green)' : 'var(--red)';
-      var wrColor = e.win_rate >= 35 ? 'var(--green)' : 'var(--red)';
+      var wrColor = e.win_rate >= WIN_RATE_GREEN ? 'var(--green)' : 'var(--red)';
       html += '<div style="flex:1;background:var(--surface);border-radius:var(--rs);padding:10px;border:1px solid ' + border + '">'
         + '<div style="font-size:10px;color:var(--tertiary);font-weight:600;margin-bottom:6px">' + e.label + badge + '</div>'
         + '<div style="display:flex;justify-content:space-between;margin-bottom:4px">'
@@ -1292,8 +1334,8 @@ export const JS = `
           if (cell && cell.count > 0) {
             var wr = (cell.winRate * 100).toFixed(0);
             // RR≥1.0基準: 勝率40%以上=緑濃、35%以上=緑薄、それ以下=赤
-            var bg = cell.winRate >= 0.40 ? 'rgba(48,209,88,0.25)' : cell.winRate >= 0.35 ? 'rgba(48,209,88,0.15)' : 'rgba(255,69,58,0.2)';
-            var pfx = cell.winRate >= 0.35 ? '+' : '';
+            var bg = cell.winRate >= WIN_RATE_MH ? 'rgba(48,209,88,0.25)' : cell.winRate >= WIN_RATE_ML ? 'rgba(48,209,88,0.15)' : 'rgba(255,69,58,0.2)';
+            var pfx = cell.winRate >= WIN_RATE_ML ? '+' : '';
             html += '<div class="matrix-c" style="background:' + bg + '">' + pfx + wr + '%<br><span style="font-size:9px;opacity:.6">' + cell.count + '件</span></div>';
           } else {
             html += '<div class="matrix-c">—</div>';
@@ -1395,7 +1437,7 @@ export const JS = `
     }
 
     if (sessEl) sessEl.innerHTML = statsTable(sessList, 'session');
-    if (pairEl) pairEl.innerHTML = statsTable(pairList.slice(0, 10), 'pair');
+    if (pairEl) pairEl.innerHTML = statsTable(pairList.slice(0, NEWS_LIMIT), 'pair');
   }
 
   function renderStatsVerdict(data) {
@@ -2765,7 +2807,7 @@ export const JS = `
   }
 
   loadRotationData();
-  setInterval(loadRotationData, 60000);
+  setInterval(loadRotationData, ROT_POLL_MS);
 
   // ══════════════════════════════════════════
   // パラメーター管理（戦略タブ遅延ロード）
@@ -2785,7 +2827,7 @@ export const JS = `
     if (btn && !paramsData) loadParams();
   });
 
-  setInterval(function() { if (paramsData) loadParams(); }, 60000);
+  setInterval(function() { if (paramsData) loadParams(); }, PARAM_POLL_MS);
 
   // ═══ Pull-to-Refresh ═══
   (function() {

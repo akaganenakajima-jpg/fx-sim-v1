@@ -6,6 +6,7 @@ import { getRiskStatus, type RiskEnv } from './risk-guard';
 import { INSTRUMENTS } from './instruments';
 import { getSessionStats, getPairStats, type SessionStats, type PairStats } from './trade-journal';
 import { wilsonCI, sharpeWithSE, varCvar, kellyFraction, markovTransition, maxDrawdown, rollingReturns, pnlVolatility, profitFactor, bootstrapROI, aiAccuracy, randomBaselineComparison, pairCorrelation, logReturnStats, powerAnalysis, ewmaVolatility, engleGrangerCointegration, hierarchicalWinRate } from './stats';
+import { INITIAL_CAPITAL, RELIABILITY_TRUSTED, RELIABILITY_TENTATIVE } from './constants';
 
 export interface LatestDecision {
   id: number;
@@ -647,7 +648,7 @@ export async function getApiStatus(db: D1Database, tradingEnv?: { TRADING_ENABLE
         kellyFraction: kellyFraction(wins / totalClosed, kellyPayoff),
         markov: markovTransition(outcomes),
         drawdown: maxDrawdown(allPnls),
-        rolling: rollingReturns(allPnls, [7, 14, 30], 10000, outcomes),
+        rolling: rollingReturns(allPnls, [7, 14, 30], INITIAL_CAPITAL, outcomes),
         volatility: pnlVolatility(allPnls),
         profitFactor: profitFactor(allPnls),
         randomBaseline: allPnls.length >= 10 ? randomBaselineComparison(allPnls) : null,
@@ -1080,7 +1081,7 @@ async function getStrategyMapData(db: D1Database): Promise<StatusResponse['strat
       wins: r.wins,
       winRate: r.count > 0 ? r.wins / r.count : 0,
       avgPnl: r.avgPnl ?? 0,
-      reliability: (r.count >= 200 ? 'trusted' : r.count >= 50 ? 'tentative' : 'reference') as 'trusted' | 'tentative' | 'reference',
+      reliability: (r.count >= RELIABILITY_TRUSTED ? 'trusted' : r.count >= RELIABILITY_TENTATIVE ? 'tentative' : 'reference') as 'trusted' | 'tentative' | 'reference',
     }));
 
     // 銘柄ティア一覧
