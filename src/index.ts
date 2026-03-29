@@ -805,6 +805,8 @@ async function runPathB(
       if (newFails >= B2_CB_THRESHOLD && !b2CbActive) {
         const cbUntil = new Date(Date.now() + B2_CB_COOLDOWN_MS).toISOString();
         await setCacheValue(env.DB, 'b2_circuit_breaker_until', cbUntil).catch(() => {});
+        // CB発火時にカウンターをリセット → 解除後は5回失敗で再発動するサイクルに戻す
+        await setCacheValue(env.DB, 'b2_consecutive_fails', '0').catch(() => {});
         await insertSystemLog(
           env.DB, 'ERROR', 'B2_OUTAGE',
           `B2 ${newFails}回連続失敗 → サーキットブレーカー発動 (until ${cbUntil})`,
@@ -1477,7 +1479,7 @@ async function run(env: Env): Promise<void> {
     // Tier D銘柄はlot×0.1で実質除外済み → PARAM_REVIEW対象外（429防止）
     // totalMs > 20000ms の場合はスキップ（PATH_B遅延時のタイムアウト連鎖防止）
     let paramReviewMs = 0;
-    if (totalMs <= 20000) {
+    if (totalMs <= 15000) {
       try {
         const tParam = Date.now();
         const tierDPairs = INSTRUMENTS.filter(i => i.tier === 'D').map(i => i.pair);
@@ -1490,7 +1492,7 @@ async function run(env: Env): Promise<void> {
         console.warn(`[fx-sim] runParamReview error: ${String(e).slice(0, 100)}`);
       }
     } else {
-      console.log(`[fx-sim] PARAM_REVIEW: スキップ（totalMs=${totalMs}ms > 20s）`);
+      console.log(`[fx-sim] PARAM_REVIEW: スキップ（totalMs=${totalMs}ms > 15s）`);
     }
 
     // 実行時間が45秒超はWARN（wall-clock: I/O待ち含む。Cloudflare paid plan limit = 15min）
