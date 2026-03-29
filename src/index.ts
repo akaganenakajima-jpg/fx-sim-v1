@@ -1569,6 +1569,8 @@ async function runDailyTasks(env: Env, _now: Date): Promise<void> {
           AND CAST(value AS INTEGER) > CAST(strftime('%s','now')*1000 AS INTEGER)
       )`
     ).run();
+    // news_temp_params の期限切れレコードをパージ（無限蓄積防止）
+    await env.DB.prepare(`DELETE FROM news_temp_params WHERE expires_at < datetime('now')`).run();
   } catch {}
 
   // 日次サマリー記録

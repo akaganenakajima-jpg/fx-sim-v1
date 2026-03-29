@@ -823,7 +823,12 @@ JSON配列のみを返し、他の文字は一切含めないでください。`
 
     const data = await res.json() as {
       candidates?: Array<{ content: { parts: Array<{ text: string }> } }>;
+      usageMetadata?: { promptTokenCount?: number; candidatesTokenCount?: number };
     };
+    if (data.usageMetadata) {
+      void insertTokenUsage(db, 'gemini-2.5-flash', 'NEWS_TRANSLATE',
+        data.usageMetadata.promptTokenCount ?? 0, data.usageMetadata.candidatesTokenCount ?? 0);
+    }
     const rawText = data.candidates?.[0]?.content?.parts?.[0]?.text ?? '[]';
     // レスポンスに余分なテキストが混入することがあるためJSON配列部分だけ抽出
     const jsonMatch = rawText.match(/\[[\s\S]*\]/);
