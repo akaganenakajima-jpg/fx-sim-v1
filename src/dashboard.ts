@@ -13,11 +13,14 @@ export function getDashboardHtml(): string {
   <meta name="theme-color" content="#000000" media="(prefers-color-scheme: dark)">
   <meta name="theme-color" content="#F2F2F7" media="(prefers-color-scheme: light)">
   <link rel="manifest" href="/manifest.json">
+  <link rel="icon" href="/icon-192.svg" type="image/svg+xml">
   <link rel="apple-touch-icon" href="/icon-192.svg">
   <title>FX Sim</title>
   <meta name="description" content="FX仮想トレードシミュレーター — Gemini AIによるUSD/JPYリアルタイム売買判断">
   <meta property="og:title" content="FX Sim — AI FX Trading Simulator">
   <meta property="og:description" content="Gemini AIがリアルタイムにFX相場を分析する仮想トレードシミュレーター">
+  <meta property="og:type" content="website">
+  <meta property="og:image" content="https://fx-sim-v1.ai-battle-sim.workers.dev/icon-512.svg">
   <link rel="stylesheet" href="/style.css?v=17">
 </head>
 <body>
@@ -25,27 +28,27 @@ export function getDashboardHtml(): string {
 <!-- ═══ PC Tabbar (769-1279px: horizontal tabs at top) ═══ -->
 <nav class="pc-tabbar" id="pc-tabbar" aria-label="PCタブナビゲーション">
   <button class="pc-tabbar-item active" data-tab="tab-portfolio" onclick="switchTab('tab-portfolio')">
-    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12l9-8 9 8"/><path d="M5 10v9a1 1 0 001 1h3v-5h6v5h3a1 1 0 001-1v-9"/></svg>
+    <svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12l9-8 9 8"/><path d="M5 10v9a1 1 0 001 1h3v-5h6v5h3a1 1 0 001-1v-9"/></svg>
     HOME
   </button>
   <button class="pc-tabbar-item" data-tab="tab-news" onclick="switchTab('tab-news')">
-    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M7 8h4"/><path d="M7 12h10"/><path d="M7 16h10"/></svg>
+    <svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M7 8h4"/><path d="M7 12h10"/><path d="M7 16h10"/></svg>
     ニュース
   </button>
   <button class="pc-tabbar-item" data-tab="tab-stats" onclick="switchTab('tab-stats')">
-    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M3 20l5-8 4 4 5-9 4 5"/></svg>
+    <svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M3 20l5-8 4 4 5-9 4 5"/></svg>
     学び
   </button>
   <button class="pc-tabbar-item" data-tab="tab-ai" onclick="switchTab('tab-ai')">
-    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="6" y="6" width="12" height="12" rx="2"/><path d="M9 2v4M15 2v4M9 18v4M15 18v4M2 9h4M2 15h4M18 9h4M18 15h4"/></svg>
+    <svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="6" y="6" width="12" height="12" rx="2"/><path d="M9 2v4M15 2v4M9 18v4M15 18v4M2 9h4M2 15h4M18 9h4M18 15h4"/></svg>
     AI
   </button>
   <button class="pc-tabbar-item" data-tab="tab-strategy" onclick="switchTab('tab-strategy')">
-    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M4 8h4m4 0h8M4 16h8m4 0h4"/><circle cx="10" cy="8" r="2"/><circle cx="14" cy="16" r="2"/></svg>
+    <svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M4 8h4m4 0h8M4 16h8m4 0h4"/><circle cx="10" cy="8" r="2"/><circle cx="14" cy="16" r="2"/></svg>
     戦略
   </button>
   <button class="pc-tabbar-item" data-tab="tab-log" onclick="switchTab('tab-log')">
-    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M12 1v2m0 18v2m-9-11h2m18 0h2m-4.2-6.8l-1.4 1.4M6.6 17.4l-1.4 1.4m0-12.8l1.4 1.4m10.8 10.8l1.4 1.4"/></svg>
+    <svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M12 1v2m0 18v2m-9-11h2m18 0h2m-4.2-6.8l-1.4 1.4M6.6 17.4l-1.4 1.4m0-12.8l1.4 1.4m10.8 10.8l1.4 1.4"/></svg>
     系統
   </button>
 </nav>
@@ -54,28 +57,28 @@ export function getDashboardHtml(): string {
 <aside class="pc-sidebar" id="pc-sidebar">
   <div class="sidebar-logo">FX</div>
   <button class="sidebar-tab active" data-tab="tab-portfolio" onclick="switchTab('tab-portfolio')">
-    <svg viewBox="0 0 24 24"><path d="M3 12l9-8 9 8"/><path d="M5 10v9a1 1 0 001 1h3v-5h6v5h3a1 1 0 001-1v-9"/></svg>
+    <svg aria-hidden="true" viewBox="0 0 24 24"><path d="M3 12l9-8 9 8"/><path d="M5 10v9a1 1 0 001 1h3v-5h6v5h3a1 1 0 001-1v-9"/></svg>
     <span>HOME</span>
   </button>
   <button class="sidebar-tab" data-tab="tab-news" onclick="switchTab('tab-news')">
-    <svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M7 8h4"/><path d="M7 12h10"/><path d="M7 16h10"/></svg>
+    <svg aria-hidden="true" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M7 8h4"/><path d="M7 12h10"/><path d="M7 16h10"/></svg>
     <span>ニュース</span>
   </button>
   <button class="sidebar-tab" data-tab="tab-stats" onclick="switchTab('tab-stats')">
-    <svg viewBox="0 0 24 24"><path d="M3 20l5-8 4 4 5-9 4 5"/></svg>
+    <svg aria-hidden="true" viewBox="0 0 24 24"><path d="M3 20l5-8 4 4 5-9 4 5"/></svg>
     <span>学び</span>
   </button>
   <button class="sidebar-tab" data-tab="tab-ai" onclick="switchTab('tab-ai')">
-    <svg viewBox="0 0 24 24"><rect x="6" y="6" width="12" height="12" rx="2"/><path d="M9 2v4M15 2v4M9 18v4M15 18v4M2 9h4M2 15h4M18 9h4M18 15h4"/></svg>
+    <svg aria-hidden="true" viewBox="0 0 24 24"><rect x="6" y="6" width="12" height="12" rx="2"/><path d="M9 2v4M15 2v4M9 18v4M15 18v4M2 9h4M2 15h4M18 9h4M18 15h4"/></svg>
     <span>AI</span>
   </button>
   <button class="sidebar-tab" data-tab="tab-strategy" onclick="switchTab('tab-strategy')">
-    <svg viewBox="0 0 24 24"><path d="M4 8h4m4 0h8M4 16h8m4 0h4"/><circle cx="10" cy="8" r="2"/><circle cx="14" cy="16" r="2"/></svg>
+    <svg aria-hidden="true" viewBox="0 0 24 24"><path d="M4 8h4m4 0h8M4 16h8m4 0h4"/><circle cx="10" cy="8" r="2"/><circle cx="14" cy="16" r="2"/></svg>
     <span>戦略</span>
   </button>
   <div class="sidebar-spacer"></div>
   <button class="sidebar-tab sidebar-bottom" data-tab="tab-log" onclick="switchTab('tab-log')">
-    <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M12 1v2m0 18v2m-9-11h2m18 0h2m-4.2-6.8l-1.4 1.4M6.6 17.4l-1.4 1.4m0-12.8l1.4 1.4m10.8 10.8l1.4 1.4"/></svg>
+    <svg aria-hidden="true" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M12 1v2m0 18v2m-9-11h2m18 0h2m-4.2-6.8l-1.4 1.4M6.6 17.4l-1.4 1.4m0-12.8l1.4 1.4m10.8 10.8l1.4 1.4"/></svg>
     <span>系統</span>
   </button>
 </aside>
@@ -411,28 +414,28 @@ export function getDashboardHtml(): string {
 
 <!-- ═══ Floating Liquid Glass タブバー ═══ -->
 <nav class="tabs" id="main-tabs" aria-label="メインナビゲーション">
-  <div class="tab on" data-tab="tab-portfolio" onclick="switchTab('tab-portfolio')">
-    <svg class="tab-icon" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12l9-8 9 8"/><path d="M5 10v9a1 1 0 001 1h3v-5h6v5h3a1 1 0 001-1v-9"/></svg>
+  <div class="tab on" role="button" tabindex="0" data-tab="tab-portfolio" onclick="switchTab('tab-portfolio')">
+    <svg class="tab-icon" aria-hidden="true" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12l9-8 9 8"/><path d="M5 10v9a1 1 0 001 1h3v-5h6v5h3a1 1 0 001-1v-9"/></svg>
     <span class="tab-t">HOME</span>
   </div>
-  <div class="tab" data-tab="tab-news" onclick="switchTab('tab-news')">
-    <svg class="tab-icon" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M7 8h4"/><path d="M7 12h10"/><path d="M7 16h10"/></svg>
+  <div class="tab" role="button" tabindex="0" data-tab="tab-news" onclick="switchTab('tab-news')">
+    <svg class="tab-icon" aria-hidden="true" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M7 8h4"/><path d="M7 12h10"/><path d="M7 16h10"/></svg>
     <span class="tab-t">ニュース</span>
   </div>
-  <div class="tab" data-tab="tab-stats" onclick="switchTab('tab-stats')">
-    <svg class="tab-icon" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M3 20l5-8 4 4 5-9 4 5"/></svg>
+  <div class="tab" role="button" tabindex="0" data-tab="tab-stats" onclick="switchTab('tab-stats')">
+    <svg class="tab-icon" aria-hidden="true" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M3 20l5-8 4 4 5-9 4 5"/></svg>
     <span class="tab-t">学び</span>
   </div>
-  <div class="tab" data-tab="tab-ai" onclick="switchTab('tab-ai')">
-    <svg class="tab-icon" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="6" y="6" width="12" height="12" rx="2"/><path d="M9 2v4M15 2v4M9 18v4M15 18v4M2 9h4M2 15h4M18 9h4M18 15h4"/></svg>
+  <div class="tab" role="button" tabindex="0" data-tab="tab-ai" onclick="switchTab('tab-ai')">
+    <svg class="tab-icon" aria-hidden="true" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="6" y="6" width="12" height="12" rx="2"/><path d="M9 2v4M15 2v4M9 18v4M15 18v4M2 9h4M2 15h4M18 9h4M18 15h4"/></svg>
     <span class="tab-t">AI</span>
   </div>
-  <div class="tab" data-tab="tab-strategy" onclick="switchTab('tab-strategy')">
-    <svg class="tab-icon" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M4 8h4m4 0h8M4 16h8m4 0h4"/><circle cx="10" cy="8" r="2"/><circle cx="14" cy="16" r="2"/></svg>
+  <div class="tab" role="button" tabindex="0" data-tab="tab-strategy" onclick="switchTab('tab-strategy')">
+    <svg class="tab-icon" aria-hidden="true" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M4 8h4m4 0h8M4 16h8m4 0h4"/><circle cx="10" cy="8" r="2"/><circle cx="14" cy="16" r="2"/></svg>
     <span class="tab-t">戦略</span>
   </div>
-  <div class="tab" data-tab="tab-log" onclick="switchTab('tab-log')">
-    <svg class="tab-icon" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M12 1v2m0 18v2m-9-11h2m18 0h2m-4.2-6.8l-1.4 1.4M6.6 17.4l-1.4 1.4m0-12.8l1.4 1.4m10.8 10.8l1.4 1.4"/></svg>
+  <div class="tab" role="button" tabindex="0" data-tab="tab-log" onclick="switchTab('tab-log')">
+    <svg class="tab-icon" aria-hidden="true" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M12 1v2m0 18v2m-9-11h2m18 0h2m-4.2-6.8l-1.4 1.4M6.6 17.4l-1.4 1.4m0-12.8l1.4 1.4m10.8 10.8l1.4 1.4"/></svg>
     <span class="tab-t">系統</span>
   </div>
 </nav>
