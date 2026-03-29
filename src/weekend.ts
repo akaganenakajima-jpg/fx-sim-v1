@@ -25,6 +25,24 @@ import { getOpenPositions, insertSystemLog, getCacheValue, setCacheValue } from 
 import { INSTRUMENTS, type InstrumentConfig } from './instruments';
 
 // ---------------------------------------------------------------------------
+// 週末制約定数（Single Source of Truth）
+// ---------------------------------------------------------------------------
+
+/**
+ * 週末市場クローズ中でも取引可能な銘柄リスト（配列）。
+ *
+ * ⚠️ 設計制約（IPA §横断的関心事 / CLAUDE.md §週末市場クローズ制約）:
+ *   - この定数はプロジェクト全体で唯一の定義。他ファイルで独自定義しないこと
+ *   - FX・株指数は週末クローズのためエントリー禁止
+ *   - 暗号資産は24時間365日取引可能なため除外対象外
+ *   - O(1) 検索が必要な場合は CRYPTO_PAIRS_SET を使用すること
+ */
+export const CRYPTO_PAIRS: string[] = ['BTC/USD', 'ETH/USD', 'SOL/USD'];
+
+/** O(1) 検索用 Set（CRYPTO_PAIRS の派生）— 直接 import して使用可 */
+export const CRYPTO_PAIRS_SET = new Set<string>(CRYPTO_PAIRS);
+
+// ---------------------------------------------------------------------------
 // 型定義
 // ---------------------------------------------------------------------------
 
@@ -420,4 +438,33 @@ export async function resetWeekendFlags(db: D1Database): Promise<void> {
   for (const key of WEEKEND_FLAG_KEYS) {
     await setCacheValue(db, key, '');
   }
+}
+
+// ---------------------------------------------------------------------------
+// 取引可能銘柄フィルタ（Single Source of Truth）
+// ---------------------------------------------------------------------------
+
+/**
+ * 週末クローズ状態に応じて取引可能な銘柄リストを返す。
+ *
+ * ⚠️ 設計制約（IPA §横断的関心事 / CLAUDE.md §週末市場クローズ制約）:
+ *   取引判断を行う関数（runPathB, runLogicDecisions 等）は
+ *   直接 INSTRUMENTS をループせず、必ずこの関数を経由すること。
+ *   こうすることで「週末制限ロジックの変更が1箇所で完結する」状態を維持する。
+ *
+ * @param instruments 全銘柄リスト（通常は INSTRUMENTS を渡す）
+ * @param weekendStatus getWeekendStatus() の戻り値
+ * @returns 現在取引可能な銘柄リスト
+ *
+ * @example
+ *   const tradeable = getTradeableInstruments(INSTRUMENTS, weekendStatus);
+ *   // 週末クローズ中 → [BTC/USD, ETH/USD, SOL/USD] のみ
+ *   // 平日 → 全銘柄
+ */
+export function getTradeableInstruments<T extends { pair: string }>(
+  instruments: T[],
+  weekendStatus: WeekendStatus,
+): T[] {
+  if (!weekendStatus.marketClosed) return instruments;
+  return instruments.filter(i => CRYPTO_PAIRS_SET.has(i.pair));
 }

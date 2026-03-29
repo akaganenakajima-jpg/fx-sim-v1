@@ -15,6 +15,29 @@
 - `pnl > 0` を勝ちの判定に使用することは禁止（旧定義）
 - 全AIプロンプトに `RR_DEFINITION_PROMPT` がハードコードされている（`src/gemini.ts`）
 
+## 週末市場クローズ制約（変更禁止・全モジュール共通）
+
+> IPA §設計制約 / ISO 9001:2015 §8.3.3 設計インプット
+
+### 制約定義
+- **FX市場クローズ期間**: 金曜 21:00 UTC 〜 日曜 22:00 UTC（`weekend.ts` の `getWeekendStatus()` が判定）
+- **クローズ中に取引できる銘柄**: `CRYPTO_PAIRS`（BTC/USD・ETH/USD・SOL/USD）のみ
+- **FX・株指数（USD/JPY・EUR/USD・日経・S&P500 等）**: クローズ中は新規エントリー禁止
+
+### 実装ルール（省略禁止）
+1. **`CRYPTO_PAIRS` の定義は `src/weekend.ts` の1箇所のみ**。他ファイルで独自定義しない（`import` すること）
+2. **取引判断を行う関数はすべて `weekendStatus` または `cryptoOnlyMode` を受け取ること**
+   - 受け取らない場合、週末でも全銘柄が対象になる重大バグになる
+   - 関数シグネチャに受け取る旨を JSDoc で明記すること
+3. **`getTradeableInstruments(instruments, weekendStatus)` を使って対象銘柄を絞ること**
+   - 直接 `INSTRUMENTS` をループせず、必ずこの関数を経由する
+
+### 変更時の注意
+- 取引判断系の関数（`runPathB`, `runLogicDecisions`, `runAIDecisions` 等）を新設・改修するとき
+  → 週末制限を受け取っているか必ず確認する（下記「大規模改修チェックリスト」参照）
+
+---
+
 ## 会話ルール
 - **必ず日本語で会話すること。英語での返答は禁止。**
 
@@ -30,6 +53,37 @@
 - 修正箇所だけでなく、影響を受ける可能性のある周辺画面も確認する
 - スクロールが必要な場合はスクロールして全体を確認する
 - モバイルエミュレーション（375x812）で確認する
+
+## 大規模改修チェックリスト（モジュール削除・統合・関数廃止時に必須）
+
+> ISO 9001:2015 §8.3.6「設計・開発の変更」/ IPA §変更影響分析
+
+**モジュールや関数を削除・廃止・統合するとき、着手前に以下を全確認すること（省略禁止）。**
+
+### Step 1: 横断的関心事の影響確認
+削除対象が以下のいずれかに関係するか確認する:
+
+| 横断的関心事 | 確認コマンド | 引き継ぎ先 |
+|---|---|---|
+| 週末クローズ制約 | `grep -rn "cryptoOnlyMode\|getTradeableInstruments\|marketClosed" src/` | `weekend.ts` |
+| 勝率定義（RR≥1.0） | `grep -rn "RR_DEFINITION\|realized_rr\|pnl > 0" src/` | `gemini.ts` の `RR_DEFINITION_PROMPT` |
+| サーキットブレーカー | `grep -rn "b2_circuit_breaker\|cbRecord" src/` | `index.ts` の CB ロジック |
+| OPEN上限制御 | `grep -rn "MAX_OPEN\|openCount" src/` | `index.ts` / `logic-trading.ts` |
+
+### Step 2: テスト確認
+- `npm test` を実行してテストが全パスすること
+- 削除対象が担っていたシナリオを既存テストが網羅しているか確認する
+- していない場合はテストを追加してから削除する
+
+### Step 3: JSDoc の引き継ぎ確認
+- 削除した関数の JSDoc に「⚠️ 制約」が記載されていた場合、その制約を後継コードのJSDocに転記する
+
+### 過去の教訓（再発防止）
+| 日付 | 削除した関数 | 消えたガード | 影響 |
+|---|---|---|---|
+| 2026-03-29 | `runAIDecisions`（Path A廃止） | `cryptoOnlyMode` による FX除外 | 週末にFX銘柄が誤エントリー |
+
+---
 
 ## プロジェクト概要
 

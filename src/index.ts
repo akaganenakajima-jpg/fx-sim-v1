@@ -30,7 +30,7 @@ import { fetchEconomicCalendar, getUpcomingHighImpactEvents } from './calendar';
 import { generateWeeklyReview, generateMonthlyReview } from './trade-journal';
 import { detectBreakout } from './breakout';
 import { determineRegime, formatRegimeForPrompt, getRegimeProhibitions } from './regime';
-import { getWeekendStatus, lockProfitsForWeekend, forceCloseAllForWeekend, getWeekendNewsDigest, saveFridayClosePrices, detectGaps, resetWeekendFlags } from './weekend';
+import { getWeekendStatus, lockProfitsForWeekend, forceCloseAllForWeekend, getWeekendNewsDigest, saveFridayClosePrices, detectGaps, resetWeekendFlags, getTradeableInstruments } from './weekend';
 import { runLogicDecisions } from './logic-trading';
 import { runParamReview } from './param-review';
 import { runNewsTrigger, consumeEmergencyForceFlag } from './news-trigger';
@@ -568,11 +568,16 @@ interface PathBResult {
 // ── Path B: ニュースドリブン 2段階AI判定 ──
 
 /**
- * Path B: ニュースハッシュ変化時に起動
- * B1（タイトル即断）→ og:description取得 → B2（補正）の2段階で売買シグナルを生成
+ * Path B: ニュース駆動の売買シグナル生成
+ *
+ * B1（タイトル即断）→ og:description取得 → B2（補正）の2段階で売買シグナルを生成。
+ * ニュースハッシュが変化したとき（新記事が届いたとき）に起動する。
+ *
+ * ⚠️ 週末制約（IPA §横断的関心事 / CLAUDE.md §週末市場クローズ制約）:
+ *   取引対象銘柄は内部で getTradeableInstruments() を経由して決定する。
+ *   週末クローズ中（marketClosed=true）は自動的に CRYPTO_PAIRS のみが対象になる。
+ *   この関数を改修するときは getTradeableInstruments() の呼び出しを削除しないこと。
  */
-const CRYPTO_PAIRS = new Set(['BTC/USD', 'ETH/USD', 'SOL/USD']);
-
 async function runPathB(
   env: Env,
   sharedNewsStore: SharedNewsStore,
@@ -582,7 +587,6 @@ async function runPathB(
   hedgeKeys?: { openaiApiKey?: string; anthropicApiKey?: string },
   regimeContext?: { text: string; prohibitions: string },
   prices?: Map<string, number | null>,
-  cryptoOnlyMode?: boolean,
 ): Promise<PathBResult> {
   const news = sharedNewsStore.items;
   if (news.length === 0) return { decisions: [], reversals: [], newsAnalysis: [] };
@@ -612,11 +616,10 @@ async function runPathB(
     biasMap.set(row.pair, existing);
   }
 
-  // 週末クローズ中は暗号資産のみ対象（FX・株指数は市場クローズのため除外）
-  const activeInstruments = cryptoOnlyMode
-    ? INSTRUMENTS.filter(i => CRYPTO_PAIRS.has(i.pair))
-    : INSTRUMENTS;
-  if (cryptoOnlyMode) {
+  // 週末クローズ制約: getTradeableInstruments() 経由で対象銘柄を絞る（CLAUDE.md §週末市場クローズ制約）
+  const weekendStatusForFilter = getWeekendStatus(new Date());
+  const activeInstruments = getTradeableInstruments(INSTRUMENTS, weekendStatusForFilter);
+  if (weekendStatusForFilter.marketClosed) {
     console.log(`[fx-sim] Path B: 暗号資産のみモード (${activeInstruments.length}銘柄)`);
   }
 
@@ -1458,7 +1461,7 @@ async function run(env: Env): Promise<void> {
         pathBResult = await runPathB(env, sharedNewsStore, indicators, openPairsForPathB, getApiKey(env), {
           openaiApiKey: env.OPENAI_API_KEY,
           anthropicApiKey: env.ANTHROPIC_API_KEY,
-        }, regimeContext, prices, cryptoOnlyMode);
+        }, regimeContext, prices);
         await setCacheValue(env.DB, 'last_path_b_at', String(Date.now()));
         console.log(`[fx-sim] Path B: ${pathBResult.decisions.length}件シグナル, ${pathBResult.reversals.length}件REVERSE`);
       } catch (e) {
