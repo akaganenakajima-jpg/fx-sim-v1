@@ -103,7 +103,7 @@ export interface StatusResponse {
   systemLogs: SystemLog[];
   logStats: LogStats;
   latestNews: Array<{ title: string; pubDate: string; description: string; source?: string }>;
-  acceptedNews: Array<{ id: number; source: string; title_ja: string; desc_ja: string; url: string | null; fetched_at: string }>;
+  acceptedNews: Array<{ id: number; source: string; title_ja: string; desc_ja: string; url: string | null; fetched_at: string; pub_date: string | null }>;
   newsAnalysis: Array<{
     index: number;
     attention: boolean;
@@ -293,6 +293,13 @@ export interface StatusResponse {
   sessionStats: SessionStats[];
   /** テスタ施策14: 銘柄別統計 */
   pairStats: PairStats[];
+  /** ニューストリガーログ（EMERGENCY/TREND_INFLUENCE判定結果） */
+  newsTriggers: Array<{
+    trigger_type: string;
+    news_title: string;
+    news_score: number;
+    created_at: string;
+  }>;
   /** 全銘柄定義（instruments.tsから動的生成） */
   instruments: Array<{
     pair: string;
@@ -379,8 +386,8 @@ export async function getApiStatus(db: D1Database, tradingEnv?: { TRADING_ENABLE
 
       // news_raw から採用記事（最大30件、7日TTL+purgeで自動管理）
       db
-        .prepare(`SELECT id, source, title_ja, desc_ja, url, fetched_at, composite_score AS score, haiku_accepted FROM news_raw WHERE haiku_accepted = 1 ORDER BY id DESC LIMIT 30`)
-        .all<{ id: number; source: string; title_ja: string; desc_ja: string; url: string | null; fetched_at: string; score: number | null; haiku_accepted: number }>(),
+        .prepare(`SELECT id, source, title_ja, desc_ja, url, fetched_at, pub_date, composite_score AS score, filter_accepted FROM news_raw WHERE filter_accepted = 1 ORDER BY id DESC LIMIT 30`)
+        .all<{ id: number; source: string; title_ja: string; desc_ja: string; url: string | null; fetched_at: string; pub_date: string | null; score: number | null; filter_accepted: number }>(),
 
       // システムログ（直近30件）
       db
@@ -513,7 +520,7 @@ export async function getApiStatus(db: D1Database, tradingEnv?: { TRADING_ENABLE
 
   const sysLogs = sysLogsRaw.results ?? [];
 
-  // ニュース: cron側のfilterAndTranslateWithHaikuで処理済みのlatest_newsキャッシュを使用
+  // ニュース: cron側のfilterAndTranslateNewsで処理済みのlatest_newsキャッシュを使用
   // RSS直接取得はcron側の責務。API側はキャッシュのみ参照（日本語翻訳済み）
   let latestNews: Array<{ title: string; pubDate: string; description: string; source?: string }> = [];
   const knownTitles = new Set<string>();
@@ -682,6 +689,17 @@ export async function getApiStatus(db: D1Database, tradingEnv?: { TRADING_ENABLE
 
   // title_ja はcron側で翻訳済み（latest_newsキャッシュ内に含まれる）
 
+  // ニューストリガーログ（EMERGENCY/TREND_INFLUENCE判定結果）
+  let newsTriggers: StatusResponse['newsTriggers'] = [];
+  try {
+    const ntRaw = await db.prepare(
+      `SELECT trigger_type, news_title, news_score, created_at FROM news_trigger_log
+       WHERE created_at > datetime('now', '-12 hours')
+       ORDER BY created_at DESC LIMIT 10`
+    ).all<{ trigger_type: string; news_title: string; news_score: number; created_at: string }>();
+    newsTriggers = ntRaw.results ?? [];
+  } catch { /* テーブル未存在 */ }
+
   return {
     rate,
     tradingMode,
@@ -717,10 +735,12 @@ export async function getApiStatus(db: D1Database, tradingEnv?: { TRADING_ENABLE
       desc_ja: r.desc_ja,
       url: r.url ?? null,
       fetched_at: r.fetched_at,
+      pub_date: r.pub_date ?? null,
       score: r.score ?? null,
-      haiku_accepted: r.haiku_accepted,
+      filter_accepted: r.filter_accepted,
     })),
     newsAnalysis,
+    newsTriggers,
     systemLogs: sysLogs,
     logStats: {
       totalRuns: logStatsRaw?.totalRuns ?? 0,

@@ -1,7 +1,7 @@
 // ニューストリガーモジュール（Ph.5）
 // 高スコアニュースを検出し2種のアクションを起動する:
 //   EMERGENCY     → PATH_B強制発火（market_cacheにフラグをセット）
-//   TREND_INFLUENCE → AIが期限付き臨時パラメーターを生成（news_temp_params）
+//   TREND_INFLUENCE → Gemini Flashが期限付き臨時パラメーターを生成（news_temp_params）
 //
 // 設計根拠:
 //   fx-strategy.md §2.1: ニュース駆動相場ではロジックパラメーターが無効化される
@@ -86,7 +86,7 @@ async function fetchLatestTriggerCandidate(
     .prepare(
       `SELECT id, hash, title_ja, title, composite_score, scores, fetched_at
        FROM news_raw
-       WHERE haiku_accepted = 1
+       WHERE filter_accepted = 1
          AND id > ?
          AND composite_score >= 7.0
        ORDER BY composite_score DESC
@@ -134,12 +134,12 @@ export async function consumeEmergencyForceFlag(db: D1Database): Promise<boolean
   return flagAge < 10 * 60 * 1000;
 }
 
-// ─── トレンド: GPTによる臨時パラメーター生成 ─────────────────────────────
+// ─── トレンド: Gemini Flashによる臨時パラメーター生成 ────────────────────
 
-async function callGptForTempParams(
+async function callGeminiForTempParams(
   newsTitle: string,
   newsScore: number,
-  openaiApiKey: string,
+  geminiApiKey: string,
 ): Promise<{ pairs: TempParamEntry[]; reason: string; expiresInHours: number } | null> {
   const prompt = [
     `あなたはFXロジックトレーディングのパラメーターアナリストです。`,
@@ -182,33 +182,36 @@ async function callGptForTempParams(
   ].join('\n');
 
   try {
-    const res = await fetch('https://api.openai.com/v1/chat/completions', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${openaiApiKey}`,
+    const res = await fetch(
+      `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${geminiApiKey}`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          contents: [{ parts: [{ text: prompt }] }],
+          generationConfig: {
+            responseMimeType: 'application/json',
+            temperature: 0.2,
+          },
+        }),
+        signal: AbortSignal.timeout(15000),
       },
-      body: JSON.stringify({
-        model: 'gpt-4.1-mini',
-        messages: [{ role: 'user', content: prompt }],
-        response_format: { type: 'json_object' },
-        temperature: 0.2,
-      }),
-      signal: AbortSignal.timeout(15000),
-    });
+    );
     if (!res.ok) {
-      console.warn(`[news-trigger] GPT HTTP error: ${res.status} ${res.statusText}`);
+      console.warn(`[news-trigger] Gemini Flash HTTP error: ${res.status} ${res.statusText}`);
       return null;
     }
-    const data = await res.json() as { choices?: Array<{ message: { content: string } }> };
-    const text = data.choices?.[0]?.message?.content;
+    const data = await res.json() as {
+      candidates?: Array<{ content: { parts: Array<{ text: string }> } }>;
+    };
+    const text = data.candidates?.[0]?.content?.parts?.[0]?.text;
     if (!text) {
-      console.warn(`[news-trigger] GPT empty response`);
+      console.warn(`[news-trigger] Gemini Flash empty response`);
       return null;
     }
     return JSON.parse(text) as { pairs: TempParamEntry[]; reason: string; expiresInHours: number };
   } catch (e) {
-    console.warn(`[news-trigger] GPT call failed: ${String(e).slice(0, 100)}`);
+    console.warn(`[news-trigger] Gemini Flash call failed: ${String(e).slice(0, 100)}`);
     return null;
   }
 }
@@ -314,12 +317,12 @@ export async function getActiveTempParams(
 /**
  * 新着採用ニュースを検査し、緊急/トレンドに応じたアクションを起動する。
  * - EMERGENCY: PATH_B強制発火フラグをmarket_cacheにセット
- * - TREND: GPTで臨時パラメーター生成 → news_temp_paramsに保存
+ * - TREND: Gemini Flashで臨時パラメーター生成 → news_temp_paramsに保存
  * cron 1回につき1記事のみ処理（負荷抑制）
  */
 export async function runNewsTrigger(
   db: D1Database,
-  openaiApiKey?: string,
+  geminiApiKey?: string,
 ): Promise<NewsTriggerResult> {
   const candidate = await fetchLatestTriggerCandidate(db);
 
@@ -362,31 +365,31 @@ export async function runNewsTrigger(
 
   // トレンド影響判定 → 臨時パラメーター
   if (isTrendInfluence(parsedScores)) {
-    if (!openaiApiKey) {
+    if (!geminiApiKey) {
       await insertSystemLog(db, 'WARN', 'NEWS_TRIGGER',
         `トレンドニュース検出だがAPIキーなしでスキップ: ${title.slice(0, 60)}`, '');
       return { triggerType: 'TREND_INFLUENCE', newsTitle: title, emergencyForced: false };
     }
 
-    const gptResult = await callGptForTempParams(title, row.composite_score ?? 7.5, openaiApiKey);
+    const geminiResult = await callGeminiForTempParams(title, row.composite_score ?? 7.5, geminiApiKey);
 
-    if (!gptResult) {
-      // GPT呼び出し失敗（APIエラー・タイムアウト）— APIキー有効だが呼び出しに失敗
+    if (!geminiResult) {
+      // Gemini Flash呼び出し失敗（APIエラー・タイムアウト）
       await db
         .prepare(
           `INSERT INTO news_trigger_log (trigger_type, news_title, news_score, affected_pairs, detail, created_at)
-           VALUES ('TREND_INFLUENCE', ?, ?, NULL, 'GPT呼び出し失敗', ?)`
+           VALUES ('TREND_INFLUENCE', ?, ?, NULL, 'Gemini Flash呼び出し失敗', ?)`
         )
         .bind(title, row.composite_score, new Date().toISOString())
         .run();
       await insertSystemLog(db, 'WARN', 'NEWS_TRIGGER',
-        `GPT呼び出し失敗でTREND_INFLUENCEスキップ: ${title.slice(0, 60)}`,
+        `Gemini Flash呼び出し失敗でTREND_INFLUENCEスキップ: ${title.slice(0, 60)}`,
         `score=${row.composite_score}`);
       return { triggerType: 'TREND_INFLUENCE', newsTitle: title, emergencyForced: false, affectedPairs: [] };
     }
 
-    if (gptResult.pairs.length === 0) {
-      // GPTが「影響軽微・変更不要」と判断した場合
+    if (geminiResult.pairs.length === 0) {
+      // AIが「影響軽微・変更不要」と判断した場合
       await db
         .prepare(
           `INSERT INTO news_trigger_log (trigger_type, news_title, news_score, affected_pairs, detail, created_at)
@@ -399,9 +402,9 @@ export async function runNewsTrigger(
 
     const appliedPairs = await saveTempParams(
       db,
-      gptResult.pairs,
-      gptResult.reason,
-      gptResult.expiresInHours,
+      geminiResult.pairs,
+      geminiResult.reason,
+      geminiResult.expiresInHours,
       title,
       row.composite_score ?? 7.5,
     );
@@ -415,14 +418,14 @@ export async function runNewsTrigger(
         title,
         row.composite_score,
         appliedPairs.join(','),
-        gptResult.reason,
+        geminiResult.reason,
         new Date().toISOString(),
       )
       .run();
 
     await insertSystemLog(db, 'INFO', 'NEWS_TRIGGER',
       `トレンドニュース → 臨時パラメーター設定: ${appliedPairs.join(',')}`,
-      `${gptResult.reason.slice(0, 100)} expires=${gptResult.expiresInHours}h`);
+      `${geminiResult.reason.slice(0, 100)} expires=${geminiResult.expiresInHours}h`);
 
     return {
       triggerType: 'TREND_INFLUENCE',

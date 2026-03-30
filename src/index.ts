@@ -3,7 +3,7 @@
 // fetch:     GET / → ダッシュボード、GET /api/status → JSON、GET /style.css・/app.js → 静的ファイル
 
 import { getUSDJPY } from './rate';
-import { fetchNews, filterAndTranslateWithHaiku, saveRawNews, purgeOldNewsRaw, type SourceFetchStat, type NewsApiKeys } from './news';
+import { fetchNews, filterAndTranslateNews, saveRawNews, purgeOldNewsRaw, type SourceFetchStat, type NewsApiKeys } from './news';
 import { getMarketIndicators } from './indicators';
 import { fetchOgDescription, newsStage1WithHedge, newsStage2, getAdaptiveB2Timeout, premarketAnalysis, RateLimitError, type NewsAnalysisItem, type NewsStage1Result } from './gemini';
 import { checkAndCloseAllPositions, openPosition, calcRealizedRR } from './position';
@@ -434,7 +434,7 @@ async function fetchMarketData(env: Env, now: Date): Promise<MarketData | null> 
       failedSources.map(s => s.source).join(','));
   }
 
-  // news_raw ステージングテーブルに全記事を保存（Haikuフィルタ前）
+  // news_raw ステージングテーブルに全記事を保存（フィルタ前）
   saveRawNews(newsData.items, env.DB).catch(e =>
     console.warn(`[fx-sim] saveRawNews error: ${String(e).slice(0, 100)}`)
   );
@@ -446,8 +446,8 @@ async function fetchMarketData(env: Env, now: Date): Promise<MarketData | null> 
     );
   }
 
-  // Haiku でフィルタ + タイトル・概要の日本語化を一括処理（title_ja・desc_ja付与）
-  const news = await filterAndTranslateWithHaiku(newsData.items, env.GEMINI_API_KEY, env.DB);
+  // Gemini Flash でフィルタ + タイトル・概要の日本語化を一括処理（title_ja・desc_ja付与）
+  const news = await filterAndTranslateNews(newsData.items, env.GEMINI_API_KEY, env.DB);
   const activeNewsSources = [...new Set(news.map(n => n.source))].join(',');
   const indicators = indicatorsResult.status === 'fulfilled' ? indicatorsResult.value : { vix: null, us10y: null, nikkei: null, sp500: null, usdjpy: null, btcusd: null, gold: null, eurusd: null, ethusd: null, crudeoil: null, natgas: null, copper: null, silver: null, gbpusd: null, audusd: null, solusd: null, dax: null, nasdaq: null, uk100: null, hk33: null, eurjpy: null, gbpjpy: null, audjpy: null, kawasaki_kisen: null, nippon_yusen: null, softbank_g: null, lasertec: null, tokyo_electron: null, disco: null, advantest: null, fast_retailing: null, nippon_steel: null, mufg: null, mitsui_osk: null, tokio_marine: null, mitsubishi_corp: null, toyota: null, sakura_internet: null, mhi: null, ihi: null, anycolor: null, cover_corp: null, nvda: null, tsla: null, aapl: null, amzn: null, amd: null, meta: null, msft: null, googl: null, fearGreed: null, fearGreedLabel: null, cftcJpyNetLong: null };
   const frankfurterRate = frankfurterResult.status === 'fulfilled' ? frankfurterResult.value : null;
@@ -751,7 +751,7 @@ async function runPathB(
     }
   }
 
-  // B1成功後: filterAndTranslateWithHaikuで付与済みのtitle_jaを転写（APIコール不要）
+  // B1成功後: filterAndTranslateNewsで付与済みのtitle_jaを転写（APIコール不要）
   for (const item of stage1.news_analysis) {
     const src = news[item.index];
     item.title_ja = src?.title_ja ?? src?.title ?? '';
@@ -1237,7 +1237,7 @@ async function runCore(env: Env): Promise<void> {
     // 毎cronパージ（system_logs ≤1000件維持）
     try {
       await env.DB.prepare(`DELETE FROM system_logs WHERE id NOT IN (SELECT id FROM system_logs ORDER BY id DESC LIMIT 1000)`).run();
-      await env.DB.prepare(`DELETE FROM market_cache WHERE key LIKE 'news_haiku_%' AND updated_at < datetime('now', '-2 hours')`).run();
+      await env.DB.prepare(`DELETE FROM market_cache WHERE key LIKE 'news_filter_%' AND updated_at < datetime('now', '-2 hours')`).run();
     } catch {}
 
     const coreMs = Date.now() - cronStart;
@@ -1287,7 +1287,7 @@ async function runAnalysis(env: Env): Promise<void> {
 
     // 2.8 ニューストリガー（緊急→PATH_B強制）
     try {
-      const triggerResult = await runNewsTrigger(env.DB, env.OPENAI_API_KEY);
+      const triggerResult = await runNewsTrigger(env.DB, getApiKey(env));
       if (triggerResult.triggerType !== 'NONE') {
         console.log(`[fx-sim] NEWS_TRIGGER: ${triggerResult.triggerType} title=${triggerResult.newsTitle?.slice(0, 50)}`);
       }
@@ -1720,8 +1720,8 @@ async function runDailyTasks(env: Env, _now: Date): Promise<void> {
   try {
     await env.DB.prepare(`DELETE FROM system_logs WHERE id NOT IN (SELECT id FROM system_logs ORDER BY id DESC LIMIT 1000)`).run();
     await env.DB.prepare(`DELETE FROM news_fetch_log WHERE id NOT IN (SELECT id FROM news_fetch_log ORDER BY id DESC LIMIT 5000)`).run();
-    // news_haiku_* キャッシュパージ（2時間以上前のものを削除 → 10分毎パージと整合）
-    await env.DB.prepare(`DELETE FROM market_cache WHERE key LIKE 'news_haiku_%' AND updated_at < datetime('now', '-2 hours')`).run();
+    // news_filter_* キャッシュパージ（2時間以上前）
+    await env.DB.prepare(`DELETE FROM market_cache WHERE key LIKE 'news_filter_%' AND updated_at < datetime('now', '-2 hours')`).run();
     // b2_consecutive_fails リセット（CB解除済み且つ古い場合）
     await env.DB.prepare(
       `DELETE FROM market_cache WHERE key = 'b2_consecutive_fails' AND NOT EXISTS (

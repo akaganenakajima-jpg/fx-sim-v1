@@ -13,8 +13,8 @@ export interface NewsItem {
   source: string;       // ソース名（'NHK', 'WSJ_Markets' 等）
   freshnessMin: number; // 鮮度（取得時刻 - pubDate, 分）
   url?: string;         // 記事URL（RSSの<link>タグから取得）
-  title_ja?: string;    // 日本語タイトル（filterAndTranslateWithHaiku()で付与）
-  desc_ja?: string;     // 日本語概要（filterAndTranslateWithHaiku()で付与）
+  title_ja?: string;    // 日本語タイトル（filterAndTranslateNews() で付与）
+  desc_ja?: string;     // 日本語概要（filterAndTranslateNews()で付与）
 }
 
 export interface SourceFetchStat {
@@ -114,7 +114,7 @@ export function getNewsForPair(items: NewsItem[], pair: string): NewsItem[] {
 // JSON API フェッチ関数（ソースタイプ別）
 // ─────────────────────────────────────────────────────────────────────────────
 
-/** Polygon.io News API — sentimentタグをdescに埋め込んでHaiku翻訳時にも活用 */
+/** Polygon.io News API — sentimentタグをdescに埋め込んでGemini Flash翻訳時にも活用 */
 async function fetchPolygon(src: SourceDef, apiKey: string | undefined, now: Date): Promise<NewsItem[]> {
   if (!apiKey) return [];
   try {
@@ -380,10 +380,10 @@ export async function fetchNews(apiKeys?: NewsApiKeys): Promise<FetchNewsResult>
 }
 
 // ---------------------------------------------------------------------------
-// Haiku ニュースフィルタ（日経ノイズ除去）
+// ニュースフィルタ（日経ノイズ除去）
 // ---------------------------------------------------------------------------
 // Nikkei news.rdf は「速報」フィードのためスポーツ・社会面等のノイズが混入する。
-// Anthropic Claude Haiku でタイトル一覧をバッチ分類し、FX/金融に無関係な記事を除外。
+// Gemini Flash でタイトル一覧をバッチ分類し、FX/金融に無関係な記事を除外。
 // キャッシュ: タイトルハッシュが変わらなければ再分類しない（1分cronでの無駄呼び防止）。
 
 /** タイトル一覧の簡易ハッシュ（キャッシュキー用） */
@@ -393,18 +393,18 @@ function hashTitles(titles: string[]): string {
   for (let i = 0; i < s.length; i++) {
     h = ((h << 5) - h + s.charCodeAt(i)) | 0;
   }
-  return 'news_haiku_' + (h >>> 0).toString(36);
+  return 'news_filter_' + (h >>> 0).toString(36);
 }
 
 /**
- * Haiku で全ソースのニュースをFX/金融関連のみにフィルタリング
+ * Gemini Flash で全ソースのニュースをFX/金融関連のみにフィルタリング
  *
  * @param items - fetchNews()の結果（全ソース混合）
  * @param geminiApiKey - Gemini API キー
  * @param db - D1（キャッシュ用）
  * @returns フィルタ済みのNewsItem[]（FX/金融無関係な記事を除去）
  */
-export async function filterAllNewsWithHaiku(
+export async function filterAllNews(
   items: NewsItem[],
   geminiApiKey: string | undefined,
   db: D1Database,
@@ -427,7 +427,7 @@ export async function filterAllNewsWithHaiku(
       const filtered = relevantIndices
         .filter(i => i >= 0 && i < items.length)
         .map(i => items[i]);
-      console.log(`[news] Haiku filter: キャッシュヒット (${filtered.length}/${items.length}件通過)`);
+      console.log(`[news] News filter: キャッシュヒット (${filtered.length}/${items.length}件通過)`);
       return filtered;
     }
   } catch { /* キャッシュ読み取り失敗は無視して再分類 */ }
@@ -499,22 +499,22 @@ JSON配列のみを返し、他の文字は一切含めないでください。`
       .map(i => items[i]);
 
     const removed = items.length - filtered.length;
-    console.log(`[news] Haiku filter: ${removed}件除外, ${filtered.length}/${items.length}件通過 (${latencyMs}ms)`);
+    console.log(`[news] News filter: ${removed}件除外, ${filtered.length}/${items.length}件通過 (${latencyMs}ms)`);
 
     return filtered;
   } catch (e) {
-    console.log(`[news] Haiku filter error: ${e} — フィルタなしで全通過`);
+    console.log(`[news] News filter error: ${e} — フィルタなしで全通過`);
     return items;
   }
 }
 
-/** @deprecated filterAllNewsWithHaiku を使用してください */
-export const filterNikkeiWithHaiku = filterAllNewsWithHaiku;
+/** @deprecated filterAllNews を使用してください */
+export const filterNikkeiNews = filterAllNews;
 
 // ---------------------------------------------------------------------------
-// Haiku フィルタ + タイトル・概要 翻訳 一括処理
+// ニュースフィルタ + タイトル・概要 翻訳 一括処理
 // ---------------------------------------------------------------------------
-// filterAllNewsWithHaiku() + translateAndCacheNews() を1回のHaiku APIコールに統合。
+// filterAllNews() + translateAndCacheNews() を1回のGemini Flash APIコールに統合。
 // - 無関係記事（スポーツ・芸能等）を除去
 // - title_ja（日本語タイトル）を付与
 // - desc_ja（日本語概要）を付与（descriptionがなければURL先の本文から要約）
@@ -579,8 +579,8 @@ async function fetchBodyForEmptyDesc(items: NewsItem[]): Promise<Map<number, str
   return bodyMap;
 }
 
-/** Haikuによるフィルタ+翻訳の結果レコード */
-interface HaikuTranslatedItem {
+/** ニュースフィルタ+翻訳の結果レコード */
+interface FilteredNewsItem {
   index: number;
   accepted?: boolean;       // true=採用, false=不採用（旧形式は undefined）
   title_ja: string;
@@ -649,14 +649,14 @@ function scoreCredibility(source: string): number {
 }
 
 /**
- * Haiku で全ソースをフィルタしつつタイトル・概要を日本語化する
+ * Gemini Flash で全ソースをフィルタしつつタイトル・概要を日本語化する
  *
  * @param items - fetchNews()の結果（全ソース混合）
  * @param geminiApiKey - Gemini API キー
  * @param db - D1（キャッシュ用）
  * @returns フィルタ済みの NewsItem[]（title_ja・desc_ja 付き）
  */
-export async function filterAndTranslateWithHaiku(
+export async function filterAndTranslateNews(
   items: NewsItem[],
   geminiApiKey: string | undefined,
   db: D1Database,
@@ -676,7 +676,7 @@ export async function filterAndTranslateWithHaiku(
     ).bind(cacheKey).first<{ value: string }>();
 
     if (cached) {
-      const results: HaikuTranslatedItem[] = JSON.parse(cached.value);
+      const results: FilteredNewsItem[] = JSON.parse(cached.value);
 
       // キャッシュヒット時も7軸スコアリングを適用する（スコアチェックをスキップしない）
       const COMPOSITE_THRESHOLD_CACHE = adaptiveThreshold;
@@ -730,7 +730,7 @@ export async function filterAndTranslateWithHaiku(
       const filteredItems = acceptedCached
         .map(r => ({ ...items[r.index], title_ja: r.title_ja, desc_ja: r.desc_ja }));
 
-      updateHaikuResults(items, acceptedCached, rejectMapCached, scoresMapCached, db).catch(() => {});
+      updateFilterResults(items, acceptedCached, rejectMapCached, scoresMapCached, db).catch(() => {});
 
       const scoringRejected = [...rejectMapCached.entries()].filter(([, v]) => v.startsWith('スコア不足')).length;
       console.log(`[news] filter+translate: キャッシュヒット(スコアリング適用) ${filteredItems.length}/${items.length}件通過(うちスコア不足${scoringRejected}件)`);
@@ -763,7 +763,7 @@ export async function filterAndTranslateWithHaiku(
     }
   } catch { /* キャッシュ読み取り失敗は無視 */ }
 
-  // Haiku API 呼び出し: フィルタ + 翻訳 + セマンティック重複排除を1回のバッチで
+  // Gemini Flash API 呼び出し: フィルタ + 翻訳 + セマンティック重複排除を1回のバッチで
   try {
     const start = Date.now();
 
@@ -867,7 +867,7 @@ JSON配列のみを返し、他の文字は一切含めないでください。`
     const rawText = responsePart?.text ?? '[]';
     // レスポンスに余分なテキストが混入することがあるためJSON配列部分だけ抽出
     const jsonMatch = rawText.match(/\[[\s\S]*\]/);
-    const results: HaikuTranslatedItem[] = jsonMatch ? JSON.parse(jsonMatch[0]) : [];
+    const results: FilteredNewsItem[] = jsonMatch ? JSON.parse(jsonMatch[0]) : [];
     if (!jsonMatch) {
       console.log(`[news] filter+translate: JSON未検出 rawText=${rawText.slice(0, 100)} — フィルタなしで全通過`);
       return items;
@@ -896,7 +896,7 @@ JSON配列のみを返し、他の文字は一切含めないでください。`
     for (const r of results) {
       if (r.index < 0 || r.index >= items.length) continue;
 
-      // Haikuが明示的に除外 → そのまま不採用
+      // AIが明示的に除外 → そのまま不採用
       if (r.accepted === false) {
         rejectMap.set(r.index, r.reject_reason ?? 'その他');
         continue;
@@ -939,8 +939,8 @@ JSON配列のみを返し、他の文字は一切含めないでください。`
 
     // news_raw に結果反映（採用/不採用フラグ＋スコア）
     // 非同期で更新（メインフローをブロックしない）
-    updateHaikuResults(items, acceptedResults, rejectMap, scoresMap, db).catch(e =>
-      console.warn(`[news_raw] updateHaikuResults error: ${String(e).slice(0, 100)}`)
+    updateFilterResults(items, acceptedResults, rejectMap, scoresMap, db).catch(e =>
+      console.warn(`[news_raw] updateFilterResults error: ${String(e).slice(0, 100)}`)
     );
 
     // 過去トピックキャッシュ更新: 採用済みトピックのみ追加、最大50件に制限
@@ -979,9 +979,9 @@ async function _updateLatestNewsCache(items: NewsItem[], db: D1Database): Promis
 }
 
 // ---------------------------------------------------------------------------
-// Haiku 英語→日本語タイトル翻訳（Path B B1 後処理）
+// Gemini Flash 英語→日本語タイトル翻訳（Path B B1 後処理）
 // ---------------------------------------------------------------------------
-// B1（Gemini/GPT/Claude）はニュース分析に専念し、翻訳は Haiku に委任。
+// B1（Gemini/GPT/Claude）はニュース分析に専念し、翻訳は Gemini Flash に委任。
 // 英語タイトルのみバッチ翻訳し、日本語タイトルはそのまま通す。
 
 /** 英語文字列か判定（ASCII文字が全体の50%超） */
@@ -992,14 +992,14 @@ function isEnglishTitle(title: string): boolean {
 }
 
 /**
- * Path B の news_analysis に title_ja を付与する（Haiku バッチ翻訳）
+ * Path B の news_analysis に title_ja を付与する（Gemini Flash バッチ翻訳）
  *
  * @param newsAnalysis - B1の出力 news_analysis 配列
  * @param originalTitles - 元のニュースタイトル配列（indexでマッピング）
  * @param anthropicApiKey - Anthropic API キー
  * @returns title_ja が付与された news_analysis（元の配列を変更）
  */
-export async function translateTitlesWithHaiku(
+export async function translateNewsTitles(
   newsAnalysis: Array<{ index: number; title_ja?: string; [key: string]: unknown }>,
   originalTitles: string[],
   anthropicApiKey: string | undefined,
@@ -1049,7 +1049,7 @@ JSON配列のみを返し、他の文字は一切含めないでください。`
     const latencyMs = Date.now() - start;
 
     if (!res.ok) {
-      console.log(`[news] Haiku translate error: ${res.status} (${latencyMs}ms) — 英語タイトルのまま`);
+      console.log(`[news] News translate error: ${res.status} (${latencyMs}ms) — 英語タイトルのまま`);
       // フォールバック: 英語タイトルをそのまま title_ja に
       for (const t of toTranslate) {
         newsAnalysis[t.analysisIdx].title_ja = t.title;
@@ -1070,9 +1070,9 @@ JSON配列のみを返し、他の文字は一切含めないでください。`
         translated || toTranslate[i].title; // 翻訳失敗時は元タイトル
     }
 
-    console.log(`[news] Haiku translate: ${toTranslate.length}件翻訳完了 (${latencyMs}ms)`);
+    console.log(`[news] News translate: ${toTranslate.length}件翻訳完了 (${latencyMs}ms)`);
   } catch (e) {
-    console.log(`[news] Haiku translate error: ${e} — 英語タイトルのまま`);
+    console.log(`[news] News translate error: ${e} — 英語タイトルのまま`);
     // フォールバック
     for (const t of toTranslate) {
       newsAnalysis[t.analysisIdx].title_ja = t.title;
@@ -1095,7 +1095,7 @@ function hashArticle(source: string, title: string): string {
 }
 
 /**
- * Haiku フィルタ前の全記事を news_raw テーブルに保存する
+ * フィルタ前の全記事を news_raw テーブルに保存する
  * 既に同じ hash が存在する場合は INSERT OR IGNORE で重複排除
  *
  * @returns 新規挿入された件数
@@ -1141,14 +1141,14 @@ export async function saveRawNews(
 }
 
 /**
- * Haiku フィルタ結果で news_raw の採用/不採用フラグを更新する
+ * フィルタ結果で news_raw の採用/不採用フラグを更新する
  *
  * @param allItems    - フィルタ前の全記事
  * @param accepted    - 採用した記事（index, title_ja, desc_ja 付き）
  * @param rejectMap   - index → 不採用理由のマップ
  * @param scoresMap   - index → 7軸スコアのマップ
  */
-export async function updateHaikuResults(
+export async function updateFilterResults(
   allItems: NewsItem[],
   accepted: Array<{ index: number; title_ja: string; desc_ja: string }>,
   rejectMap: Map<number, string>,
@@ -1173,16 +1173,16 @@ export async function updateHaikuResults(
       const a = accepted.find(x => x.index === i)!;
       stmts.push(
         db.prepare(
-          // haiku_accepted != -1: 一度スコア拒否された記事を後続バッチで採用に上書きしない
-          `UPDATE news_raw SET haiku_accepted = 1, title_ja = ?, desc_ja = ?, scores = ?, composite_score = ? WHERE hash = ? AND haiku_accepted != -1`
+          // filter_accepted != -1: 一度スコア拒否された記事を後続バッチで採用に上書きしない
+          `UPDATE news_raw SET filter_accepted = 1, title_ja = ?, desc_ja = ?, scores = ?, composite_score = ? WHERE hash = ? AND filter_accepted != -1`
         ).bind(a.title_ja, a.desc_ja, scoresJson, sc?.composite ?? null, hash)
       );
     } else {
       const reason = rejectMap.get(i) || '除外（理由不明）';
       stmts.push(
         db.prepare(
-          // haiku_accepted != 1: 採用済み記事を後続バッチで上書きしない（バグ防止）
-          `UPDATE news_raw SET haiku_accepted = -1, reject_reason = ?, scores = ?, composite_score = ? WHERE hash = ? AND haiku_accepted != 1`
+          // filter_accepted != 1: 採用済み記事を後続バッチで上書きしない（バグ防止）
+          `UPDATE news_raw SET filter_accepted = -1, reject_reason = ?, scores = ?, composite_score = ? WHERE hash = ? AND filter_accepted != 1`
         ).bind(reason, scoresJson, sc?.composite ?? null, hash)
       );
     }
@@ -1200,7 +1200,7 @@ export async function updateHaikuResults(
 
   const acceptedCount = acceptedSet.size;
   const rejectedCount = allItems.length - acceptedCount;
-  console.log(`[news_raw] Haiku結果反映: 採用${acceptedCount}件, 不採用${rejectedCount}件`);
+  console.log(`[news_raw] フィルタ結果反映: 採用${acceptedCount}件, 不採用${rejectedCount}件`);
 
   // ── 採用率サマリーをD1に記録（NEWS_STAT）──
   // console.logだけでは監視困難→SQLで集計・閾値超過を検出できるよう格上げ
@@ -1464,10 +1464,10 @@ export async function getAdaptiveCompositeThreshold(db: D1Database): Promise<num
     const stats = await db.prepare(`
       SELECT
         COUNT(*) as total,
-        SUM(CASE WHEN haiku_accepted = 1 THEN 1 ELSE 0 END) as accepted
+        SUM(CASE WHEN filter_accepted = 1 THEN 1 ELSE 0 END) as accepted
       FROM (
-        SELECT haiku_accepted FROM news_raw
-        WHERE haiku_accepted IS NOT NULL
+        SELECT filter_accepted FROM news_raw
+        WHERE filter_accepted IS NOT NULL
         ORDER BY id DESC
         LIMIT ${SAMPLE_SIZE}
       )
