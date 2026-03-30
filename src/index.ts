@@ -33,7 +33,7 @@ import { determineRegime, formatRegimeForPrompt, getRegimeProhibitions } from '.
 import { getWeekendStatus, lockProfitsForWeekend, forceCloseAllForWeekend, getWeekendNewsDigest, saveFridayClosePrices, detectGaps, resetWeekendFlags, getTradeableInstruments } from './weekend';
 import { runLogicDecisions } from './logic-trading';
 import { runParamReview } from './param-review';
-import { evaluateRecoveryIfNeeded, getDrawdownLevel } from './risk-manager';
+import { evaluateRecoveryIfNeeded, getDrawdownLevel, checkInstrumentDailyLoss } from './risk-manager';
 import { runNewsTrigger, consumeEmergencyForceFlag } from './news-trigger';
 // AI銘柄マネージャー
 import { fetchFundamentals, saveFundamentals, fetchAllListedStocks, cleanupOldFundamentals } from './jquants';
@@ -1326,6 +1326,14 @@ async function run(env: Env): Promise<void> {
               `PATH_B OPEN上限ブロック: ${dec.pair}`,
               `OPEN=${openPairsForPathB.size + pathBNewEntries}/${PATH_B_OPEN_LIMIT}`
             ).catch(() => {});
+            continue;
+          }
+          // 銘柄別日次損失上限チェック（テスタ流: シナリオ崩壊銘柄はやらない）
+          const instDailyB = await checkInstrumentDailyLoss(env.DB, dec.pair, new Date());
+          if (instDailyB.paused) {
+            await insertSystemLog(env.DB, 'INFO', 'RISK',
+              `PATH_B 銘柄日次Cap超過スキップ: ${dec.pair}`,
+              `dailyPnl=${instDailyB.dailyPnl.toFixed(0)}円`);
             continue;
           }
           try {

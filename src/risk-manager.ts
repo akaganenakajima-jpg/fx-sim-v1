@@ -5,11 +5,12 @@
 
 import { insertSystemLog } from './db';
 import type { InstrumentConfig } from './instruments';
-import { INITIAL_CAPITAL } from './constants';
+import { INITIAL_CAPITAL, DD_CAUTION, DD_WARNING, DD_HALT, DD_STOP, INSTRUMENT_DAILY_LOSS_CAP } from './constants';
 
-// ─── DD段階（5段階: DDベース段階縮小 + Kelly基準） ────
-// ※ テスタ語録「守りを考えた方が結果として増える」の実装。
-//   具体的な閾値(5%/8%/12%/15%)はKelly基準を根拠とした独自設計。
+// ─── DD段階（5段階: テスタ理論準拠 + Kelly基準） ────
+// テスタ氏DD実績: デイトレ max−10% / スイング max−20%（all-time HWM比）
+// WARNING=10%（テスタデイトレ上限）, STOP=20%（テスタスイング上限）
+// 出典: https://x.com/tesuta001/status/1731166226410537088
 
 export type DrawdownLevel = 'NORMAL' | 'CAUTION' | 'WARNING' | 'HALT' | 'STOP';
 
@@ -98,6 +99,29 @@ export async function checkDailyLossCap(
   return { dailyLoss, capped: dailyLoss <= -capAmount, capAmount };
 }
 
+// ─── 銘柄別日次損失チェック（テスタ流: シナリオ崩壊銘柄はやらない） ──
+
+/**
+ * 銘柄別の日次損失チェック。UTC 00:00 で自動リセット。
+ * ⚠️ 週末クローズ制約: この関数自体は銘柄を選ばない（呼び出し側で制御）
+ */
+export async function checkInstrumentDailyLoss(
+  db: D1Database, pair: string, now: Date
+): Promise<{ dailyPnl: number; paused: boolean }> {
+  const todayStart = new Date(Date.UTC(
+    now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()
+  )).toISOString();
+
+  const row = await db.prepare(
+    `SELECT COALESCE(SUM(pnl), 0) AS dailyPnl
+     FROM positions
+     WHERE pair = ? AND status = 'CLOSED' AND closed_at >= ?`
+  ).bind(pair, todayStart).first<{ dailyPnl: number }>();
+
+  const dailyPnl = row?.dailyPnl ?? 0;
+  return { dailyPnl, paused: dailyPnl <= -INSTRUMENT_DAILY_LOSS_CAP };
+}
+
 // ─── DD段階判定 ──────────────────────────────────
 
 export async function getDrawdownLevel(db: D1Database): Promise<DrawdownResult> {
@@ -125,16 +149,16 @@ export async function getDrawdownLevel(db: D1Database): Promise<DrawdownResult> 
   let level: DrawdownLevel;
   let lotMultiplier: number;
 
-  if (ddPct >= 15) {
+  if (ddPct >= DD_STOP) {
     level = 'STOP';
     lotMultiplier = 0;
-  } else if (ddPct >= 12) {
+  } else if (ddPct >= DD_HALT) {
     level = 'HALT';
     lotMultiplier = 0.1;  // Micro Kelly: 最小ロットで検証トレード
-  } else if (ddPct >= 8) {
+  } else if (ddPct >= DD_WARNING) {
     level = 'WARNING';
     lotMultiplier = 0.25; // Quarter Kelly
-  } else if (ddPct >= 5) {
+  } else if (ddPct >= DD_CAUTION) {
     level = 'CAUTION';
     lotMultiplier = 0.5;  // Half Kelly
   } else {

@@ -21,6 +21,10 @@ import {
   EMERGENCY_BANNER_TTL_MS,
   RELIABILITY_TRUSTED,
   RELIABILITY_TENTATIVE,
+  DD_CAUTION,
+  DD_WARNING,
+  DD_HALT,
+  DD_STOP,
 } from './constants';
 
 export const JS = `
@@ -109,6 +113,10 @@ export const JS = `
   var BANNER_TTL       = ${EMERGENCY_BANNER_TTL_MS};
   var REL_TRUSTED      = ${RELIABILITY_TRUSTED};
   var REL_TENTATIVE    = ${RELIABILITY_TENTATIVE};
+  var DD_CAUT          = ${DD_CAUTION};
+  var DD_WARN          = ${DD_WARNING};
+  var DD_HLT           = ${DD_HALT};
+  var DD_STP           = ${DD_STOP};
   // ─────────────────────────────────────────────────────────────────────────
 
   // ══════════════════════════════════════════
@@ -2172,9 +2180,9 @@ export const JS = `
     var ddPctNum = ddStat ? (ddStat.currentDDPct || ddStat.maxDDPct || 0) : 0;
     var ddPct = ddPctNum.toFixed(1);
     var ddMaxPct = ddStat ? (ddStat.maxDDPct || 0).toFixed(1) : '0.0';
-    // モックアップ準拠の閾値: NORMAL(〜3%) → CAUTION(〜5%) → WARNING(〜8%) → HALT(〜10%) → STOP
-    var ddStage = ddPctNum >= 10 ? 'HALT' : ddPctNum >= 8 ? 'WARNING' : ddPctNum >= 5 ? 'CAUTION' : ddPctNum >= 3 ? 'CAUTION' : 'NORMAL';
-    var ddOk = ddPctNum < 8;
+    // テスタ理論準拠: CAUTION(7%) / WARNING(10%=デイトレ上限) / HALT(15%) / STOP(20%=スイング上限)
+    var ddStage = ddPctNum >= DD_STP ? 'STOP' : ddPctNum >= DD_HLT ? 'HALT' : ddPctNum >= DD_WARN ? 'WARNING' : ddPctNum >= DD_CAUT ? 'CAUTION' : 'NORMAL';
+    var ddOk = ddPctNum < DD_WARN;
 
     // ニュース採用率計算（分母: 全フェッチ件数 = latestNews.length）
     var newsFetched = (data.latestNews || []).length;

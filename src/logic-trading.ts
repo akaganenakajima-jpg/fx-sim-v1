@@ -11,7 +11,7 @@ import {
   type InstrumentParamsRow,
 } from './logic-indicators';
 import { checkTpSlSanity } from './sanity';
-import { checkCorrelationGuard, getDrawdownLevel, updateHWM, getCurrentBalance, applyDrawdownControl, checkDailyLossCap } from './risk-manager';
+import { checkCorrelationGuard, getDrawdownLevel, updateHWM, getCurrentBalance, applyDrawdownControl, checkDailyLossCap, checkInstrumentDailyLoss } from './risk-manager';
 import { openPosition } from './position';
 import { insertDecision, insertSystemLog, insertIndicatorLog, getCacheValue, setCacheValue } from './db';
 import { INSTRUMENTS, getDefaultParams, getYahooSymbol } from './instruments';
@@ -289,6 +289,15 @@ export async function runLogicDecisions(
         summary.signals.push({ pair, signal: 'SKIP', reason: `session外(${currentHour}h UTC)` });
         continue;
       }
+    }
+
+    // ── 銘柄別日次損失上限チェック（テスタ流: シナリオ崩壊銘柄はやらない） ──
+    const instDaily = await checkInstrumentDailyLoss(db, pair, now);
+    if (instDaily.paused) {
+      summary.skipped++;
+      summary.signals.push({ pair, signal: 'SKIP',
+        reason: `銘柄日次Cap超過(${instDaily.dailyPnl.toFixed(0)}円)` });
+      continue;
     }
 
     // ── Ph.8: SL後クールダウン（段階強化） ──
