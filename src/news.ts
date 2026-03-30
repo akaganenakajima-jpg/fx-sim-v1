@@ -825,7 +825,9 @@ JSON配列のみを返し、他の文字は一切含めないでください。`
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           contents: [{ parts: [{ text: prompt }], role: 'user' }],
-          generationConfig: { temperature: 0, maxOutputTokens: 4096 },
+          // thinkingBudget:0 = thinking無効（ニュースフィルタはJSON出力のみ必要）
+          // thinking有効のままだとthinking tokensがmaxOutputTokensを消費し実回答が切れる
+          generationConfig: { temperature: 0, maxOutputTokens: 8192, thinkingConfig: { thinkingBudget: 0 } },
           // 地政学・軍事ニュースを金融分析コンテキストで処理できるよう設定
           safetySettings: [
             { category: 'HARM_CATEGORY_DANGEROUS_CONTENT', threshold: 'BLOCK_ONLY_HIGH' },
@@ -855,11 +857,21 @@ JSON配列のみを返し、他の文字は一切含めないでください。`
     // thinking モデルは parts[0] が思考内容（thought:true）、parts[1] 以降が実際の回答
     // thought フラグのないパートを優先して取得する（thinkingBudget:0 でも念のため）
     const allParts = data.candidates?.[0]?.content?.parts ?? [];
+    // candidates が空 = safety filter によるブロック → フィルタなしで全通過
+    if (!data.candidates?.length) {
+      const fb = (data as { promptFeedback?: { blockReason?: string } }).promptFeedback;
+      console.log(`[news] filter+translate: candidates=0 blockReason=${fb?.blockReason ?? 'none'} — フィルタなしで全通過`);
+      return items;
+    }
     const responsePart = allParts.find(p => !p.thought) ?? allParts[0];
     const rawText = responsePart?.text ?? '[]';
     // レスポンスに余分なテキストが混入することがあるためJSON配列部分だけ抽出
     const jsonMatch = rawText.match(/\[[\s\S]*\]/);
     const results: HaikuTranslatedItem[] = jsonMatch ? JSON.parse(jsonMatch[0]) : [];
+    if (!jsonMatch) {
+      console.log(`[news] filter+translate: JSON未検出 rawText=${rawText.slice(0, 100)} — フィルタなしで全通過`);
+      return items;
+    }
 
     // キャッシュ保存
     try {
