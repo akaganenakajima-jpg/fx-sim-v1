@@ -5,8 +5,8 @@
 import { getUSDJPY } from './rate';
 import { fetchNews, filterAndTranslateWithHaiku, saveRawNews, purgeOldNewsRaw, type SourceFetchStat, type NewsApiKeys } from './news';
 import { getMarketIndicators } from './indicators';
-import { fetchOgDescription, newsStage1WithHedge, newsStage2, premarketAnalysis, RateLimitError, type NewsAnalysisItem, type NewsStage1Result } from './gemini';
-import { checkAndCloseAllPositions, openPosition } from './position';
+import { fetchOgDescription, newsStage1WithHedge, newsStage2, getAdaptiveB2Timeout, premarketAnalysis, RateLimitError, type NewsAnalysisItem, type NewsStage1Result } from './gemini';
+import { checkAndCloseAllPositions, openPosition, calcRealizedRR } from './position';
 import {
   insertSystemLog,
   getCacheValue,
@@ -14,7 +14,7 @@ import {
   closePosition,
   getOpenPositions,
 } from './db';
-import { slPatternAnalysis } from './stats';
+import { slPatternAnalysis, logReturn } from './stats';
 import { getDashboardHtml } from './dashboard';
 import { getApiStatus, getApiParams } from './api';
 import { CSS } from './style.css';
@@ -33,6 +33,7 @@ import { determineRegime, formatRegimeForPrompt, getRegimeProhibitions } from '.
 import { getWeekendStatus, lockProfitsForWeekend, forceCloseAllForWeekend, getWeekendNewsDigest, saveFridayClosePrices, detectGaps, resetWeekendFlags, getTradeableInstruments } from './weekend';
 import { runLogicDecisions } from './logic-trading';
 import { runParamReview } from './param-review';
+import { evaluateRecoveryIfNeeded } from './risk-manager';
 import { runNewsTrigger, consumeEmergencyForceFlag } from './news-trigger';
 // AI銘柄マネージャー
 import { fetchFundamentals, saveFundamentals, fetchAllListedStocks, cleanupOldFundamentals } from './jquants';
@@ -814,11 +815,28 @@ async function runPathB(
     console.log(`[fx-sim] Path B B2: サーキットブレーカー発動中 (until ${b2CbUntil}) → B1採用`);
   } else {
     try {
+      // T013: 適応的タイムアウトを取得（直近10回のP90+2s、5-15s範囲）
+      const adaptiveTimeout = await getAdaptiveB2Timeout(env.DB);
       const tB2 = Date.now();
-      const stage2 = await newsStage2({ stage1Result: stage1, news, apiKey, db: env.DB });
+
+      let stage2result;
+      try {
+        stage2result = await newsStage2({ stage1Result: stage1, news, apiKey, db: env.DB, timeoutMs: adaptiveTimeout });
+      } catch (firstErr) {
+        // AbortError（タイムアウト）の場合のみ 1 回リトライ（1.5倍タイムアウト）
+        const errName = (firstErr as Error)?.name;
+        if (errName === 'AbortError') {
+          console.warn(`[fx-sim] Path B B2: AbortError (${adaptiveTimeout}ms) → リトライ (${Math.round(adaptiveTimeout * 1.5)}ms)`);
+          await new Promise(r => setTimeout(r, 500)); // 0.5s 待機
+          stage2result = await newsStage2({ stage1Result: stage1, news, apiKey, db: env.DB, timeoutMs: Math.min(15_000, Math.round(adaptiveTimeout * 1.5)) });
+        } else {
+          throw firstErr;
+        }
+      }
+
       b2Ms = Date.now() - tB2;
-      b2Corrections = stage2.corrections;
-      console.log(`[fx-sim] Path B B2: ${b2Corrections.filter(c => c.action === 'CONFIRM').length}件CONFIRM, ${b2Corrections.filter(c => c.action === 'REVISE').length}件REVISE, ${b2Corrections.filter(c => c.action === 'REVERSE').length}件REVERSE (${b2Ms}ms)`);
+      b2Corrections = stage2result.corrections;
+      console.log(`[fx-sim] Path B B2: ${b2Corrections.filter(c => c.action === 'CONFIRM').length}件CONFIRM, ${b2Corrections.filter(c => c.action === 'REVISE').length}件REVISE, ${b2Corrections.filter(c => c.action === 'REVERSE').length}件REVERSE (${b2Ms}ms, timeout=${adaptiveTimeout}ms)`);
       // B2成功 → 連続失敗カウンター・サーキットブレーカーをリセット
       await setCacheValue(env.DB, 'b2_consecutive_fails', '0').catch(() => {});
       await setCacheValue(env.DB, 'b2_circuit_breaker_until', '').catch(() => {});
@@ -1263,13 +1281,19 @@ async function run(env: Env): Promise<void> {
           if (rate == null) continue;
           try {
             const openPos = await env.DB.prepare(
-              `SELECT id, direction, entry_rate FROM positions WHERE pair = ? AND status = 'OPEN' LIMIT 1`
-            ).bind(pair).first<{ id: number; direction: string; entry_rate: number }>();
+              `SELECT id, direction, entry_rate, sl_rate FROM positions WHERE pair = ? AND status = 'OPEN' LIMIT 1`
+            ).bind(pair).first<{ id: number; direction: string; entry_rate: number; sl_rate: number | null }>();
             if (openPos) {
+              const revInstr = INSTRUMENTS.find(i => i.pair === pair);
+              const multiplier = revInstr?.pnlMultiplier ?? 100;
               const pnl = openPos.direction === 'BUY'
-                ? (rate - openPos.entry_rate) * 100
-                : (openPos.entry_rate - rate) * 100;
-              await closePosition(env.DB, openPos.id, rate, 'B2_REVERSE', pnl);
+                ? (rate - openPos.entry_rate) * multiplier
+                : (openPos.entry_rate - rate) * multiplier;
+              const lr = logReturn(openPos.entry_rate, rate);
+              const realizedRR = openPos.sl_rate != null
+                ? calcRealizedRR(openPos.direction, openPos.entry_rate, rate, openPos.sl_rate)
+                : undefined;
+              await closePosition(env.DB, openPos.id, rate, 'B2_REVERSE', pnl, lr, realizedRR);
               await insertSystemLog(env.DB, 'INFO', 'PATH_B', `B2_REVERSE クローズ: ${pair} @ ${rate}`);
             }
           } catch (e) {
@@ -1508,11 +1532,19 @@ async function run(env: Env): Promise<void> {
 
     console.log(`[fx-sim] cron done in ${totalMs}ms`);
 
+    // T014: SPRT 評価（毎分・差分のみ・DB専用で軽量 ~5ms）
+    // 時間制約なし — API 呼び出しなし、新規 CLOSED がない場合は即リターン
+    try {
+      await evaluateRecoveryIfNeeded(env.DB);
+    } catch (e) {
+      console.warn(`[fx-sim] evaluateRecoveryIfNeeded error: ${String(e).slice(0, 80)}`);
+    }
+
     // Ph.4: パラメーターレビュー（PATH_A完了後・1銘柄のみ）
     // Tier D銘柄はlot×0.1で実質除外済み → PARAM_REVIEW対象外（429防止）
-    // totalMs > 20000ms の場合はスキップ（PATH_B遅延時のタイムアウト連鎖防止）
+    // T012修正: ゲートを 15s → 25s に緩和（SPRT独立化で余裕ができたため）
     let paramReviewMs = 0;
-    if (totalMs <= 15000) {
+    if (totalMs <= 25000) {
       try {
         const tParam = Date.now();
         const tierDPairs = INSTRUMENTS.filter(i => i.tier === 'D').map(i => i.pair);
@@ -1525,7 +1557,7 @@ async function run(env: Env): Promise<void> {
         console.warn(`[fx-sim] runParamReview error: ${String(e).slice(0, 100)}`);
       }
     } else {
-      console.log(`[fx-sim] PARAM_REVIEW: スキップ（totalMs=${totalMs}ms > 15s）`);
+      console.log(`[fx-sim] PARAM_REVIEW: スキップ（totalMs=${totalMs}ms > 25s）`);
     }
 
     // 実行時間計測（wall-clock: I/O待ち含む。Cloudflare paid plan limit = 15min）

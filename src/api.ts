@@ -379,8 +379,8 @@ export async function getApiStatus(db: D1Database, tradingEnv?: { TRADING_ENABLE
 
       // news_raw から採用記事（最大30件、7日TTL+purgeで自動管理）
       db
-        .prepare(`SELECT id, source, title_ja, desc_ja, url, fetched_at FROM news_raw WHERE haiku_accepted = 1 ORDER BY id DESC LIMIT 30`)
-        .all<{ id: number; source: string; title_ja: string; desc_ja: string; url: string | null; fetched_at: string }>(),
+        .prepare(`SELECT id, source, title_ja, desc_ja, url, fetched_at, composite_score AS score, haiku_accepted FROM news_raw WHERE haiku_accepted = 1 ORDER BY id DESC LIMIT 30`)
+        .all<{ id: number; source: string; title_ja: string; desc_ja: string; url: string | null; fetched_at: string; score: number | null; haiku_accepted: number }>(),
 
       // システムログ（直近30件）
       db
@@ -717,6 +717,8 @@ export async function getApiStatus(db: D1Database, tradingEnv?: { TRADING_ENABLE
       desc_ja: r.desc_ja,
       url: r.url ?? null,
       fetched_at: r.fetched_at,
+      score: r.score ?? null,
+      haiku_accepted: r.haiku_accepted,
     })),
     newsAnalysis,
     systemLogs: sysLogs,
@@ -765,7 +767,7 @@ export async function getApiStatus(db: D1Database, tradingEnv?: { TRADING_ENABLE
         multiplier: inst.pnlMultiplier,
         category,
         broker: inst.broker,
-        assetClass: inst.assetClass ?? 'forex',
+        assetClass: inst.assetClass,
       };
     }),
     tradeContext: (openPositions.results ?? []).length > 0
