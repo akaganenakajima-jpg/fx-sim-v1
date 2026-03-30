@@ -1203,6 +1203,7 @@ async function run(env: Env): Promise<void> {
     const openPairsForPathB = new Set((allOpenRawForPathB.results ?? []).map(p => p.pair));
 
     let pathBResult: PathBResult = { decisions: [], reversals: [], newsAnalysis: [] };
+    let pathBMs = 0; // Path B 実行時間（AI呼び出し含む）
 
     // Path B 最小間隔チェック（5分）— 需要削減で429を構造的に防止
     // 緊急ニューストリガーがあれば間隔を無視して強制発火
@@ -1474,12 +1475,14 @@ async function run(env: Env): Promise<void> {
           regimeContext = { text: weekendContext, prohibitions: '' };
         }
 
+        const tPathB = Date.now();
         pathBResult = await runPathB(env, sharedNewsStore, indicators, openPairsForPathB, getApiKey(env), {
           openaiApiKey: env.OPENAI_API_KEY,
           anthropicApiKey: env.ANTHROPIC_API_KEY,
         }, regimeContext, prices);
+        const pathBMs = Date.now() - tPathB;
         await setCacheValue(env.DB, 'last_path_b_at', String(Date.now()));
-        console.log(`[fx-sim] Path B: ${pathBResult.decisions.length}件シグナル, ${pathBResult.reversals.length}件REVERSE`);
+        console.log(`[fx-sim] Path B: ${pathBResult.decisions.length}件シグナル, ${pathBResult.reversals.length}件REVERSE (${pathBMs}ms)`);
       } catch (e) {
         if (e instanceof RateLimitError) {
           markKeyCooldown(e.apiKey, e.retryAfterSec);
@@ -1525,16 +1528,16 @@ async function run(env: Env): Promise<void> {
       console.log(`[fx-sim] PARAM_REVIEW: スキップ（totalMs=${totalMs}ms > 15s）`);
     }
 
-    // 実行時間が45秒超はWARN（wall-clock: I/O待ち含む。Cloudflare paid plan limit = 15min）
+    // 実行時間計測（wall-clock: I/O待ち含む。Cloudflare paid plan limit = 15min）
     const grandTotal = totalMs + paramReviewMs;
-    const timingsWithParam = { fetchMs, tpSlMs, newsMs, paramReviewMs, grandTotalMs: grandTotal };
+    const timingsWithParam = { fetchMs, tpSlMs, newsMs, pathBMs, paramReviewMs, grandTotalMs: grandTotal };
     await setCacheValue(env.DB, 'cron_phase_timings', JSON.stringify(timingsWithParam));
     // Cloudflare Workers はI/O待ち（fetch/D1）がCPU時間にカウントされないため
     // wall clock 60秒を超えた場合のみWARN（実CPU時間は通常5〜10秒以内）
     if (grandTotal > 60000) {
       await insertSystemLog(env.DB, 'WARN', 'CRON',
         `実行時間超過: ${grandTotal}ms`,
-        JSON.stringify({ fetchMs, tpSlMs, newsMs, paramReviewMs }));
+        JSON.stringify({ fetchMs, tpSlMs, newsMs, pathBMs, paramReviewMs }));
     }
 
     // 日次処理（JST 0:00 = UTC 15:00 に実行）
