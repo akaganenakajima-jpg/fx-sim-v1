@@ -1540,15 +1540,13 @@ async function run(env: Env): Promise<void> {
         JSON.stringify({ fetchMs, tpSlMs, newsMs, pathBMs, paramReviewMs }));
     }
 
-    // 10分毎ログパージ（system_logs ≤1000件維持）
-    // 毎分最大8件生成 × 10分 = 最大80件の蓄積 → 合計1080件以内に抑制
-    if (now.getUTCMinutes() % 10 === 0) {
-      try {
-        await env.DB.prepare(`DELETE FROM system_logs WHERE id NOT IN (SELECT id FROM system_logs ORDER BY id DESC LIMIT 1000)`).run();
-        // news_haiku_* キャッシュパージ（2時間以上前のものを削除 → 30分TTLに対して余裕あり）
-        await env.DB.prepare(`DELETE FROM market_cache WHERE key LIKE 'news_haiku_%' AND updated_at < datetime('now', '-2 hours')`).run();
-      } catch {}
-    }
+    // 毎cronパージ（system_logs ≤1000件維持）
+    // cron実行が107-140秒かかり複数並列実行が重なるため、毎回パージが必要
+    try {
+      await env.DB.prepare(`DELETE FROM system_logs WHERE id NOT IN (SELECT id FROM system_logs ORDER BY id DESC LIMIT 1000)`).run();
+      // news_haiku_* キャッシュパージ（2時間以上前のものを削除 → 30分TTLに対して余裕あり）
+      await env.DB.prepare(`DELETE FROM market_cache WHERE key LIKE 'news_haiku_%' AND updated_at < datetime('now', '-2 hours')`).run();
+    } catch {}
 
     // 日次処理（JST 0:00 = UTC 15:00 に実行）
     const jstHour = (now.getUTCHours() + 9) % 24;
