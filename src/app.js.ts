@@ -1054,10 +1054,10 @@ export const JS = `
     var isAttention = !!n.attention;
     var isEmergency = n.triggerType === 'EMERGENCY';
     var isTrend = n.triggerType === 'TREND_INFLUENCE';
-    var badgeCls = isEmergency ? 'nf-badge-emergency' : isTrend ? 'nf-badge-trend' : isAttention ? 'nf-badge-trend' : 'nf-badge-info';
+    var badgeCls = isEmergency ? 'nf-badge-emergency' : isTrend ? 'nf-badge-trend' : isAttention ? 'nf-badge-attention' : 'nf-badge-info';
     var badgeBase = isEmergency ? '緊急' : isTrend ? 'トレンド変化' : isAttention ? '注目' : '情報';
     var badgeText = badgeBase;
-    var borderCls = isEmergency ? 'nf-emergency' : isTrend ? 'nf-trend' : isAttention ? 'nf-trend' : 'nf-info';
+    var borderCls = isEmergency ? 'nf-emergency' : isTrend ? 'nf-trend' : isAttention ? 'nf-attention' : 'nf-info';
     // impactフィールドはAI判断テキスト（数値スコアではない）
     var impactText = typeof n.impact === 'string' ? n.impact : '';
     var aiText = n.desc_ja || n.description || impactText || '';
