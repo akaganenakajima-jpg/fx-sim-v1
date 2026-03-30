@@ -7,7 +7,6 @@ import { INSTRUMENTS } from './instruments';
 import { getSessionStats, getPairStats, type SessionStats, type PairStats } from './trade-journal';
 import { wilsonCI, sharpeWithSE, varCvar, kellyFraction, markovTransition, maxDrawdown, rollingReturns, pnlVolatility, profitFactor, bootstrapROI, aiAccuracy, randomBaselineComparison, pairCorrelation, logReturnStats, powerAnalysis, ewmaVolatility, engleGrangerCointegration, hierarchicalWinRate } from './stats';
 import { INITIAL_CAPITAL, RELIABILITY_TRUSTED, RELIABILITY_TENTATIVE } from './constants';
-import { isGlobalDDEnabled, getAllMarketDrawdownLevels } from './risk-manager';
 
 export interface LatestDecision {
   id: number;
@@ -36,7 +35,6 @@ export interface RecentDecision {
   sp500: number | null;
   tp_rate: number | null;
   sl_rate: number | null;
-  trigger_id: number | null;
   created_at: string;
 }
 
@@ -105,7 +103,7 @@ export interface StatusResponse {
   systemLogs: SystemLog[];
   logStats: LogStats;
   latestNews: Array<{ title: string; pubDate: string; description: string; source?: string }>;
-  acceptedNews: Array<{ id: number; source: string; title_ja: string; desc_ja: string; url: string | null; fetched_at: string; pub_date?: string | null; filter_accepted: number }>;
+  acceptedNews: Array<{ id: number; source: string; title_ja: string; desc_ja: string; url: string | null; fetched_at: string; pub_date: string | null }>;
   newsAnalysis: Array<{
     index: number;
     attention: boolean;
@@ -295,6 +293,13 @@ export interface StatusResponse {
   sessionStats: SessionStats[];
   /** テスタ施策14: 銘柄別統計 */
   pairStats: PairStats[];
+  /** ニューストリガーログ（EMERGENCY/TREND_INFLUENCE判定結果） */
+  newsTriggers: Array<{
+    trigger_type: string;
+    news_title: string;
+    news_score: number;
+    created_at: string;
+  }>;
   /** 全銘柄定義（instruments.tsから動的生成） */
   instruments: Array<{
     pair: string;
@@ -305,13 +310,6 @@ export interface StatusResponse {
     broker: string;
     assetClass: string;
   }>;
-  /**
-   * 総合DD管理トグル状態（フロントエンド初期表示用）
-   * ⚠️ ユーザー指示による仕様（2026-04-01）: 実弾投入まで false（検証モード）。バグではない。
-   */
-  globalDDEnabled: boolean;
-  /** 市場別 DD STOP 状態（true = その市場は DD STOP 中） */
-  ddByMarket: Record<string, boolean>;
 }
 
 export async function getApiStatus(db: D1Database, tradingEnv?: { TRADING_ENABLED?: string; OANDA_LIVE?: string; RISK_MAX_DAILY_LOSS?: string; RISK_MAX_LIVE_POSITIONS?: string; RISK_MAX_LOT_SIZE?: string; RISK_ANOMALY_THRESHOLD?: string }): Promise<StatusResponse> {
@@ -349,7 +347,7 @@ export async function getApiStatus(db: D1Database, tradingEnv?: { TRADING_ENABLE
       // 判定履歴（BUY/SELLのみ直近20件）
       db
         .prepare(
-          `SELECT id, pair, decision, rate, reasoning, news_summary, reddit_signal, vix, us10y, nikkei, sp500, tp_rate, sl_rate, trigger_id, created_at
+          `SELECT id, pair, decision, rate, reasoning, news_summary, reddit_signal, vix, us10y, nikkei, sp500, tp_rate, sl_rate, created_at
            FROM decisions WHERE decision != 'HOLD' ORDER BY id DESC LIMIT 20`
         )
         .all<RecentDecision>(),
@@ -522,7 +520,7 @@ export async function getApiStatus(db: D1Database, tradingEnv?: { TRADING_ENABLE
 
   const sysLogs = sysLogsRaw.results ?? [];
 
-  // ニュース: cron側のfilterAndTranslateWithHaikuで処理済みのlatest_newsキャッシュを使用
+  // ニュース: cron側のfilterAndTranslateNewsで処理済みのlatest_newsキャッシュを使用
   // RSS直接取得はcron側の責務。API側はキャッシュのみ参照（日本語翻訳済み）
   let latestNews: Array<{ title: string; pubDate: string; description: string; source?: string }> = [];
   const knownTitles = new Set<string>();
@@ -691,6 +689,17 @@ export async function getApiStatus(db: D1Database, tradingEnv?: { TRADING_ENABLE
 
   // title_ja はcron側で翻訳済み（latest_newsキャッシュ内に含まれる）
 
+  // ニューストリガーログ（EMERGENCY/TREND_INFLUENCE判定結果）
+  let newsTriggers: StatusResponse['newsTriggers'] = [];
+  try {
+    const ntRaw = await db.prepare(
+      `SELECT trigger_type, news_title, news_score, created_at FROM news_trigger_log
+       WHERE created_at > datetime('now', '-12 hours')
+       ORDER BY created_at DESC LIMIT 10`
+    ).all<{ trigger_type: string; news_title: string; news_score: number; created_at: string }>();
+    newsTriggers = ntRaw.results ?? [];
+  } catch { /* テーブル未存在 */ }
+
   return {
     rate,
     tradingMode,
@@ -731,6 +740,7 @@ export async function getApiStatus(db: D1Database, tradingEnv?: { TRADING_ENABLE
       filter_accepted: r.filter_accepted,
     })),
     newsAnalysis,
+    newsTriggers,
     systemLogs: sysLogs,
     logStats: {
       totalRuns: logStatsRaw?.totalRuns ?? 0,
@@ -785,8 +795,6 @@ export async function getApiStatus(db: D1Database, tradingEnv?: { TRADING_ENABLE
       : null,
     paramHistory: buildParamHistory(paramReviewLogRaw as unknown as { results: Array<{ pair: string; param_version: number; reason: string; win_rate: number | null; actual_rr: number | null; profit_factor: number | null; trades_eval: number | null; created_at: string }> }),
     recentIndicatorLogs: (indicatorLogsRaw as unknown as { results: IndicatorLog[] }).results ?? [],
-    globalDDEnabled: await isGlobalDDEnabled(db).catch(() => false),
-    ddByMarket: await getAllMarketDrawdownLevels(db).catch(() => ({} as Record<string, boolean>)),
   };
 }
 
@@ -809,14 +817,13 @@ async function buildCausalSummary(db: D1Database): Promise<CausalSummary | null>
     ).first<{ vix: number | null; nikkei: number | null; sp500: number | null }>();
 
     // 3. 直近のニューストリガー
-    let newsTriggers: Array<{ id: number; trigger_type: string; news_title: string; news_score: number; relevance: number | null; sentiment: number | null; detail: string | null; created_at: string }> = [];
+    let newsTriggers: Array<{ trigger_type: string; news_title: string; news_score: number; created_at: string }> = [];
     try {
       const ntRaw = await db.prepare(
-        `SELECT id, trigger_type, news_title, news_score, relevance, sentiment, detail, created_at
-         FROM news_trigger_log
+        `SELECT trigger_type, news_title, news_score, created_at FROM news_trigger_log
          WHERE created_at > datetime('now', '-12 hours')
          ORDER BY created_at DESC LIMIT 5`
-      ).all<{ id: number; trigger_type: string; news_title: string; news_score: number; relevance: number | null; sentiment: number | null; detail: string | null; created_at: string }>();
+      ).all<{ trigger_type: string; news_title: string; news_score: number; created_at: string }>();
       newsTriggers = ntRaw.results ?? [];
     } catch { /* テーブル未存在 */ }
 

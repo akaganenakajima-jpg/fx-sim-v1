@@ -1,14 +1,14 @@
 // ニューストリガーモジュール（Ph.5）
 // 高スコアニュースを検出し2種のアクションを起動する:
 //   EMERGENCY     → PATH_B強制発火（market_cacheにフラグをセット）
-//   TREND_INFLUENCE → AIが期限付き臨時パラメーターを生成（news_temp_params）
+//   TREND_INFLUENCE → Gemini Flashが期限付き臨時パラメーターを生成（news_temp_params）
 //
 // 設計根拠:
 //   fx-strategy.md §2.1: ニュース駆動相場ではロジックパラメーターが無効化される
 //   fx-strategy.md §2.3: 緊急局面でのAI完全裁量エントリーが期待値を最大化
 //   stats/ts.md §2: イベントスタディ — 突発ニュース後の価格インパクトは60〜120分で収束
 
-import { insertSystemLog, setCacheValue, getCacheValue } from './db';
+import { insertSystemLog, setCacheValue } from './db';
 
 // ─── 緊急判定キーワード ────────────────────────────────────────────────────
 // これらが含まれかつスコアが高い場合はEMERGENCYとして扱う
@@ -32,7 +32,6 @@ export interface TempParamEntry {
 
 export interface NewsTriggerResult {
   triggerType:     'EMERGENCY' | 'TREND_INFLUENCE' | 'NONE';
-  triggerId?:      number;  // news_trigger_log.id（FK伝搬用）
   newsTitle?:      string;
   newsScore?:      number;
   affectedPairs?:  string[];
@@ -226,7 +225,6 @@ async function saveTempParams(
   expiresInHours: number,
   newsTitle: string,
   newsScore: number,
-  triggerId?: number,
 ): Promise<string[]> {
   const now = new Date();
   const expiresAt = new Date(now.getTime() + expiresInHours * 60 * 60 * 1000).toISOString();
@@ -238,8 +236,8 @@ async function saveTempParams(
         `INSERT INTO news_temp_params
            (pair, event_type, rsi_oversold, rsi_overbought, adx_min,
             atr_tp_multiplier, atr_sl_multiplier, vix_max,
-            reason, news_title, news_score, expires_at, applied_by, created_at, trigger_id)
-         VALUES (?, 'TREND_INFLUENCE', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'AI_NEWS_v1', ?, ?)`
+            reason, news_title, news_score, expires_at, applied_by, created_at)
+         VALUES (?, 'TREND_INFLUENCE', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'AI_NEWS_v1', ?)`
       )
       .bind(
         e.pair,
@@ -254,7 +252,6 @@ async function saveTempParams(
         newsScore,
         expiresAt,
         now.toISOString(),
-        triggerId ?? null,
       )
       .run();
     appliedPairs.push(e.pair);
@@ -320,7 +317,7 @@ export async function getActiveTempParams(
 /**
  * 新着採用ニュースを検査し、緊急/トレンドに応じたアクションを起動する。
  * - EMERGENCY: PATH_B強制発火フラグをmarket_cacheにセット
- * - TREND: GPTで臨時パラメーター生成 → news_temp_paramsに保存
+ * - TREND: Gemini Flashで臨時パラメーター生成 → news_temp_paramsに保存
  * cron 1回につき1記事のみ処理（負荷抑制）
  */
 export async function runNewsTrigger(
@@ -346,46 +343,20 @@ export async function runNewsTrigger(
   if (isEmergency(title, parsedScores)) {
     await setEmergencyForceFlag(db);
 
-    const emergencyLog = await db
+    await db
       .prepare(
-        `INSERT INTO news_trigger_log (trigger_type, news_title, news_score, relevance, sentiment, affected_pairs, detail, created_at)
-         VALUES ('EMERGENCY', ?, ?, ?, ?, NULL, 'PATH_B強制発火フラグセット', ?)
-         RETURNING id`
+        `INSERT INTO news_trigger_log (trigger_type, news_title, news_score, affected_pairs, detail, created_at)
+         VALUES ('EMERGENCY', ?, ?, NULL, 'PATH_B強制発火フラグセット', ?)`
       )
-      .bind(title, row.composite_score, parsedScores.relevance, parsedScores.sentiment, new Date().toISOString())
-      .first<{ id: number }>();
+      .bind(title, row.composite_score, new Date().toISOString())
+      .run();
 
     await insertSystemLog(db, 'INFO', 'NEWS_TRIGGER',
       `緊急ニュース検出 → PATH_B強制発火: ${title.slice(0, 60)}`,
       `score=${row.composite_score} relevance=${parsedScores.relevance} sentiment=${parsedScores.sentiment}`);
 
-    // news_analysisキャッシュにEMERGENCYカードを追記 → UIに緊急バッジとして表示
-    try {
-      const existingRaw = await getCacheValue(db, 'news_analysis');
-      const existing: any[] = existingRaw
-        ? (() => { try { return JSON.parse(existingRaw); } catch { return []; } })()
-        : [];
-      const syntheticEmergency = {
-        index: -1,
-        attention: true,
-        trigger_type: 'EMERGENCY',
-        affected_pairs: [],
-        impact: `緊急: relevance=${parsedScores.relevance} sentiment=${parsedScores.sentiment}`,
-        title_ja: title,
-        pubDate: row.fetched_at,
-        score: row.composite_score != null ? Math.round(row.composite_score * 10) / 10 : null,
-        analyzed_at: new Date().toISOString(),
-        why_chain: [],
-      };
-      const deduplicated = existing.filter((e: any) => e.title_ja !== title);
-      await setCacheValue(db, 'news_analysis', JSON.stringify([syntheticEmergency, ...deduplicated].slice(0, 80)));
-    } catch (e) {
-      console.warn(`[news-trigger] news_analysis EMERGENCY更新失敗: ${String(e).slice(0, 60)}`);
-    }
-
     return {
       triggerType: 'EMERGENCY',
-      triggerId: emergencyLog?.id,
       newsTitle: title,
       newsScore: row.composite_score ?? undefined,
       emergencyForced: true,
@@ -403,52 +374,31 @@ export async function runNewsTrigger(
     const geminiResult = await callGeminiForTempParams(title, row.composite_score ?? 7.5, geminiApiKey);
 
     if (!geminiResult) {
-      // Gemini呼び出し失敗（APIエラー・タイムアウト）— APIキー有効だが呼び出しに失敗
-      const failLog = await db
+      // Gemini Flash呼び出し失敗（APIエラー・タイムアウト）
+      await db
         .prepare(
-          `INSERT INTO news_trigger_log (trigger_type, news_title, news_score, relevance, sentiment, affected_pairs, detail, created_at)
-           VALUES ('TREND_INFLUENCE', ?, ?, ?, ?, NULL, 'Gemini呼び出し失敗', ?)
-           RETURNING id`
+          `INSERT INTO news_trigger_log (trigger_type, news_title, news_score, affected_pairs, detail, created_at)
+           VALUES ('TREND_INFLUENCE', ?, ?, NULL, 'Gemini Flash呼び出し失敗', ?)`
         )
-        .bind(title, row.composite_score, parsedScores.relevance, parsedScores.sentiment, new Date().toISOString())
-        .first<{ id: number }>();
+        .bind(title, row.composite_score, new Date().toISOString())
+        .run();
       await insertSystemLog(db, 'WARN', 'NEWS_TRIGGER',
-        `Gemini呼び出し失敗でTREND_INFLUENCEスキップ: ${title.slice(0, 60)}`,
+        `Gemini Flash呼び出し失敗でTREND_INFLUENCEスキップ: ${title.slice(0, 60)}`,
         `score=${row.composite_score}`);
-      return { triggerType: 'TREND_INFLUENCE', triggerId: failLog?.id, newsTitle: title, emergencyForced: false, affectedPairs: [] };
+      return { triggerType: 'TREND_INFLUENCE', newsTitle: title, emergencyForced: false, affectedPairs: [] };
     }
 
     if (geminiResult.pairs.length === 0) {
-      // Geminiが「影響軽微・変更不要」と判断した場合
-      const noneLog = await db
+      // AIが「影響軽微・変更不要」と判断した場合
+      await db
         .prepare(
-          `INSERT INTO news_trigger_log (trigger_type, news_title, news_score, relevance, sentiment, affected_pairs, detail, created_at)
-           VALUES ('TREND_INFLUENCE', ?, ?, ?, ?, NULL, '影響軽微・パラメーター変更なし', ?)
-           RETURNING id`
+          `INSERT INTO news_trigger_log (trigger_type, news_title, news_score, affected_pairs, detail, created_at)
+           VALUES ('TREND_INFLUENCE', ?, ?, NULL, '影響軽微・パラメーター変更なし', ?)`
         )
-        .bind(title, row.composite_score, parsedScores.relevance, parsedScores.sentiment, new Date().toISOString())
-        .first<{ id: number }>();
-      return { triggerType: 'TREND_INFLUENCE', triggerId: noneLog?.id, newsTitle: title, emergencyForced: false, affectedPairs: [] };
+        .bind(title, row.composite_score, new Date().toISOString())
+        .run();
+      return { triggerType: 'TREND_INFLUENCE', newsTitle: title, emergencyForced: false, affectedPairs: [] };
     }
-
-    const trendLog = await db
-      .prepare(
-        `INSERT INTO news_trigger_log (trigger_type, news_title, news_score, relevance, sentiment, affected_pairs, detail, created_at)
-         VALUES ('TREND_INFLUENCE', ?, ?, ?, ?, ?, ?, ?)
-         RETURNING id`
-      )
-      .bind(
-        title,
-        row.composite_score,
-        parsedScores.relevance,
-        parsedScores.sentiment,
-        geminiResult.pairs.map(p => p.pair).join(','),
-        geminiResult.reason,
-        new Date().toISOString(),
-      )
-      .first<{ id: number }>();
-
-    const triggerId = trendLog?.id;
 
     const appliedPairs = await saveTempParams(
       db,
@@ -457,44 +407,28 @@ export async function runNewsTrigger(
       geminiResult.expiresInHours,
       title,
       row.composite_score ?? 7.5,
-      triggerId,
     );
+
+    await db
+      .prepare(
+        `INSERT INTO news_trigger_log (trigger_type, news_title, news_score, affected_pairs, detail, created_at)
+         VALUES ('TREND_INFLUENCE', ?, ?, ?, ?, ?)`
+      )
+      .bind(
+        title,
+        row.composite_score,
+        appliedPairs.join(','),
+        geminiResult.reason,
+        new Date().toISOString(),
+      )
+      .run();
 
     await insertSystemLog(db, 'INFO', 'NEWS_TRIGGER',
       `トレンドニュース → 臨時パラメーター設定: ${appliedPairs.join(',')}`,
       `${geminiResult.reason.slice(0, 100)} expires=${geminiResult.expiresInHours}h`);
 
-    // news_analysisキャッシュにTREND_INFLUENCE変更カードを追記 → UIニュースタブに表示される
-    try {
-      const existingRaw = await getCacheValue(db, 'news_analysis');
-      const existing: any[] = existingRaw
-        ? (() => { try { return JSON.parse(existingRaw); } catch { return []; } })()
-        : [];
-      const syntheticEntry = {
-        index: -1,
-        attention: true,
-        trigger_type: 'TREND_INFLUENCE',
-        affected_pairs: appliedPairs,
-        impact: geminiResult.reason,
-        title_ja: title,
-        pubDate: row.fetched_at,
-        score: row.composite_score != null ? Math.round(row.composite_score * 10) / 10 : null,
-        param_changed: true,
-        param_expires_hours: geminiResult.expiresInHours,
-        analyzed_at: new Date().toISOString(),
-        triggerReason: geminiResult.reason,
-        why_chain: [],
-      };
-      // 同タイトルの旧エントリーを除去して先頭に挿入
-      const deduplicated = existing.filter((e: any) => e.title_ja !== title);
-      await setCacheValue(db, 'news_analysis', JSON.stringify([syntheticEntry, ...deduplicated].slice(0, 80)));
-    } catch (e) {
-      console.warn(`[news-trigger] news_analysisキャッシュ更新失敗: ${String(e).slice(0, 60)}`);
-    }
-
     return {
       triggerType: 'TREND_INFLUENCE',
-      triggerId,
       newsTitle: title,
       newsScore: row.composite_score ?? undefined,
       affectedPairs: appliedPairs,
