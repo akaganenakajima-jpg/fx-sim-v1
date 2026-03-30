@@ -353,25 +353,22 @@ export default {
     const cron = event.cron;
     switch (cron) {
       case '* * * * *':
-        ctx.waitUntil(run(env));
+        ctx.waitUntil(runCore(env));
+        break;
+      case '*/5 * * * *':
+        ctx.waitUntil(runAnalysis(env));
+        break;
+      case '0 15 * * *':
+        ctx.waitUntil(runDailyAll(env));
         break;
       case '0 21 * * *':
         ctx.waitUntil(runDailyScoring(env));
         break;
       case '0 18 * * 6':
-        ctx.waitUntil(runWeeklyScreeningBatch(env));
-        break;
-      case '5 18 * * 6':
-        ctx.waitUntil(runWeeklyScreeningFinalize(env));
-        break;
-      case '0 * * * *':
-        ctx.waitUntil(runAutoApproval(env));
-        break;
-      case '0 14 * * *':
-        ctx.waitUntil(runResultPnl(env));
+        ctx.waitUntil(runWeeklyScreening(env));
         break;
       default:
-        ctx.waitUntil(run(env));
+        ctx.waitUntil(runCore(env));
     }
   },
 };
@@ -519,11 +516,25 @@ async function fetchMarketData(env: Env, now: Date): Promise<MarketData | null> 
 
   const fallbackPairs: string[] = [];
   const prices = new Map<string, number | null>();
-  for (const [pair, liveRate] of livePrices) {
+  // フォールバック候補を一括収集してバッチ取得（直列→1クエリに最適化）
+  const needFallback: Array<[string, number]> = [];
+  for (let idx = 0; idx < livePrices.length; idx++) {
+    const [pair, liveRate] = livePrices[idx];
     if (liveRate != null) {
       prices.set(pair, liveRate);
     } else {
-      const cached = await getCacheValue(env.DB, `prev_rate_${pair}`);
+      needFallback.push([pair, idx]);
+    }
+  }
+  if (needFallback.length > 0) {
+    const keys = needFallback.map(([pair]) => `prev_rate_${pair}`);
+    const placeholders = keys.map(() => '?').join(',');
+    const rows = await env.DB.prepare(
+      `SELECT key, value FROM market_cache WHERE key IN (${placeholders})`
+    ).bind(...keys).all<{ key: string; value: string }>();
+    const cacheMap = new Map((rows.results ?? []).map(r => [r.key, r.value]));
+    for (const [pair] of needFallback) {
+      const cached = cacheMap.get(`prev_rate_${pair}`);
       if (cached) {
         prices.set(pair, parseFloat(cached));
         fallbackPairs.push(pair);
@@ -692,6 +703,15 @@ async function runPathB(
     } catch { /* キャッシュ破損は無視 */ }
   }
 
+  // 最適化: B1 API呼び出しと og:description 先行取得を並列実行
+  // B1完了前でもニュースURLからog:descriptionを先行取得しておく（上位5件推定）
+  const ogPreFetchPromise = Promise.allSettled(
+    news.slice(0, 5).map(async (item, index) => {
+      const og = await fetchOgDescription((item as any).link ?? '', (item as any).source ?? '');
+      return { index, og };
+    })
+  );
+
   if (!b1CacheHit) {
     try {
       const tB1 = Date.now();
@@ -737,22 +757,33 @@ async function runPathB(
     item.title_ja = src?.title_ja ?? src?.title ?? '';
   }
 
-  // og:description 並列取得（attention上位5件, 英語4ソースはスキップ）
-  const attentionItems = stage1.news_analysis.filter((a: NewsAnalysisItem) => a.attention).slice(0, 5);
-  const ogResults = await Promise.allSettled(
-    attentionItems.map(async (a: NewsAnalysisItem) => {
-      const item = news[a.index];
-      if (!item) return { index: a.index, og: null };
-      const og = await fetchOgDescription((item as any).link ?? '', (item as any).source ?? '');
-      return { index: a.index, og };
-    })
-  );
-  // og_description を news_analysis に付与
-  for (const r of ogResults) {
+  // og:description: 先行取得結果を回収し、attentionニュースに付与
+  const ogPreResults = await ogPreFetchPromise;
+  const ogMap = new Map<number, string>();
+  for (const r of ogPreResults) {
     if (r.status === 'fulfilled' && r.value.og) {
-      const target = stage1.news_analysis.find((a: NewsAnalysisItem) => a.index === r.value.index);
-      if (target) target.og_description = r.value.og;
+      ogMap.set(r.value.index, r.value.og);
     }
+  }
+  // attention上位5件にog:descriptionを付与（先行取得でカバーできなかった分は追加取得）
+  const attentionItems = stage1.news_analysis.filter((a: NewsAnalysisItem) => a.attention).slice(0, 5);
+  const ogMissing = attentionItems.filter(a => !ogMap.has(a.index));
+  if (ogMissing.length > 0) {
+    const extraOg = await Promise.allSettled(
+      ogMissing.map(async (a: NewsAnalysisItem) => {
+        const item = news[a.index];
+        if (!item) return { index: a.index, og: null };
+        const og = await fetchOgDescription((item as any).link ?? '', (item as any).source ?? '');
+        return { index: a.index, og };
+      })
+    );
+    for (const r of extraOg) {
+      if (r.status === 'fulfilled' && r.value.og) ogMap.set(r.value.index, r.value.og);
+    }
+  }
+  for (const a of attentionItems) {
+    const og = ogMap.get(a.index);
+    if (og) a.og_description = og;
   }
 
   // 週末クローズガード: B1キャッシュヒット時でも取引可能銘柄のみにフィルタ
@@ -806,8 +837,12 @@ async function runPathB(
   // サーキットブレーカー: 連続5回失敗→30分クールダウン
   const B2_CB_THRESHOLD = 5;
   const B2_CB_COOLDOWN_MS = 30 * 60 * 1000; // 30分
-  const b2PrevFails = parseInt(await getCacheValue(env.DB, 'b2_consecutive_fails').catch(() => '0') ?? '0');
-  const b2CbUntil = await getCacheValue(env.DB, 'b2_circuit_breaker_until').catch(() => null);
+  // 最適化: 2つのキャッシュ値を並列取得
+  const [b2PrevFailsRaw, b2CbUntil] = await Promise.all([
+    getCacheValue(env.DB, 'b2_consecutive_fails').catch(() => '0'),
+    getCacheValue(env.DB, 'b2_circuit_breaker_until').catch(() => null),
+  ]);
+  const b2PrevFails = parseInt(b2PrevFailsRaw ?? '0');
   const b2CbActive = b2CbUntil ? new Date(b2CbUntil) > new Date() : false;
 
   if (b2CbActive) {
@@ -931,10 +966,11 @@ async function runPathB(
   return { decisions, reversals, newsAnalysis: stage1.news_analysis };
 }
 
-async function run(env: Env): Promise<void> {
+// ── runCore: 毎分実行（価格取得・TP/SL・Logic・週末処理）──
+async function runCore(env: Env): Promise<void> {
   const now = new Date();
   const cronStart = Date.now();
-  console.log(`[fx-sim] cron start ${now.toISOString()}`);
+  console.log(`[fx-sim] core start ${now.toISOString()}`);
 
   try {
     // スキーママイグレーション（バージョン管理方式）
@@ -1094,41 +1130,47 @@ async function run(env: Env): Promise<void> {
       TRADING_ENABLED: env.TRADING_ENABLED,
     };
 
-    // テスタ施策12: 経済指標カレンダーチェック
-    let economicEventGuard = { highImpactNearby: false, mediumImpactNearby: false, events: [] as import('./calendar').EconomicEvent[] };
-    try {
-      const calendarEvents = await fetchEconomicCalendar(env.DB, env.FINNHUB_API_KEY);
-      if (calendarEvents.length > 0) {
-        economicEventGuard = getUpcomingHighImpactEvents(calendarEvents, now);
-        if (economicEventGuard.highImpactNearby) {
-          console.log(`[fx-sim] 📅 S級イベント接近 — 新規エントリー強制HOLD`);
-          await insertSystemLog(env.DB, 'INFO', 'CALENDAR',
-            'S級イベント接近: 新規エントリー停止',
-            JSON.stringify(economicEventGuard.events.slice(0, 3).map(e => e.event)));
+    // ── 並列実行ブロック: Calendar + TP/SL + 孤立チェック ──
+    // これらは相互依存がないため同時実行してwall-clock時間を短縮
+    const t1 = Date.now();
+    const [calendarResult, _tpSlResult, _orphanResult] = await Promise.allSettled([
+      // テスタ施策12: 経済指標カレンダーチェック
+      (async () => {
+        const calendarEvents = await fetchEconomicCalendar(env.DB, env.FINNHUB_API_KEY);
+        if (calendarEvents.length > 0) {
+          return getUpcomingHighImpactEvents(calendarEvents, now);
         }
-      }
-    } catch { /* カレンダー失敗は無視 */ }
+        return null;
+      })(),
+      // 2. 全銘柄のTP/SLを一括チェック
+      checkAndCloseAllPositions(env.DB, prices, INSTRUMENTS, brokerEnv, getWebhookUrl(env)),
+      // 1.9 除外銘柄の孤立ポジション自動キャンセル
+      (async () => {
+        const activePairs = new Set(INSTRUMENTS.map(i => i.pair));
+        const openPositions = await getOpenPositions(env.DB);
+        const orphaned = openPositions.filter(p => !activePairs.has(p.pair));
+        for (const p of orphaned) {
+          console.warn(`[fx-sim] ⚠️ 孤立ポジション検出: ${p.pair} id=${p.id} — 銘柄除外済みのため pnl=0 でキャンセル`);
+          await closePosition(env.DB, p.id, p.entry_rate, 'DELISTED', 0, 0);
+          await insertSystemLog(env.DB, 'WARN', 'POSITION',
+            `孤立ポジションキャンセル: ${p.pair} id=${p.id} (銘柄除外済み)`,
+            JSON.stringify({ pair: p.pair, direction: p.direction, entry_rate: p.entry_rate }));
+        }
+      })(),
+    ]);
+    const tpSlMs = Date.now() - t1;
 
-    // 1.9 除外銘柄の孤立ポジション自動キャンセル
-    // instruments.ts から除外された銘柄の OPEN ポジションが残っていると、
-    // pnlMultiplier 不明で誤った損益計算が発生するため、即座にキャンセルする
-    {
-      const activePairs = new Set(INSTRUMENTS.map(i => i.pair));
-      const openPositions = await getOpenPositions(env.DB);
-      const orphaned = openPositions.filter(p => !activePairs.has(p.pair));
-      for (const p of orphaned) {
-        console.warn(`[fx-sim] ⚠️ 孤立ポジション検出: ${p.pair} id=${p.id} — 銘柄除外済みのため pnl=0 でキャンセル`);
-        await closePosition(env.DB, p.id, p.entry_rate, 'DELISTED', 0, 0);
-        await insertSystemLog(env.DB, 'WARN', 'POSITION',
-          `孤立ポジションキャンセル: ${p.pair} id=${p.id} (銘柄除外済み)`,
-          JSON.stringify({ pair: p.pair, direction: p.direction, entry_rate: p.entry_rate }));
+    // Calendar 結果を適用
+    let economicEventGuard = { highImpactNearby: false, mediumImpactNearby: false, events: [] as import('./calendar').EconomicEvent[] };
+    if (calendarResult.status === 'fulfilled' && calendarResult.value) {
+      economicEventGuard = calendarResult.value;
+      if (economicEventGuard.highImpactNearby) {
+        console.log(`[fx-sim] 📅 S級イベント接近 — 新規エントリー強制HOLD`);
+        await insertSystemLog(env.DB, 'INFO', 'CALENDAR',
+          'S級イベント接近: 新規エントリー停止',
+          JSON.stringify(economicEventGuard.events.slice(0, 3).map(e => e.event)));
       }
     }
-
-    // 2. 全銘柄のTP/SLを一括チェック（OANDA実弾ポジションはブローカー経由でクローズ）
-    const t1 = Date.now();
-    await checkAndCloseAllPositions(env.DB, prices, INSTRUMENTS, brokerEnv, getWebhookUrl(env));
-    const tpSlMs = Date.now() - t1;
     await insertSystemLog(env.DB, 'INFO', 'FLOW', 'TPSL完了', JSON.stringify({ ms: tpSlMs }));
 
     // 2.5 週末ウィンドダウン処理
@@ -1162,10 +1204,9 @@ async function run(env: Env): Promise<void> {
       // Phase 3 では非クリプトの新規分析は不要 → cryptoOnlyMode で継続
     }
 
-    // 2.7 ロジックトレーディング（Ph.3: AIを呼ばない定量エントリー）
-    // TP/SLチェック後・Path B/A前に実行 → ロジックポジションがOPEN枠に先に入る
-    // Weekend Phase 2以降は新規エントリー禁止（Logic内部でもガードあるが、呼び出し自体をスキップ）
-    if (!cryptoOnlyMode && !economicEventGuard.highImpactNearby && weekendStatus.phase < 2 && weekendStatus.phase > -2) {
+    // 2.7 ロジックトレーディング（AIを呼ばない定量エントリー）
+    if (!cryptoOnlyMode && !economicEventGuard.highImpactNearby
+        && weekendStatus.phase < 2 && weekendStatus.phase > -2) {
       try {
         const tLogic = Date.now();
         const logicResult = await runLogicDecisions(env.DB, prices, indicators, brokerEnv, now);
@@ -1175,12 +1216,76 @@ async function run(env: Env): Promise<void> {
             JSON.stringify({ ms: Date.now() - tLogic, entered: logicResult.entered }));
         }
       } catch (e) {
-        // ロジックトレーディング失敗はAIパスをブロックしない
         console.warn(`[fx-sim] runLogicDecisions error: ${String(e).slice(0, 100)}`);
       }
     }
 
-    // 2.8 Ph.5: ニューストリガー（緊急→PATH_B強制 / トレンド→臨時パラメーター）
+    // runCore 共通データをキャッシュ経由で runAnalysis に渡す
+    // news / indicators / prices を market_cache に保存（runAnalysis が読み出す）
+    const coreData = {
+      news: news.map(n => ({ title: n.title, title_ja: n.title_ja, description: n.description, desc_ja: n.desc_ja, pubDate: n.pubDate, source: (n as any).source, link: (n as any).link, composite_score: (n as any).composite_score })),
+      indicators,
+      prices: [...prices.entries()],
+      weekendContext,
+      cryptoOnlyMode,
+      activeNewsSources,
+      fetchMs,
+      tpSlMs,
+    };
+    await setCacheValue(env.DB, 'core_shared_data', JSON.stringify(coreData));
+
+    // 毎cronパージ（system_logs ≤1000件維持）
+    try {
+      await env.DB.prepare(`DELETE FROM system_logs WHERE id NOT IN (SELECT id FROM system_logs ORDER BY id DESC LIMIT 1000)`).run();
+      await env.DB.prepare(`DELETE FROM market_cache WHERE key LIKE 'news_haiku_%' AND updated_at < datetime('now', '-2 hours')`).run();
+    } catch {}
+
+    const coreMs = Date.now() - cronStart;
+    console.log(`[fx-sim] core done in ${coreMs}ms (fetch=${fetchMs}ms tpsl=${tpSlMs}ms)`);
+
+  } catch (e) {
+    console.error('[fx-sim] core unhandled error:', e);
+    await sendNotification(
+      getWebhookUrl(env),
+      `🔴 [fx-sim] core エラー: ${String(e).slice(0, 200)}`,
+    );
+    try {
+      await insertSystemLog(env.DB, 'ERROR', 'CRON', 'core 予期しないエラー', String(e).slice(0, 300));
+    } catch {}
+  }
+}
+
+// ── runAnalysis: 5分ごと実行（Path B・Breakout・SPRT・ParamReview・AutoApproval）──
+async function runAnalysis(env: Env): Promise<void> {
+  const now = new Date();
+  const cronStart = Date.now();
+  console.log(`[fx-sim] analysis start ${now.toISOString()}`);
+
+  try {
+    // runCore が保存した共通データを読み出す
+    const coreRaw = await getCacheValue(env.DB, 'core_shared_data');
+    if (!coreRaw) {
+      console.warn('[fx-sim] analysis: core_shared_data なし → スキップ');
+      return;
+    }
+    const coreData = JSON.parse(coreRaw) as {
+      news: any[];
+      indicators: Awaited<ReturnType<typeof getMarketIndicators>>;
+      prices: [string, number | null][];
+      weekendContext: string;
+      cryptoOnlyMode: boolean;
+      activeNewsSources: string;
+      fetchMs: number;
+      tpSlMs: number;
+    };
+    const news = coreData.news;
+    const indicators = coreData.indicators;
+    const prices = new Map<string, number | null>(coreData.prices);
+    const weekendContext = coreData.weekendContext;
+    const fetchMs = coreData.fetchMs;
+    const tpSlMs = coreData.tpSlMs;
+
+    // 2.8 ニューストリガー（緊急→PATH_B強制）
     try {
       const triggerResult = await runNewsTrigger(env.DB, env.OPENAI_API_KEY);
       if (triggerResult.triggerType !== 'NONE') {
@@ -1191,21 +1296,20 @@ async function run(env: Env): Promise<void> {
     }
 
     // 3. 共有ニュースストア構築 + Path B 実行（計測開始）
+    // 最適化: prevNewsHash / lastPathBAt / openPairs / emergencyForce を並列取得
     const t2 = Date.now();
-    const prevNewsHashRaw = await getCacheValue(env.DB, PREV_NEWS_HASH_KEY);
     const currentNewsHash = newsHash(news);
+    const [prevNewsHashRaw, allOpenRawForPathB, lastPathBRaw, emergencyForce] = await Promise.all([
+      getCacheValue(env.DB, PREV_NEWS_HASH_KEY),
+      env.DB.prepare(`SELECT pair FROM positions WHERE status = 'OPEN'`).all<{ pair: string }>(),
+      getCacheValue(env.DB, 'last_path_b_at'),
+      consumeEmergencyForceFlag(env.DB),
+    ]);
     const hasChanged = currentNewsHash !== (prevNewsHashRaw ?? '');
     await setCacheValue(env.DB, PREV_NEWS_HASH_KEY, currentNewsHash);
 
     const sharedNewsStore: SharedNewsStore = { items: news, hash: currentNewsHash, hasChanged };
-
-
-    /* DEPRECATED_v2: newsAnalysisRan / hasAttentionNews ロジック → runPathB() に置換
-    let newsAnalysisRan = false;
-    ...
-    let hasAttentionNews = false;
-    ...
-    */
+    const openPairsForPathB = new Set((allOpenRawForPathB.results ?? []).map(p => p.pair));
 
     // news_summary: JSON形式で保存（titleのみ、切り詰めなし）
     const newsSummary = news.length > 0
@@ -1214,21 +1318,13 @@ async function run(env: Env): Promise<void> {
         })))
       : null;
 
-    // Path B 実行（ニュースハッシュ変化時のみ）
-    const allOpenRawForPathB = await env.DB
-      .prepare(`SELECT pair FROM positions WHERE status = 'OPEN'`)
-      .all<{ pair: string }>();
-    const openPairsForPathB = new Set((allOpenRawForPathB.results ?? []).map(p => p.pair));
-
     let pathBResult: PathBResult = { decisions: [], reversals: [], newsAnalysis: [] };
     let pathBMs = 0; // Path B 実行時間（AI呼び出し含む）
 
     // Path B 最小間隔チェック（5分）— 需要削減で429を構造的に防止
     // 緊急ニューストリガーがあれば間隔を無視して強制発火
     const PATH_B_MIN_INTERVAL_MS = 5 * 60 * 1000;
-    const lastPathBRaw = await getCacheValue(env.DB, 'last_path_b_at');
     const lastPathBAt = lastPathBRaw ? parseInt(lastPathBRaw) : 0;
-    const emergencyForce = await consumeEmergencyForceFlag(env.DB);
     const pathBIntervalOk = emergencyForce || (Date.now() - lastPathBAt) >= PATH_B_MIN_INTERVAL_MS;
 
     if (emergencyForce) {
@@ -1240,25 +1336,40 @@ async function run(env: Env): Promise<void> {
 
     // 施策17: ブレイクアウト検知（ログ記録）
     // candles.tsのキャッシュにcandles[]が含まれている場合のみ動作
-    for (const instr of INSTRUMENTS) {
-      if (openPairsForPathB.has(instr.pair)) continue;
-      const currentRate = prices.get(instr.pair);
-      if (!currentRate) continue;
-      const candleKey = `candle_${(instr as any).oandaSymbol ?? instr.pair.replace('/', '_')}_H1`;
-      const cacheRaw = await getCacheValue(env.DB, candleKey).catch(() => null);
-      if (!cacheRaw) continue;
-      try {
-        const cached = JSON.parse(cacheRaw) as { indicators?: Record<string, unknown>; candles?: unknown[] };
-        if (!cached.candles || cached.candles.length < 20 || !cached.indicators) continue;
-        const bk = detectBreakout(cached.candles as any, cached.indicators as any, currentRate);
-        if (bk.detected && bk.genuine && bk.confidence >= 70) {
-          console.log(`[fx-sim] BREAKOUT ${instr.pair} ${bk.type} conf=${bk.confidence}%`);
-          void insertSystemLog(env.DB, 'INFO', 'BREAKOUT',
-            `ブレイクアウト検知: ${instr.pair} ${bk.type} conf=${bk.confidence}%`,
-            JSON.stringify({ rangeHigh: bk.rangeHigh, rangeLow: bk.rangeLow, rate: currentRate })
-          ).catch(() => {});
+    // 最適化: 51銘柄の直列getCacheValueを1回のバッチクエリに統合
+    {
+      const breakoutTargets = INSTRUMENTS.filter(i =>
+        !openPairsForPathB.has(i.pair) && prices.get(i.pair) != null
+      );
+      if (breakoutTargets.length > 0) {
+        const candleKeys = breakoutTargets.map(i =>
+          `candle_${(i as any).oandaSymbol ?? i.pair.replace('/', '_')}_H1`
+        );
+        const placeholders = candleKeys.map(() => '?').join(',');
+        const rows = await env.DB.prepare(
+          `SELECT key, value FROM market_cache WHERE key IN (${placeholders})`
+        ).bind(...candleKeys).all<{ key: string; value: string }>();
+        const candleCache = new Map((rows.results ?? []).map(r => [r.key, r.value]));
+
+        for (let idx = 0; idx < breakoutTargets.length; idx++) {
+          const instr = breakoutTargets[idx];
+          const currentRate = prices.get(instr.pair)!;
+          const cacheRaw = candleCache.get(candleKeys[idx]);
+          if (!cacheRaw) continue;
+          try {
+            const cached = JSON.parse(cacheRaw) as { indicators?: Record<string, unknown>; candles?: unknown[] };
+            if (!cached.candles || cached.candles.length < 20 || !cached.indicators) continue;
+            const bk = detectBreakout(cached.candles as any, cached.indicators as any, currentRate);
+            if (bk.detected && bk.genuine && bk.confidence >= 70) {
+              console.log(`[fx-sim] BREAKOUT ${instr.pair} ${bk.type} conf=${bk.confidence}%`);
+              void insertSystemLog(env.DB, 'INFO', 'BREAKOUT',
+                `ブレイクアウト検知: ${instr.pair} ${bk.type} conf=${bk.confidence}%`,
+                JSON.stringify({ rangeHigh: bk.rangeHigh, rangeLow: bk.rangeLow, rate: currentRate })
+              ).catch(() => {});
+            }
+          } catch { /* キャッシュ破損無視 */ }
         }
-      } catch { /* キャッシュ破損無視 */ }
+      }
     }
 
     if (sharedNewsStore.hasChanged && !pathBIntervalOk) {
@@ -1545,21 +1656,16 @@ async function run(env: Env): Promise<void> {
     newsMs = Date.now() - t2;
 
     const totalMs = Date.now() - cronStart;
-    console.log(`[fx-sim] timings: fetch=${fetchMs}ms tpsl=${tpSlMs}ms news=${newsMs}ms total=${totalMs}ms`);
+    console.log(`[fx-sim] analysis timings: news=${newsMs}ms pathB=${pathBMs}ms total=${totalMs}ms`);
 
-    console.log(`[fx-sim] cron done in ${totalMs}ms`);
-
-    // T014: SPRT 評価（毎分・差分のみ・DB専用で軽量 ~5ms）
-    // 時間制約なし — API 呼び出しなし、新規 CLOSED がない場合は即リターン
+    // T014: SPRT 評価（DB専用で軽量 ~5ms）
     try {
       await evaluateRecoveryIfNeeded(env.DB);
     } catch (e) {
       console.warn(`[fx-sim] evaluateRecoveryIfNeeded error: ${String(e).slice(0, 80)}`);
     }
 
-    // Ph.4: パラメーターレビュー（PATH_A完了後・1銘柄のみ）
-    // Tier D銘柄はlot×0.1で実質除外済み → PARAM_REVIEW対象外（429防止）
-    // T012修正: ゲートを 15s → 25s に緩和（SPRT独立化で余裕ができたため）
+    // パラメーターレビュー（1銘柄のみ、時間予算内で実行）
     let paramReviewMs = 0;
     if (totalMs <= 25000) {
       try {
@@ -1573,45 +1679,37 @@ async function run(env: Env): Promise<void> {
       } catch (e) {
         console.warn(`[fx-sim] runParamReview error: ${String(e).slice(0, 100)}`);
       }
-    } else {
-      console.log(`[fx-sim] PARAM_REVIEW: スキップ（totalMs=${totalMs}ms > 25s）`);
     }
 
-    // 実行時間計測（wall-clock: I/O待ち含む。Cloudflare paid plan limit = 15min）
+    // AutoApproval（毎時0分台のみ）
+    if (now.getUTCMinutes() < 5) {
+      try {
+        await autoApprove(env.DB);
+      } catch (e) {
+        console.warn(`[fx-sim] autoApprove error: ${String(e).slice(0, 80)}`);
+      }
+    }
+
+    // 実行時間計測
     const grandTotal = totalMs + paramReviewMs;
     const timingsWithParam = { fetchMs, tpSlMs, newsMs, pathBMs, paramReviewMs, grandTotalMs: grandTotal };
     await setCacheValue(env.DB, 'cron_phase_timings', JSON.stringify(timingsWithParam));
-    // Cloudflare Workers はI/O待ち（fetch/D1）がCPU時間にカウントされないため
-    // wall clock 60秒を超えた場合のみWARN（実CPU時間は通常5〜10秒以内）
     if (grandTotal > 60000) {
       await insertSystemLog(env.DB, 'WARN', 'CRON',
-        `実行時間超過: ${grandTotal}ms`,
-        JSON.stringify({ fetchMs, tpSlMs, newsMs, pathBMs, paramReviewMs }));
+        `analysis実行時間超過: ${grandTotal}ms`,
+        JSON.stringify(timingsWithParam));
     }
 
-    // 毎cronパージ（system_logs ≤1000件維持）
-    // cron実行が107-140秒かかり複数並列実行が重なるため、毎回パージが必要
-    try {
-      await env.DB.prepare(`DELETE FROM system_logs WHERE id NOT IN (SELECT id FROM system_logs ORDER BY id DESC LIMIT 1000)`).run();
-      // news_haiku_* キャッシュパージ（2時間以上前のものを削除 → 30分TTLに対して余裕あり）
-      await env.DB.prepare(`DELETE FROM market_cache WHERE key LIKE 'news_haiku_%' AND updated_at < datetime('now', '-2 hours')`).run();
-    } catch {}
-
-    // 日次処理（JST 0:00 = UTC 15:00 に実行）
-    const jstHour = (now.getUTCHours() + 9) % 24;
-    if (jstHour === 0 && now.getUTCMinutes() === 0) {
-      await runDailyTasks(env, now);
-    }
+    console.log(`[fx-sim] analysis done in ${grandTotal}ms`);
 
   } catch (e) {
-    console.error('[fx-sim] unhandled error:', e);
-    // cron エラー通知
+    console.error('[fx-sim] analysis unhandled error:', e);
     await sendNotification(
       getWebhookUrl(env),
-      `🔴 [fx-sim] cron エラー: ${String(e).slice(0, 200)}`,
+      `🔴 [fx-sim] analysis エラー: ${String(e).slice(0, 200)}`,
     );
     try {
-      await insertSystemLog(env.DB, 'ERROR', 'CRON', '予期しないエラー', String(e).slice(0, 300));
+      await insertSystemLog(env.DB, 'ERROR', 'CRON', 'analysis 予期しないエラー', String(e).slice(0, 300));
     } catch {}
   }
 }
@@ -2095,10 +2193,12 @@ async function runDailyScoring(env: Env): Promise<void> {
 }
 
 /** 週次スクリーニング①: 全上場銘柄の財務サマリ取得（日曜03:00 JST） */
-async function runWeeklyScreeningBatch(env: Env): Promise<void> {
+/** 週次スクリーニング統合: Batch → Finalize を1回のcronで実行（土曜 UTC18:00） */
+async function runWeeklyScreening(env: Env): Promise<void> {
   if (!env.JQUANTS_REFRESH_TOKEN) return;
-  console.log('[weekly-screening-1] Start');
+  console.log('[weekly-screening] Start (batch + finalize)');
 
+  // Step 1: 全上場銘柄取得 + 時価総額フィルタ
   let pageToken: string | undefined;
   const allCandidates: Array<{ symbol: string; marketCap: number | null; sector: string | null }> = [];
   let page = 0;
@@ -2111,7 +2211,6 @@ async function runWeeklyScreeningBatch(env: Env): Promise<void> {
     page++;
   } while (pageToken && page < MAX_PAGES);
 
-  // 時価総額フィルタ: 50億〜5000億円（百万円単位: 5000〜500000）
   const filtered = allCandidates.filter(c =>
     c.marketCap !== null && c.marketCap >= 5000 && c.marketCap <= 500000
   );
@@ -2124,37 +2223,30 @@ async function runWeeklyScreeningBatch(env: Env): Promise<void> {
     new Date().toISOString()
   ).run();
 
-  console.log(`[weekly-screening-1] Done. ${allCandidates.length} total, ${filtered.length} filtered`);
-}
+  console.log(`[weekly-screening] Batch: ${allCandidates.length} total, ${filtered.length} filtered`);
 
-/** 週次スクリーニング②: 候補50銘柄確定（日曜03:05 JST） */
-async function runWeeklyScreeningFinalize(env: Env): Promise<void> {
-  if (!env.JQUANTS_REFRESH_TOKEN) return;
-  console.log('[weekly-screening-2] Start');
-
-  const cached = await env.DB.prepare(
-    "SELECT value FROM market_cache WHERE key = 'weekly_screening_candidates'"
-  ).first<{ value: string }>();
-
-  if (!cached) {
-    console.warn('[weekly-screening-2] No candidates from step 1');
-    return;
-  }
-
-  const candidates = JSON.parse(cached.value) as Array<{ symbol: string }>;
-  const top100 = candidates.slice(0, 100).map(c => c.symbol);
+  // Step 2: ファンダメンタルズ取得（旧 Finalize — Batch 直後に await で実行するため5分待ち不要）
+  const top100 = filtered.slice(0, 100).map(c => c.symbol);
   const fundaData = await fetchFundamentals(env.DB, env.JQUANTS_REFRESH_TOKEN, top100);
   await saveFundamentals(env.DB, fundaData);
 
-  console.log(`[weekly-screening-2] Done. Fetched fundamentals for ${fundaData.length} candidates`);
+  console.log(`[weekly-screening] Finalize: ${fundaData.length} candidates — Done`);
 }
 
-/** 自動承認チェック: 毎時 */
-async function runAutoApproval(env: Env): Promise<void> {
-  await autoApprove(env.DB);
-}
+/** 日次統合タスク: ResultPnl + DailyTasks（UTC15:00 = JST0:00） */
+async function runDailyAll(env: Env): Promise<void> {
+  const now = new Date();
+  console.log('[daily-all] Start');
 
-/** 結果PnL記録: JST 23:00 */
-async function runResultPnl(env: Env): Promise<void> {
-  await recordResultPnl(env.DB);
+  // ResultPnl（旧 0 14 * * * を統合）
+  try {
+    await recordResultPnl(env.DB);
+  } catch (e) {
+    console.warn(`[daily-all] recordResultPnl error: ${String(e).slice(0, 100)}`);
+  }
+
+  // DailyTasks（旧 run() 内の JST 0:00 処理を独立化）
+  await runDailyTasks(env, now);
+
+  console.log('[daily-all] Done');
 }
