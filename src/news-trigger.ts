@@ -345,10 +345,10 @@ export async function runNewsTrigger(
 
     await db
       .prepare(
-        `INSERT INTO news_trigger_log (trigger_type, news_title, news_score, affected_pairs, detail, created_at)
-         VALUES ('EMERGENCY', ?, ?, NULL, 'PATH_B強制発火フラグセット', ?)`
+        `INSERT INTO news_trigger_log (trigger_type, news_title, news_score, relevance, sentiment, affected_pairs, detail, created_at)
+         VALUES ('EMERGENCY', ?, ?, ?, ?, NULL, 'PATH_B強制発火フラグセット', ?)`
       )
-      .bind(title, row.composite_score, new Date().toISOString())
+      .bind(title, row.composite_score, parsedScores.relevance, parsedScores.sentiment, new Date().toISOString())
       .run();
 
     await insertSystemLog(db, 'INFO', 'NEWS_TRIGGER',
@@ -377,10 +377,10 @@ export async function runNewsTrigger(
       // Gemini Flash呼び出し失敗（APIエラー・タイムアウト）
       await db
         .prepare(
-          `INSERT INTO news_trigger_log (trigger_type, news_title, news_score, affected_pairs, detail, created_at)
-           VALUES ('TREND_INFLUENCE', ?, ?, NULL, 'Gemini Flash呼び出し失敗', ?)`
+          `INSERT INTO news_trigger_log (trigger_type, news_title, news_score, relevance, sentiment, affected_pairs, detail, created_at)
+           VALUES ('TREND_INFLUENCE', ?, ?, ?, ?, NULL, 'Gemini Flash呼び出し失敗', ?)`
         )
-        .bind(title, row.composite_score, new Date().toISOString())
+        .bind(title, row.composite_score, parsedScores.relevance, parsedScores.sentiment, new Date().toISOString())
         .run();
       await insertSystemLog(db, 'WARN', 'NEWS_TRIGGER',
         `Gemini Flash呼び出し失敗でTREND_INFLUENCEスキップ: ${title.slice(0, 60)}`,
@@ -392,10 +392,10 @@ export async function runNewsTrigger(
       // AIが「影響軽微・変更不要」と判断した場合
       await db
         .prepare(
-          `INSERT INTO news_trigger_log (trigger_type, news_title, news_score, affected_pairs, detail, created_at)
-           VALUES ('TREND_INFLUENCE', ?, ?, NULL, '影響軽微・パラメーター変更なし', ?)`
+          `INSERT INTO news_trigger_log (trigger_type, news_title, news_score, relevance, sentiment, affected_pairs, detail, created_at)
+           VALUES ('TREND_INFLUENCE', ?, ?, ?, ?, NULL, '影響軽微・パラメーター変更なし', ?)`
         )
-        .bind(title, row.composite_score, new Date().toISOString())
+        .bind(title, row.composite_score, parsedScores.relevance, parsedScores.sentiment, new Date().toISOString())
         .run();
       return { triggerType: 'TREND_INFLUENCE', newsTitle: title, emergencyForced: false, affectedPairs: [] };
     }
@@ -411,12 +411,14 @@ export async function runNewsTrigger(
 
     await db
       .prepare(
-        `INSERT INTO news_trigger_log (trigger_type, news_title, news_score, affected_pairs, detail, created_at)
-         VALUES ('TREND_INFLUENCE', ?, ?, ?, ?, ?)`
+        `INSERT INTO news_trigger_log (trigger_type, news_title, news_score, relevance, sentiment, affected_pairs, detail, created_at)
+         VALUES ('TREND_INFLUENCE', ?, ?, ?, ?, ?, ?, ?)`
       )
       .bind(
         title,
         row.composite_score,
+        parsedScores.relevance,
+        parsedScores.sentiment,
         appliedPairs.join(','),
         geminiResult.reason,
         new Date().toISOString(),

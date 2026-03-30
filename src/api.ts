@@ -298,6 +298,8 @@ export interface StatusResponse {
     trigger_type: string;
     news_title: string;
     news_score: number;
+    relevance: number | null;
+    sentiment: number | null;
     created_at: string;
   }>;
   /** 全銘柄定義（instruments.tsから動的生成） */
@@ -693,10 +695,10 @@ export async function getApiStatus(db: D1Database, tradingEnv?: { TRADING_ENABLE
   let newsTriggers: StatusResponse['newsTriggers'] = [];
   try {
     const ntRaw = await db.prepare(
-      `SELECT trigger_type, news_title, news_score, created_at FROM news_trigger_log
+      `SELECT trigger_type, news_title, news_score, relevance, sentiment, created_at FROM news_trigger_log
        WHERE created_at > datetime('now', '-12 hours')
        ORDER BY created_at DESC LIMIT 10`
-    ).all<{ trigger_type: string; news_title: string; news_score: number; created_at: string }>();
+    ).all<{ trigger_type: string; news_title: string; news_score: number; relevance: number | null; sentiment: number | null; created_at: string }>();
     newsTriggers = ntRaw.results ?? [];
   } catch { /* テーブル未存在 */ }
 
@@ -817,13 +819,13 @@ async function buildCausalSummary(db: D1Database): Promise<CausalSummary | null>
     ).first<{ vix: number | null; nikkei: number | null; sp500: number | null }>();
 
     // 3. 直近のニューストリガー
-    let newsTriggers: Array<{ trigger_type: string; news_title: string; news_score: number; created_at: string }> = [];
+    let newsTriggers: Array<{ trigger_type: string; news_title: string; news_score: number; relevance: number | null; sentiment: number | null; created_at: string }> = [];
     try {
       const ntRaw = await db.prepare(
-        `SELECT trigger_type, news_title, news_score, created_at FROM news_trigger_log
+        `SELECT trigger_type, news_title, news_score, relevance, sentiment, created_at FROM news_trigger_log
          WHERE created_at > datetime('now', '-12 hours')
          ORDER BY created_at DESC LIMIT 5`
-      ).all<{ trigger_type: string; news_title: string; news_score: number; created_at: string }>();
+      ).all<{ trigger_type: string; news_title: string; news_score: number; relevance: number | null; sentiment: number | null; created_at: string }>();
       newsTriggers = ntRaw.results ?? [];
     } catch { /* テーブル未存在 */ }
 

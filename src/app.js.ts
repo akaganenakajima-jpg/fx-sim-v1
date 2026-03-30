@@ -924,10 +924,12 @@ export const JS = `
     // news_trigger_log からタイトル→trigger_type のルックアップマップを構築
     var triggerMap = {};
     var triggerScoreMap = {};
+    var triggerDetailMap = {};
     triggers.forEach(function(t) {
       if (t.news_title) {
         triggerMap[t.news_title] = t.trigger_type;
         if (t.news_score) triggerScoreMap[t.news_title] = t.news_score;
+        triggerDetailMap[t.news_title] = { relevance: t.relevance, sentiment: t.sentiment, composite: t.news_score };
       }
     });
 
@@ -936,12 +938,16 @@ export const JS = `
     analysis.forEach(function(a) { if (a.title) analysisTitlesSet[a.title] = true; });
     var acceptedAsAnalysis = accepted.filter(function(n) { return !analysisTitlesSet[n.title]; }).map(function(n) {
       var tt = triggerMap[n.title] || triggerMap[n.title_ja] || null;
-      return { title: n.title, title_ja: n.title_ja, desc_ja: n.desc_ja, description: n.desc_ja, attention: true, score: n.score || 0, source: n.source, pubDate: n.pub_date || n.fetched_at, affected_pairs: [], triggerType: tt };
+      var td = triggerDetailMap[n.title] || triggerDetailMap[n.title_ja] || null;
+      return { title: n.title, title_ja: n.title_ja, desc_ja: n.desc_ja, description: n.desc_ja, attention: true, score: n.score || 0, source: n.source, pubDate: n.pub_date || n.fetched_at, affected_pairs: [], triggerType: tt, triggerDetail: td };
     });
     // analysisにもtriggerTypeを付与
     analysis.forEach(function(a) {
       if (!a.triggerType) {
         a.triggerType = triggerMap[a.title] || triggerMap[a.title_ja] || null;
+      }
+      if (!a.triggerDetail) {
+        a.triggerDetail = triggerDetailMap[a.title] || triggerDetailMap[a.title_ja] || null;
       }
       if (!a.score) {
         a.score = triggerScoreMap[a.title] || triggerScoreMap[a.title_ja] || null;
@@ -1063,7 +1069,20 @@ export const JS = `
     var isTrend = n.triggerType === 'TREND_INFLUENCE';
     var badgeCls = isEmergency ? 'nf-badge-emergency' : isTrend ? 'nf-badge-trend' : isAttention ? 'nf-badge-attention' : 'nf-badge-info';
     var badgeBase = isEmergency ? '緊急' : isTrend ? 'トレンド変化' : isAttention ? '注目' : '情報';
-    var badgeText = n.score ? badgeBase + ' · ' + Number(n.score).toFixed(1) : badgeBase;
+    var td = n.triggerDetail || {};
+    var badgeScore = '';
+    if (isEmergency || isTrend) {
+      // 判定基準: relevance × sentiment を表示
+      if (td.relevance != null && td.sentiment != null) {
+        badgeScore = ' · R' + Number(td.relevance).toFixed(0) + '/S' + Number(td.sentiment).toFixed(0);
+      } else if (n.score) {
+        badgeScore = ' · ' + Number(n.score).toFixed(1);
+      }
+    } else if (n.score) {
+      // 注目/情報: composite_score
+      badgeScore = ' · ' + Number(n.score).toFixed(1);
+    }
+    var badgeText = badgeBase + badgeScore;
     var borderCls = isEmergency ? 'nf-emergency' : isTrend ? 'nf-trend' : isAttention ? 'nf-attention' : 'nf-info';
     // impactフィールドはAI判断テキスト（数値スコアではない）
     var impactText = typeof n.impact === 'string' ? n.impact : '';
