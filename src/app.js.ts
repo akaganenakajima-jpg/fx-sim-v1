@@ -923,8 +923,12 @@ export const JS = `
 
     // news_trigger_log からタイトル→trigger_type のルックアップマップを構築
     var triggerMap = {};
+    var triggerScoreMap = {};
     triggers.forEach(function(t) {
-      if (t.news_title) triggerMap[t.news_title] = t.trigger_type;
+      if (t.news_title) {
+        triggerMap[t.news_title] = t.trigger_type;
+        if (t.news_score) triggerScoreMap[t.news_title] = t.news_score;
+      }
     });
 
     // acceptedNewsのうちanalysisに含まれないものをattention=trueとしてマージ
@@ -938,6 +942,9 @@ export const JS = `
     analysis.forEach(function(a) {
       if (!a.triggerType) {
         a.triggerType = triggerMap[a.title] || triggerMap[a.title_ja] || null;
+      }
+      if (!a.score) {
+        a.score = triggerScoreMap[a.title] || triggerScoreMap[a.title_ja] || null;
       }
     });
     var mergedAnalysis = analysis.concat(acceptedAsAnalysis);
@@ -1056,7 +1063,7 @@ export const JS = `
     var isTrend = n.triggerType === 'TREND_INFLUENCE';
     var badgeCls = isEmergency ? 'nf-badge-emergency' : isTrend ? 'nf-badge-trend' : isAttention ? 'nf-badge-attention' : 'nf-badge-info';
     var badgeBase = isEmergency ? '緊急' : isTrend ? 'トレンド変化' : isAttention ? '注目' : '情報';
-    var badgeText = badgeBase;
+    var badgeText = n.score ? badgeBase + ' · ' + Number(n.score).toFixed(1) : badgeBase;
     var borderCls = isEmergency ? 'nf-emergency' : isTrend ? 'nf-trend' : isAttention ? 'nf-attention' : 'nf-info';
     // impactフィールドはAI判断テキスト（数値スコアではない）
     var impactText = typeof n.impact === 'string' ? n.impact : '';
