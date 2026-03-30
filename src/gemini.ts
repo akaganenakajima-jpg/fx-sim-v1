@@ -751,14 +751,60 @@ export async function newsStage1(params: {
 const STAGE2_TIMEOUT_MS = 8_000;
 
 /**
+ * T013: B2 の適応的タイムアウトを計算する
+ *
+ * 直近 10 回の B2 応答時間の P90 + 2000ms を使用（5000〜15000ms の範囲でクランプ）
+ * DB に応答時間が記録されていない場合はデフォルト 8000ms を返す
+ *
+ * 仕組み: market_cache の 'b2_response_times' キーに JSON 配列として最新 10 件を保存
+ */
+export async function getAdaptiveB2Timeout(db?: D1Database): Promise<number> {
+  if (!db) return STAGE2_TIMEOUT_MS;
+  try {
+    const row = await db.prepare(
+      "SELECT value FROM market_cache WHERE key = 'b2_response_times'"
+    ).first<{ value: string }>();
+    if (!row?.value) return STAGE2_TIMEOUT_MS;
+    const times: number[] = JSON.parse(row.value);
+    if (!times.length) return STAGE2_TIMEOUT_MS;
+    const sorted = [...times].sort((a, b) => a - b);
+    const p90Index = Math.floor(sorted.length * 0.9);
+    const p90 = sorted[Math.min(p90Index, sorted.length - 1)];
+    return Math.min(15_000, Math.max(5_000, p90 + 2_000));
+  } catch {
+    return STAGE2_TIMEOUT_MS;
+  }
+}
+
+/**
+ * B2 応答時間を market_cache の rolling window に記録（最新 10 件を保持）
+ */
+async function recordB2ResponseTime(db: D1Database, responseMs: number): Promise<void> {
+  try {
+    const row = await db.prepare(
+      "SELECT value FROM market_cache WHERE key = 'b2_response_times'"
+    ).first<{ value: string }>();
+    const times: number[] = row?.value ? JSON.parse(row.value) : [];
+    times.push(responseMs);
+    // 最新 10 件のみ保持
+    const latest = times.slice(-10);
+    await db.prepare(
+      "INSERT OR REPLACE INTO market_cache (key, value, updated_at) VALUES ('b2_response_times', ?, datetime('now'))"
+    ).bind(JSON.stringify(latest)).run();
+  } catch { /* 記録失敗は無視 */ }
+}
+
+/**
  * B2: og:description付きで補正 → CONFIRM/REVISE/REVERSE
- * タイムアウト8秒。失敗時は例外を投げる（呼び出し元でcatch→B1シグナルをそのまま採用）
+ * タイムアウト8秒（適応的: getAdaptiveB2Timeout() で取得可能）
+ * 失敗時は例外を投げる（呼び出し元でcatch→B1シグナルをそのまま採用）
  */
 export async function newsStage2(params: {
   stage1Result: NewsStage1Result;
   news: NewsItem[];
   apiKey: string;
   db?: D1Database;
+  timeoutMs?: number;  // T013: 適応的タイムアウト（省略時は STAGE2_TIMEOUT_MS）
 }): Promise<NewsStage2Result> {
   const { stage1Result, news, apiKey, db } = params;
 
@@ -798,15 +844,20 @@ export async function newsStage2(params: {
     '- REVERSE: 反対方向に変更推奨（既存ポジションがあれば決済）\n' +
     'B1シグナルの全pairに対してcorrectionsを返すこと。';
 
+  // T013: 適応的タイムアウト（省略時はデフォルト 8000ms）
+  const effectiveTimeout = params.timeoutMs ?? STAGE2_TIMEOUT_MS;
+  const requestBody = JSON.stringify({
+    systemInstruction: { parts: [{ text: systemPrompt }] },
+    contents: [{ role: 'user', parts: [{ text: userMessage }] }],
+    generationConfig: { responseMimeType: 'application/json' },
+  });
+
+  const t0 = Date.now();
   const res = await fetchWithTimeout(`${GEMINI_FLASH_ENDPOINT}?key=${apiKey}`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      systemInstruction: { parts: [{ text: systemPrompt }] },
-      contents: [{ role: 'user', parts: [{ text: userMessage }] }],
-      generationConfig: { responseMimeType: 'application/json' },
-    }),
-  }, STAGE2_TIMEOUT_MS);
+    body: requestBody,
+  }, effectiveTimeout);
 
   if (!res.ok) {
     const body = await res.text();
@@ -819,6 +870,12 @@ export async function newsStage2(params: {
 
   const data = await res.json<GeminiResponse>();
   const text = data.candidates[0].content.parts[0].text;
+
+  // T013: 応答時間を rolling window に記録（適応的タイムアウトの学習データ）
+  if (db) {
+    const responseMs = Date.now() - t0;
+    void recordB2ResponseTime(db, responseMs);
+  }
 
   // トークン使用量記録
   if (db && data.usageMetadata) {

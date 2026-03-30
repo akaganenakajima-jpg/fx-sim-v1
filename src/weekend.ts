@@ -23,6 +23,8 @@
 
 import { getOpenPositions, insertSystemLog, getCacheValue, setCacheValue } from './db';
 import { INSTRUMENTS, type InstrumentConfig } from './instruments';
+import { logReturn } from './stats';
+import { calcRealizedRR } from './position';
 
 // ---------------------------------------------------------------------------
 // 週末制約定数（Single Source of Truth）
@@ -285,11 +287,17 @@ export async function forceCloseAllForWeekend(
       ? (currentRate - pos.entry_rate) * multiplier
       : (pos.entry_rate - currentRate) * multiplier;
 
+    // log_return と realized_rr を計算（EWMA Vol / 統計分析の母集団に含めるため）
+    const lr = logReturn(pos.entry_rate, currentRate);
+    const realizedRR = pos.sl_rate != null
+      ? calcRealizedRR(pos.direction as 'BUY' | 'SELL', pos.entry_rate, currentRate, pos.sl_rate)
+      : undefined;
+
     // D1で直接CLOSEする（ブローカー側は別途対応）
     await db.prepare(
       `UPDATE positions SET status = 'CLOSED', close_rate = ?, pnl = ?,
-       closed_at = ?, close_reason = 'WEEKEND' WHERE id = ?`
-    ).bind(currentRate, pnl, new Date().toISOString(), pos.id).run();
+       closed_at = ?, close_reason = 'WEEKEND', log_return = ?, realized_rr = ? WHERE id = ?`
+    ).bind(currentRate, pnl, new Date().toISOString(), lr, realizedRR ?? null, pos.id).run();
 
     closedCount++;
     console.log(`[weekend] 週末強制決済: ${pos.pair} id=${pos.id} ${pos.direction} pnl=${pnl.toFixed(2)}`);

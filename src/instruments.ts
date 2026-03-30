@@ -11,7 +11,7 @@ export type CorrelationGroup =
   | 'us_semi' | 'us_mega_tech' | 'us_high_beta';
 
 /** アセットクラス */
-export type AssetClass = 'forex' | 'cfd' | 'stock';
+export type AssetClass = 'forex' | 'index' | 'commodity' | 'crypto' | 'stock';
 
 export interface InstrumentConfig {
   pair: string;
@@ -43,8 +43,8 @@ export interface InstrumentConfig {
   tier: 'A' | 'B' | 'C' | 'D';
   /** テスタ施策23: ティア別ロット倍率 */
   tierLotMultiplier: number;
-  /** アセットクラス（株式の場合に使用） */
-  assetClass?: AssetClass;
+  /** アセットクラス（全銘柄必須） */
+  assetClass: AssetClass;
   /** Yahoo Finance / Alpaca シンボル（株式用。例: '6920.T', 'NVDA'） */
   stockSymbol?: string;
   /** 最小取引単位（日本株=100、米国株=1） */
@@ -71,6 +71,7 @@ export const INSTRUMENTS: InstrumentConfig[] = [
     trailingDistance: 0.22,    // ATR×0.75=0.22円。breakeven保証（activation-distance>0）
     correlationGroup: 'usd_strong',
     tier: 'A', tierLotMultiplier: 1.0,
+    assetClass: 'forex',
   },
   {
     pair: 'Nikkei225',
@@ -87,6 +88,7 @@ export const INSTRUMENTS: InstrumentConfig[] = [
     trailingDistance: 75,      // ATR×0.75=75pt。breakeven保証
     correlationGroup: 'risk_on',
     tier: 'A', tierLotMultiplier: 1.0,  // 実績: avg_rr=0.61・total_pnl=+4,864円 → Tier A昇格
+    assetClass: 'index',
   },
   {
     pair: 'S&P500',
@@ -103,6 +105,7 @@ export const INSTRUMENTS: InstrumentConfig[] = [
     trailingDistance: 15,      // ATR×0.75=15pt。breakeven保証
     correlationGroup: 'risk_on',
     tier: 'A', tierLotMultiplier: 1.0,  // 実績: total_pnl=+1,395円(38取引) → Tier A昇格
+    assetClass: 'index',
   },
   // US10Y: RR=0.13, Kelly=-3.67 → 除外（2026-03-24 テスタ理論E2E評価）
   // {
@@ -131,6 +134,7 @@ export const INSTRUMENTS: InstrumentConfig[] = [
     trailingDistance: 15,      // ATR×0.75=$15。breakeven保証
     correlationGroup: 'precious',
     tier: 'D', tierLotMultiplier: 0.1,  // 実績: avg_rr=0.104・tp率4.4%(8/182) → Tier D降格（方向性壊滅）
+    assetClass: 'commodity',
   },
   {
     pair: 'EUR/USD',
@@ -147,6 +151,7 @@ export const INSTRUMENTS: InstrumentConfig[] = [
     trailingDistance: 0.0045,  // ATR×0.75=0.0045。breakeven保証
     correlationGroup: 'europe',
     tier: 'A', tierLotMultiplier: 1.0,
+    assetClass: 'forex',
   },
   // ETH/USD: 7取引0勝, Kelly=-∞ → 除外（2026-03-24 テスタ理論E2E評価）
   // {
@@ -169,6 +174,7 @@ export const INSTRUMENTS: InstrumentConfig[] = [
     trailingDistance: 0.5,     // ATR×0.75≈0.5。breakeven保証
     correlationGroup: 'energy',
     tier: 'D', tierLotMultiplier: 0.1,  // 実績: avg_rr=0.069・tp率11%(5/45) → Tier D降格
+    assetClass: 'commodity',
   },
   {
     pair: 'NatGas',
@@ -185,6 +191,7 @@ export const INSTRUMENTS: InstrumentConfig[] = [
     trailingDistance: 0.045,   // ATR×0.75=0.045。breakeven保証
     correlationGroup: 'energy',
     tier: 'C', tierLotMultiplier: 0.5,
+    assetClass: 'commodity',
   },
   {
     pair: 'Copper',
@@ -201,6 +208,7 @@ export const INSTRUMENTS: InstrumentConfig[] = [
     trailingDistance: 0.03,    // ATR×0.75=0.03。breakeven保証
     correlationGroup: 'precious',
     tier: 'D', tierLotMultiplier: 0.1,  // 実績: avg_rr=0.106・tp率0%(0/12) → Tier D降格
+    assetClass: 'commodity',
   },
   {
     pair: 'Silver',
@@ -217,6 +225,7 @@ export const INSTRUMENTS: InstrumentConfig[] = [
     trailingDistance: 0.30,    // ATR×0.75=0.30。breakeven保証
     correlationGroup: 'precious',
     tier: 'D', tierLotMultiplier: 0.1,  // 実績: avg_rr=0.202・tp率6%(6/99) → Tier D降格
+    assetClass: 'commodity',
   },
   {
     pair: 'GBP/USD',
@@ -233,6 +242,7 @@ export const INSTRUMENTS: InstrumentConfig[] = [
     trailingDistance: 0.005,   // ATR×0.75≈0.005。breakeven保証
     correlationGroup: 'europe',
     tier: 'D', tierLotMultiplier: 0.1,  // 実績: avg_rr=0.074・tp率9%(1/11) → Tier D降格
+    assetClass: 'forex',
   },
   {
     pair: 'AUD/USD',
@@ -249,6 +259,7 @@ export const INSTRUMENTS: InstrumentConfig[] = [
     trailingDistance: 0.0038,   // ATR×0.75=0.0038。breakeven保証
     correlationGroup: 'risk_on',
     tier: 'D', tierLotMultiplier: 0.1,  // 実績: avg_rr=-0.313・total_pnl=-39円 → Tier D降格（マイナスRR）
+    assetClass: 'forex',
   },
   {
     pair: 'SOL/USD',
@@ -265,6 +276,7 @@ export const INSTRUMENTS: InstrumentConfig[] = [
     trailingDistance: 2.2,     // ATR×0.75=2.2。breakeven保証
     correlationGroup: 'standalone',
     tier: 'D', tierLotMultiplier: 0.3,
+    assetClass: 'crypto',
   },
   {
     pair: 'DAX',
@@ -281,6 +293,7 @@ export const INSTRUMENTS: InstrumentConfig[] = [
     trailingDistance: 55,      // ATR×0.75≈55pt。breakeven保証
     correlationGroup: 'europe',
     tier: 'C', tierLotMultiplier: 0.5,
+    assetClass: 'index',
   },
   {
     pair: 'NASDAQ',
@@ -297,6 +310,7 @@ export const INSTRUMENTS: InstrumentConfig[] = [
     trailingDistance: 75,      // ATR×0.75=75pt。breakeven保証
     correlationGroup: 'risk_on',
     tier: 'C', tierLotMultiplier: 0.5,
+    assetClass: 'index',
   },
   // テスタ施策24: UK100
   {
@@ -314,6 +328,7 @@ export const INSTRUMENTS: InstrumentConfig[] = [
     trailingDistance: 37,      // ATR×0.75≈37pt。breakeven保証
     correlationGroup: 'europe',
     tier: 'B', tierLotMultiplier: 0.7,
+    assetClass: 'index',
   },
   // テスタ施策25: HK33
   {
@@ -331,6 +346,7 @@ export const INSTRUMENTS: InstrumentConfig[] = [
     trailingDistance: 75,      // ATR×0.75=75pt。breakeven保証
     correlationGroup: 'risk_on',
     tier: 'D', tierLotMultiplier: 0.1,  // 実績: avg_rr=-0.362・tp率30%(3/10) → Tier D降格（マイナスRR）
+    assetClass: 'index',
   },
 
   // ─── 円クロス（Phase 1: OANDA即実装） ─────────────
@@ -349,6 +365,7 @@ export const INSTRUMENTS: InstrumentConfig[] = [
     trailingDistance: 0.15,
     correlationGroup: 'jpy_cross',
     tier: 'B', tierLotMultiplier: 0.7,
+    assetClass: 'forex',
   },
   {
     pair: 'GBP/JPY',
@@ -365,6 +382,7 @@ export const INSTRUMENTS: InstrumentConfig[] = [
     trailingDistance: 0.18,
     correlationGroup: 'jpy_cross',
     tier: 'B', tierLotMultiplier: 0.7,
+    assetClass: 'forex',
   },
   {
     pair: 'AUD/JPY',
@@ -381,6 +399,7 @@ export const INSTRUMENTS: InstrumentConfig[] = [
     trailingDistance: 0.12,
     correlationGroup: 'jpy_cross',
     tier: 'C', tierLotMultiplier: 0.5,
+    assetClass: 'forex',
   },
 
   // ─── 日本個別株（Phase 2a: paper-only） ───────────

@@ -265,6 +265,37 @@ export async function evaluateRecovery(db: D1Database): Promise<SPRTResult> {
   return 'CONTINUE'; // まだ判定不能
 }
 
+/**
+ * T014: SPRT 評価を時間制約から独立化
+ *
+ * 毎分 cron から呼び出す軽量ラッパー。
+ * sprt_last_evaluated_id 以降に新規 CLOSED ポジションがある場合のみ
+ * evaluateRecovery() を実行する。
+ *
+ * - DB アクセスのみ（API 呼び出しなし）→ ~5ms で完了
+ * - 新規データなし → 即リターン（PARAM_REVIEW の時間制約不要）
+ * - DD レベルに関わらず常時評価し、UPGRADE/DOWNGRADE を記録
+ *
+ * @param db Cloudflare D1 Database
+ */
+export async function evaluateRecoveryIfNeeded(db: D1Database): Promise<void> {
+  try {
+    const lastEvalIdStr = await getRiskStateValue(db, 'sprt_last_evaluated_id');
+    const lastId = lastEvalIdStr ? parseInt(lastEvalIdStr, 10) : 0;
+
+    // 新規 CLOSED ポジションの有無だけを軽量チェック
+    const hasNew = await db.prepare(
+      `SELECT 1 FROM positions WHERE status = 'CLOSED' AND id > ? LIMIT 1`
+    ).bind(lastId).first<{ 1: number }>();
+
+    if (!hasNew) return; // 新規なし → スキップ
+
+    await evaluateRecovery(db);
+  } catch {
+    // SPRT エラーは cron 全体を止めない
+  }
+}
+
 // ─── 相関リスクガード（テスタ施策4） ─────────────
 
 export type CorrelationGroup =

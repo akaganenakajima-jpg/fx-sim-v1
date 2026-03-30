@@ -701,7 +701,8 @@ export async function runLogicDecisions(
       ]));
   }
 
-  // T07: 日次BUY+SELL件数モニタリング — 100件未満ならWARN
+  // T07: 日次BUY+SELL件数モニタリング — 時刻比例チェック（T015修正）
+  // 根本原因: 固定目標100件が一日中発火していた → 時刻経過率に応じた動的目標に変更
   const todayStart = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate())).toISOString();
   const dailyRow = await db
     .prepare(
@@ -711,10 +712,34 @@ export async function runLogicDecisions(
     .bind(todayStart)
     .first<{ cnt: number }>();
   const dailySignals = dailyRow?.cnt ?? 0;
-  if (dailySignals < 100) {
-    await insertSystemLog(db, 'WARN', 'MONITOR',
-      `日次BUY+SELL件数不足: ${dailySignals}件 (目標>=100)`,
-      `todayStart=${todayStart}`);
+
+  // UTC 03:00（市場開始想定）からの経過割合で動的目標を計算
+  const MARKET_START_HOUR = 3;
+  const DAILY_TARGET = 100;
+  const utcHour = now.getUTCHours();
+  const utcMin = now.getUTCMinutes();
+  const elapsedMinutes = Math.max(0, (utcHour - MARKET_START_HOUR) * 60 + utcMin);
+  const elapsedRate = Math.min(1.0, elapsedMinutes / (21 * 60)); // 21h 営業想定
+  const dynamicTarget = Math.floor(DAILY_TARGET * elapsedRate * 1.1); // 10% バッファ
+
+  if (dynamicTarget >= 5 && dailySignals < dynamicTarget) {
+    // 発火頻度制限: 15分に1回まで（market_cache で最終発火時刻を管理）
+    const WARN_COOLDOWN_KEY = 'daily_count_warn_last_fired';
+    const lastFiredRow = await db.prepare(
+      "SELECT updated_at FROM market_cache WHERE key = ?"
+    ).bind(WARN_COOLDOWN_KEY).first<{ updated_at: string }>();
+    const lastFired = lastFiredRow ? new Date(lastFiredRow.updated_at).getTime() : 0;
+    const cooldownMs = 15 * 60 * 1000; // 15分
+
+    if (Date.now() - lastFired >= cooldownMs) {
+      await insertSystemLog(db, 'WARN', 'MONITOR',
+        `日次BUY+SELL件数不足: ${dailySignals}件 (現時点目標: ${dynamicTarget}件, 経過率${Math.round(elapsedRate * 100)}%)`,
+        `todayStart=${todayStart}`);
+      // 最終発火時刻を更新
+      await db.prepare(
+        "INSERT OR REPLACE INTO market_cache (key, value, updated_at) VALUES (?, ?, datetime('now'))"
+      ).bind(WARN_COOLDOWN_KEY, String(dailySignals)).run();
+    }
   }
 
   return summary;

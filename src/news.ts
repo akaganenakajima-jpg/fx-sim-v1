@@ -663,6 +663,9 @@ export async function filterAndTranslateWithHaiku(
 ): Promise<NewsItem[]> {
   if (!geminiApiKey || items.length === 0) return items;
 
+  // 適応的閾値を一度だけ計算（キャッシュパス・本番パス共用）
+  const adaptiveThreshold = await getAdaptiveCompositeThreshold(db);
+
   const titles = items.map(i => i.title);
   const cacheKey = hashTitles(titles);
 
@@ -676,7 +679,7 @@ export async function filterAndTranslateWithHaiku(
       const results: HaikuTranslatedItem[] = JSON.parse(cached.value);
 
       // キャッシュヒット時も7軸スコアリングを適用する（スコアチェックをスキップしない）
-      const COMPOSITE_THRESHOLD_CACHE = 6.5;
+      const COMPOSITE_THRESHOLD_CACHE = adaptiveThreshold;
       const scoresMapCached = new Map<number, {
         timeliness: number; uniqueness: number;
         relevance: number; credibility: number;
@@ -868,7 +871,8 @@ JSON配列のみを返し、他の文字は一切含めないでください。`
     // ── 7軸スコアリング ──────────────────────────────────────────
     // AIが「accepted=false」と判定した記事は無条件除外（理由保持）
     // AIが「accepted=true」の記事にさらに複合スコアでフィルタを掛ける
-    const COMPOSITE_THRESHOLD = 6.5;  // 旧6.0→6.5: 採用率15-20%目標（目標採用率=15〜20%）
+    // 適応的閾値: 直近採用率に基づき 4.5〜8.5 の範囲で自動調整（目標採用率=15〜20%）
+    const COMPOSITE_THRESHOLD = adaptiveThreshold;
     const scoresMap = new Map<number, {
       timeliness: number; uniqueness: number;
       relevance: number; credibility: number;
@@ -1424,4 +1428,56 @@ export function getEffectiveThreshold(
     return bias.thresholdOverrides.get(news.pair)!;
   }
   return defaultThreshold;
+}
+
+/**
+ * 直近ニュースレコードの採用率に基づく適応的 composite 閾値を返す
+ *
+ * 目標採用率: 15-20%
+ * - 採用率 < 10% → 閾値を下げる（フィルタが厳しすぎる）
+ * - 採用率 < 15% → 閾値を少し下げる
+ * - 採用率 > 25% → 閾値を少し上げる
+ * - 通常範囲 (15-25%) → デフォルト 6.5 を維持
+ *
+ * DB アクセス軽量化: 直近 200 件の COUNT 集計のみ実行
+ * 下限 4.5 / 上限 8.5 で暴走防止
+ */
+export async function getAdaptiveCompositeThreshold(db: D1Database): Promise<number> {
+  const DEFAULT_THRESHOLD = 6.5;
+  const TARGET_RATE_LOW = 0.15;   // 15%
+  const TARGET_RATE_HIGH = 0.25;  // 25%
+  const SAMPLE_SIZE = 200;
+
+  try {
+    const stats = await db.prepare(`
+      SELECT
+        COUNT(*) as total,
+        SUM(CASE WHEN haiku_accepted = 1 THEN 1 ELSE 0 END) as accepted
+      FROM (
+        SELECT haiku_accepted FROM news_raw
+        WHERE haiku_accepted IS NOT NULL
+        ORDER BY id DESC
+        LIMIT ${SAMPLE_SIZE}
+      )
+    `).first<{ total: number; accepted: number }>();
+
+    if (!stats || stats.total < 20) return DEFAULT_THRESHOLD;
+
+    const rate = stats.accepted / stats.total;
+
+    if (rate < 0.05) return 4.5;    // 採用率 5% 未満: 大幅に緩和
+    if (rate < TARGET_RATE_LOW) {
+      // 採用率 5-15%: 線形補間で 4.5〜6.5 の範囲
+      const t = (rate - 0.05) / (TARGET_RATE_LOW - 0.05);
+      return Math.round((4.5 + t * (DEFAULT_THRESHOLD - 4.5)) * 10) / 10;
+    }
+    if (rate > TARGET_RATE_HIGH) {
+      // 採用率 25% 超: 線形補間で 6.5〜8.5 の範囲
+      const t = Math.min(1.0, (rate - TARGET_RATE_HIGH) / 0.15);
+      return Math.round((DEFAULT_THRESHOLD + t * 2.0) * 10) / 10;
+    }
+    return DEFAULT_THRESHOLD;
+  } catch {
+    return DEFAULT_THRESHOLD; // DB エラー時はデフォルトで安全運転
+  }
 }
