@@ -33,7 +33,7 @@ import { determineRegime, formatRegimeForPrompt, getRegimeProhibitions } from '.
 import { getWeekendStatus, lockProfitsForWeekend, forceCloseAllForWeekend, getWeekendNewsDigest, saveFridayClosePrices, detectGaps, resetWeekendFlags, getTradeableInstruments } from './weekend';
 import { runLogicDecisions } from './logic-trading';
 import { runParamReview } from './param-review';
-import { evaluateRecoveryIfNeeded, getDrawdownLevel, checkInstrumentDailyLoss } from './risk-manager';
+import { evaluateRecoveryIfNeeded, getDrawdownLevel, checkInstrumentDailyLoss, getMarketDrawdownLevel } from './risk-manager';
 import { runNewsTrigger, consumeEmergencyForceFlag } from './news-trigger';
 // AI銘柄マネージャー
 import { fetchFundamentals, saveFundamentals, fetchAllListedStocks, cleanupOldFundamentals } from './jquants';
@@ -600,6 +600,7 @@ async function runPathB(
   hedgeKeys?: { openaiApiKey?: string; anthropicApiKey?: string },
   regimeContext?: { text: string; prohibitions: string },
   prices?: Map<string, number | null>,
+  triggerId?: number,
 ): Promise<PathBResult> {
   const news = sharedNewsStore.items;
   if (news.length === 0) return { decisions: [], reversals: [], newsAnalysis: [] };
@@ -1286,10 +1287,12 @@ async function runAnalysis(env: Env): Promise<void> {
     const tpSlMs = coreData.tpSlMs;
 
     // 2.8 ニューストリガー（緊急→PATH_B強制）
+    let lastTriggerId: number | undefined;
     try {
       const triggerResult = await runNewsTrigger(env.DB, getApiKey(env));
+      lastTriggerId = triggerResult.triggerId;
       if (triggerResult.triggerType !== 'NONE') {
-        console.log(`[fx-sim] NEWS_TRIGGER: ${triggerResult.triggerType} title=${triggerResult.newsTitle?.slice(0, 50)}`);
+        console.log(`[fx-sim] NEWS_TRIGGER: ${triggerResult.triggerType} id=${lastTriggerId} title=${triggerResult.newsTitle?.slice(0, 50)}`);
       }
     } catch (e) {
       console.warn(`[fx-sim] runNewsTrigger error: ${String(e).slice(0, 80)}`);
@@ -1439,6 +1442,16 @@ async function runAnalysis(env: Env): Promise<void> {
             ).catch(() => {});
             continue;
           }
+          // 市場別DDチェック（ある市場がSTOPでも他市場は継続）
+          const pathBInstrConfig = INSTRUMENTS.find(i => i.pair === dec.pair);
+          if (pathBInstrConfig) {
+            const marketDDCheck = await getMarketDrawdownLevel(env.DB, pathBInstrConfig.assetClass);
+            if (marketDDCheck.level === 'STOP') {
+              await insertSystemLog(env.DB, 'INFO', 'RISK',
+                `PATH_B 市場別DD STOP: ${dec.pair} (${pathBInstrConfig.assetClass} ${marketDDCheck.ddPct.toFixed(1)}%)`);
+              continue;
+            }
+          }
           // 銘柄別日次損失上限チェック（テスタ流: シナリオ崩壊銘柄はやらない）
           const instDailyB = await checkInstrumentDailyLoss(env.DB, dec.pair, new Date());
           if (instDailyB.paused) {
@@ -1480,8 +1493,8 @@ async function runAnalysis(env: Env): Promise<void> {
       // decisions テーブルに記録
       if (result.decisions.length > 0) {
         const stmt = env.DB.prepare(
-          `INSERT INTO decisions (pair, rate, decision, tp_rate, sl_rate, reasoning, news_summary, vix, us10y, nikkei, sp500, created_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+          `INSERT INTO decisions (pair, rate, decision, tp_rate, sl_rate, reasoning, news_summary, vix, us10y, nikkei, sp500, created_at, trigger_id, why_chain)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
         );
         await env.DB.batch(result.decisions.map(d => {
           const relevantNews = (d.news_analysis ?? result.newsAnalysis)
@@ -1494,11 +1507,15 @@ async function runAnalysis(env: Env): Promise<void> {
                 .filter(a => a.attention).slice(0, 3)
                 .map(a => ({ title: a.title_ja || news[a.index]?.title_ja || (news[a.index]?.title ?? ''), title_ja: a.title_ja, impact: a.impact }));
           const pathBNewsSummary = summaryItems.length > 0 ? JSON.stringify(summaryItems) : newsSummary;
+          // 該当ペアに関連するニュースのwhy_chainを取得（最初に見つかったもの）
+          const matchedAnalysis = (d.news_analysis ?? result.newsAnalysis)
+            .find(a => a.attention && a.affected_pairs?.includes(d.pair) && a.why_chain?.length);
+          const whyChainJson = matchedAnalysis?.why_chain ? JSON.stringify(matchedAnalysis.why_chain) : null;
           return stmt.bind(
             d.pair, prices.get(d.pair) ?? d.rate, d.decision, d.tp_rate, d.sl_rate,
             `[PATH_B] ${d.reasoning}`, pathBNewsSummary,
             indicators.vix, indicators.us10y, indicators.nikkei, indicators.sp500,
-            now.toISOString()
+            now.toISOString(), triggerId ?? null, whyChainJson
           );
         }));
       }
@@ -1570,8 +1587,8 @@ async function runAnalysis(env: Env): Promise<void> {
       if (holdPairs.length > 0) {
         try {
           const holdStmt = env.DB.prepare(
-            `INSERT INTO decisions (pair, rate, decision, tp_rate, sl_rate, reasoning, news_summary, vix, us10y, nikkei, sp500, created_at)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+            `INSERT INTO decisions (pair, rate, decision, tp_rate, sl_rate, reasoning, news_summary, vix, us10y, nikkei, sp500, created_at, trigger_id)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
           );
           await env.DB.batch(holdPairs.map(pair => {
             const reason = openPairsForPathB.has(pair)
@@ -1581,7 +1598,7 @@ async function runAnalysis(env: Env): Promise<void> {
               pair, prices.get(pair) ?? 0, 'HOLD', null, null,
               `[PATH_B_HOLD] ${reason}`, newsSummary,
               indicators.vix, indicators.us10y, indicators.nikkei, indicators.sp500,
-              now.toISOString()
+              now.toISOString(), triggerId ?? null
             );
           }));
         } catch (e) {
@@ -1631,7 +1648,7 @@ async function runAnalysis(env: Env): Promise<void> {
         pathBResult = await runPathB(env, sharedNewsStore, indicators, openPairsForPathB, getApiKey(env), {
           openaiApiKey: env.OPENAI_API_KEY,
           anthropicApiKey: env.ANTHROPIC_API_KEY,
-        }, regimeContext, prices);
+        }, regimeContext, prices, lastTriggerId);
         pathBMs = Date.now() - tPathB;
         await setCacheValue(env.DB, 'last_path_b_at', String(Date.now()));
         console.log(`[fx-sim] Path B: ${pathBResult.decisions.length}件シグナル, ${pathBResult.reversals.length}件REVERSE (${pathBMs}ms)`);

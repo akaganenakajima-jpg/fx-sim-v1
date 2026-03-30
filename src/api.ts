@@ -3,7 +3,8 @@
 import type { Position } from './db';
 // fetchNewsはcron側の責務。API側はlatest_newsキャッシュのみ参照
 import { getRiskStatus, type RiskEnv } from './risk-guard';
-import { INSTRUMENTS } from './instruments';
+import { INSTRUMENTS, getDefaultParams, type AssetClass } from './instruments';
+import { getAllMarketDrawdownLevels, type DrawdownLevel } from './risk-manager';
 import { getSessionStats, getPairStats, type SessionStats, type PairStats } from './trade-journal';
 import { wilsonCI, sharpeWithSE, varCvar, kellyFraction, markovTransition, maxDrawdown, rollingReturns, pnlVolatility, profitFactor, bootstrapROI, aiAccuracy, randomBaselineComparison, pairCorrelation, logReturnStats, powerAnalysis, ewmaVolatility, engleGrangerCointegration, hierarchicalWinRate } from './stats';
 import { INITIAL_CAPITAL, RELIABILITY_TRUSTED, RELIABILITY_TENTATIVE } from './constants';
@@ -301,6 +302,10 @@ export interface StatusResponse {
     relevance: number | null;
     sentiment: number | null;
     created_at: string;
+    /** trigger_id経由で紐づくdecisions（trade_decisionsと同形式） */
+    actions?: Array<{ pair: string; decision: string; reasoning: string | null; rate: number | null; tp_rate: number | null; sl_rate: number | null; created_at: string | null; why_chain: string[] | null }>;
+    /** trigger_id経由で紐づくtemp_params変更（変更前後のdiff付き） */
+    paramChanges?: Array<{ pair: string; reason: string | null; atr_tp_multiplier: number | null; atr_sl_multiplier: number | null; adx_min: number | null; rsi_oversold: number | null; rsi_overbought: number | null; vix_max: number | null; expires_at: string | null; defaults: { atr_tp_multiplier: number; atr_sl_multiplier: number; adx_min: number; rsi_oversold: number; rsi_overbought: number; vix_max: number } }>;
   }>;
   /** 全銘柄定義（instruments.tsから動的生成） */
   instruments: Array<{
@@ -312,6 +317,8 @@ export interface StatusResponse {
     broker: string;
     assetClass: string;
   }>;
+  /** 市場別DD段階（AssetClass単位の独立DD管理） */
+  ddByMarket: Record<string, { level: string; ddPct: number }> | null;
 }
 
 export async function getApiStatus(db: D1Database, tradingEnv?: { TRADING_ENABLED?: string; OANDA_LIVE?: string; RISK_MAX_DAILY_LOSS?: string; RISK_MAX_LIVE_POSITIONS?: string; RISK_MAX_LOT_SIZE?: string; RISK_ANOMALY_THRESHOLD?: string }): Promise<StatusResponse> {
@@ -695,11 +702,61 @@ export async function getApiStatus(db: D1Database, tradingEnv?: { TRADING_ENABLE
   let newsTriggers: StatusResponse['newsTriggers'] = [];
   try {
     const ntRaw = await db.prepare(
-      `SELECT trigger_type, news_title, news_score, relevance, sentiment, created_at FROM news_trigger_log
+      `SELECT id, trigger_type, news_title, news_score, relevance, sentiment, created_at FROM news_trigger_log
        WHERE created_at > datetime('now', '-12 hours')
        ORDER BY created_at DESC LIMIT 10`
-    ).all<{ trigger_type: string; news_title: string; news_score: number; relevance: number | null; sentiment: number | null; created_at: string }>();
-    newsTriggers = ntRaw.results ?? [];
+    ).all<{ id: number; trigger_type: string; news_title: string; news_score: number; relevance: number | null; sentiment: number | null; created_at: string }>();
+    const triggers = ntRaw.results ?? [];
+    // trigger_id 経由で紐づくアクション・パラメーター変更を取得（IPA SA §1.3 Forward Traceability）
+    if (triggers.length > 0) {
+      const triggerIds = triggers.map(t => t.id);
+      const placeholders = triggerIds.map(() => '?').join(',');
+      const [actionsRaw, paramsRaw] = await Promise.all([
+        db.prepare(
+          `SELECT trigger_id, pair, decision, reasoning, rate, tp_rate, sl_rate, created_at, why_chain FROM decisions WHERE trigger_id IN (${placeholders})`
+        ).bind(...triggerIds).all<{ trigger_id: number; pair: string; decision: string; reasoning: string | null; rate: number | null; tp_rate: number | null; sl_rate: number | null; created_at: string | null; why_chain: string | null }>(),
+        db.prepare(
+          `SELECT trigger_id, pair, reason, atr_tp_multiplier, atr_sl_multiplier, adx_min, rsi_oversold, rsi_overbought, vix_max, expires_at FROM news_temp_params WHERE trigger_id IN (${placeholders})`
+        ).bind(...triggerIds).all<{ trigger_id: number; pair: string; reason: string | null; atr_tp_multiplier: number | null; atr_sl_multiplier: number | null; adx_min: number | null; rsi_oversold: number | null; rsi_overbought: number | null; vix_max: number | null; expires_at: string | null }>(),
+      ]);
+      const actionsMap = new Map<number, Array<{ pair: string; decision: string; reasoning: string | null; rate: number | null; tp_rate: number | null; sl_rate: number | null; created_at: string | null; why_chain: string[] | null }>>();
+      for (const a of actionsRaw.results ?? []) {
+        if (!actionsMap.has(a.trigger_id)) actionsMap.set(a.trigger_id, []);
+        let parsedWhyChain: string[] | null = null;
+        if (a.why_chain) { try { parsedWhyChain = JSON.parse(a.why_chain); } catch { /* invalid JSON */ } }
+        actionsMap.get(a.trigger_id)!.push({ pair: a.pair, decision: a.decision, reasoning: a.reasoning, rate: a.rate, tp_rate: a.tp_rate, sl_rate: a.sl_rate, created_at: a.created_at, why_chain: parsedWhyChain });
+      }
+      const paramsMap = new Map<number, StatusResponse['newsTriggers'][0]['paramChanges']>();
+      for (const p of paramsRaw.results ?? []) {
+        if (!paramsMap.has(p.trigger_id)) paramsMap.set(p.trigger_id, []);
+        const inst = INSTRUMENTS.find(i => i.pair === p.pair);
+        const def = inst ? getDefaultParams(inst) : { rsi_oversold: 35, rsi_overbought: 65, adx_min: 25, atr_tp_multiplier: 3.0, atr_sl_multiplier: 1.5, vix_max: 35 };
+        paramsMap.get(p.trigger_id)!.push({
+          pair: p.pair, reason: p.reason,
+          atr_tp_multiplier: p.atr_tp_multiplier, atr_sl_multiplier: p.atr_sl_multiplier,
+          adx_min: p.adx_min, rsi_oversold: p.rsi_oversold, rsi_overbought: p.rsi_overbought,
+          vix_max: p.vix_max, expires_at: p.expires_at,
+          defaults: {
+            atr_tp_multiplier: Number(def.atr_tp_multiplier) || 3.0,
+            atr_sl_multiplier: Number(def.atr_sl_multiplier) || 1.5,
+            adx_min: Number(def.adx_min) || 25,
+            rsi_oversold: Number(def.rsi_oversold) || 35,
+            rsi_overbought: Number(def.rsi_overbought) || 65,
+            vix_max: Number(def.vix_max) || 35,
+          },
+        });
+      }
+      newsTriggers = triggers.map(t => ({
+        trigger_type: t.trigger_type,
+        news_title: t.news_title,
+        news_score: t.news_score,
+        relevance: t.relevance,
+        sentiment: t.sentiment,
+        created_at: t.created_at,
+        actions: actionsMap.get(t.id) ?? undefined,
+        paramChanges: paramsMap.get(t.id) ?? undefined,
+      }));
+    }
   } catch { /* テーブル未存在 */ }
 
   return {
@@ -797,6 +854,7 @@ export async function getApiStatus(db: D1Database, tradingEnv?: { TRADING_ENABLE
       : null,
     paramHistory: buildParamHistory(paramReviewLogRaw as unknown as { results: Array<{ pair: string; param_version: number; reason: string; win_rate: number | null; actual_rr: number | null; profit_factor: number | null; trades_eval: number | null; created_at: string }> }),
     recentIndicatorLogs: (indicatorLogsRaw as unknown as { results: IndicatorLog[] }).results ?? [],
+    ddByMarket: await getAllMarketDrawdownLevels(db).catch(() => null),
   };
 }
 

@@ -11,7 +11,7 @@ import {
   type InstrumentParamsRow,
 } from './logic-indicators';
 import { checkTpSlSanity } from './sanity';
-import { checkCorrelationGuard, getDrawdownLevel, updateHWM, getCurrentBalance, applyDrawdownControl, checkDailyLossCap, checkInstrumentDailyLoss } from './risk-manager';
+import { checkCorrelationGuard, getDrawdownLevel, updateHWM, getCurrentBalance, applyDrawdownControl, checkDailyLossCap, checkInstrumentDailyLoss, getMarketDrawdownLevel, updateAllMarketHWMs, applyMarketDrawdownControl } from './risk-manager';
 import { openPosition } from './position';
 import { insertDecision, insertSystemLog, insertIndicatorLog, getCacheValue, setCacheValue } from './db';
 import { INSTRUMENTS, getDefaultParams, getYahooSymbol } from './instruments';
@@ -213,15 +213,17 @@ export async function runLogicDecisions(
     return summary; // early_morning: 全銘柄取引禁止
   }
 
-  // DD状態を事前取得（全銘柄共通）
+  // DD状態を事前取得（全体DD: 安全弁）
   const ddResult = await getDrawdownLevel(db);
   const balance = await getCurrentBalance(db);
   await updateHWM(db, balance);
   await applyDrawdownControl(db, ddResult);
+  // 市場別HWM更新
+  await updateAllMarketHWMs(db);
 
   if (ddResult.level === 'STOP') {
     await insertSystemLog(db, 'WARN', 'LOGIC',
-      'DD STOP: ロジックエントリー全銘柄スキップ',
+      'DD STOP: ロジックエントリー全銘柄スキップ（全体DD安全弁）',
       `DD=${ddResult.ddPct.toFixed(1)}%`);
     return summary;
   }
@@ -257,6 +259,17 @@ export async function runLogicDecisions(
 
     const currentRate = prices.get(pair);
     if (currentRate == null) continue;
+
+    // 市場別DDチェック（ある市場がSTOPでも他市場は継続）
+    const marketDD = await getMarketDrawdownLevel(db, instrument.assetClass);
+    if (marketDD.level !== 'NORMAL') {
+      await applyMarketDrawdownControl(db, instrument.assetClass, marketDD);
+    }
+    if (marketDD.level === 'STOP') {
+      summary.skipped++;
+      summary.signals.push({ pair, signal: 'SKIP', reason: `市場別DD STOP (${instrument.assetClass} ${marketDD.ddPct.toFixed(1)}%)` });
+      continue;
+    }
 
     // すでにOPENポジションあり → スキップ
     if (openPairs.has(pair)) {
@@ -581,8 +594,8 @@ export async function runLogicDecisions(
       continue;
     }
 
-    // ロット倍率（DD段階 × ティア × 連敗縮退）
-    const ddLotMult  = ddResult.lotMultiplier;
+    // ロット倍率（DD段階 × 市場別DD × ティア × 連敗縮退）
+    const ddLotMult  = Math.min(ddResult.lotMultiplier, marketDD.lotMultiplier);
     const tierMult   = instrument.tierLotMultiplier;
 
     // ── Ph.8: 連敗ロット縮退（銘柄別） ──

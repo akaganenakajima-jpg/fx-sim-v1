@@ -4,8 +4,9 @@
 // SPRT回復判定: パフォーマンスベースでDD段階を昇降
 
 import { insertSystemLog } from './db';
-import type { InstrumentConfig } from './instruments';
-import { INITIAL_CAPITAL, DD_CAUTION, DD_WARNING, DD_HALT, DD_STOP, INSTRUMENT_DAILY_LOSS_CAP } from './constants';
+import type { InstrumentConfig, AssetClass } from './instruments';
+import { INSTRUMENTS } from './instruments';
+import { INITIAL_CAPITAL, DD_CAUTION, DD_WARNING, DD_HALT, DD_STOP, INSTRUMENT_DAILY_LOSS_CAP, MARKET_DD_CAUTION, MARKET_DD_WARNING, MARKET_DD_HALT, MARKET_DD_STOP } from './constants';
 
 // ─── DD段階（5段階: テスタ理論準拠 + Kelly基準） ────
 // テスタ氏DD実績: デイトレ max−10% / スイング max−20%（all-time HWM比）
@@ -184,6 +185,127 @@ export async function applyDrawdownControl(
     await insertSystemLog(db, 'WARN', 'RISK',
       `DD ${result.level}: ${result.ddPct.toFixed(1)}% — lotMult=${result.lotMultiplier}で継続`,
       `HWM=${result.hwm.toFixed(0)} Balance=${result.balance.toFixed(0)}`);
+  }
+}
+
+// ─── 市場別DD管理（AssetClass単位の独立DD） ───────────────
+// 目的: ある市場（例: 日本株）がDD STOPでも他市場は通常営業を継続
+// 全体DD（global）は安全弁として維持
+
+const ASSET_CLASSES: AssetClass[] = ['forex', 'index', 'stock', 'commodity', 'crypto'];
+
+const MARKET_LABEL: Record<AssetClass, string> = {
+  forex: '為替', index: '株式指数', stock: '個別株', commodity: '商品', crypto: '暗号資産',
+};
+
+/** AssetClass → 該当する全pairリスト */
+function getPairsForAssetClass(assetClass: AssetClass): string[] {
+  return INSTRUMENTS.filter(i => i.assetClass === assetClass).map(i => i.pair);
+}
+
+/** 市場別の実現PnL合計を取得（初期資本の按分 + 実現PnL） */
+export async function getMarketBalance(db: D1Database, assetClass: AssetClass): Promise<number> {
+  const pairs = getPairsForAssetClass(assetClass);
+  if (pairs.length === 0) return 0;
+  const placeholders = pairs.map(() => '?').join(',');
+  const row = await db
+    .prepare(
+      `SELECT COALESCE(SUM(pnl), 0) AS totalPnl
+       FROM positions
+       WHERE status = 'CLOSED' AND pair IN (${placeholders})`
+    )
+    .bind(...pairs)
+    .first<{ totalPnl: number }>();
+  // 初期資本を市場数で按分
+  const marketCapital = INITIAL_BALANCE / ASSET_CLASSES.length;
+  return marketCapital + (row?.totalPnl ?? 0);
+}
+
+/** 市場別HWM取得 */
+export async function getMarketHWM(db: D1Database, assetClass: AssetClass): Promise<number> {
+  const val = await getRiskStateValue(db, `hwm:${assetClass}`);
+  return val ? parseFloat(val) : INITIAL_BALANCE / ASSET_CLASSES.length;
+}
+
+/** 市場別HWM更新 */
+export async function updateMarketHWM(db: D1Database, assetClass: AssetClass, balance: number): Promise<boolean> {
+  const hwm = await getMarketHWM(db, assetClass);
+  if (balance > hwm) {
+    await setRiskStateValue(db, `hwm:${assetClass}`, balance.toString());
+    return true;
+  }
+  return false;
+}
+
+/** 市場別DD段階判定（MARKET_DD_* 閾値を使用） */
+export async function getMarketDrawdownLevel(db: D1Database, assetClass: AssetClass): Promise<DrawdownResult> {
+  // 市場別DD完全停止チェック
+  const ddStopped = await getRiskStateValue(db, `dd_stopped:${assetClass}`);
+  if (ddStopped === 'true') {
+    const hwm = await getMarketHWM(db, assetClass);
+    const balance = await getMarketBalance(db, assetClass);
+    return { level: 'STOP', ddPct: hwm > 0 ? ((hwm - balance) / hwm) * 100 : 0, hwm, balance, lotMultiplier: 0 };
+  }
+
+  const balance = await getMarketBalance(db, assetClass);
+  const hwm = await getMarketHWM(db, assetClass);
+  const ddPct = hwm > 0 ? ((hwm - balance) / hwm) * 100 : 0;
+
+  let level: DrawdownLevel;
+  let lotMultiplier: number;
+
+  if (ddPct >= MARKET_DD_STOP) {
+    level = 'STOP';
+    lotMultiplier = 0;
+  } else if (ddPct >= MARKET_DD_HALT) {
+    level = 'HALT';
+    lotMultiplier = 0.1;
+  } else if (ddPct >= MARKET_DD_WARNING) {
+    level = 'WARNING';
+    lotMultiplier = 0.25;
+  } else if (ddPct >= MARKET_DD_CAUTION) {
+    level = 'CAUTION';
+    lotMultiplier = 0.5;
+  } else {
+    level = 'NORMAL';
+    lotMultiplier = 1.0;
+  }
+
+  return { level, ddPct, hwm, balance, lotMultiplier };
+}
+
+/** 市場別DD制御アクション */
+export async function applyMarketDrawdownControl(
+  db: D1Database,
+  assetClass: AssetClass,
+  result: DrawdownResult
+): Promise<void> {
+  if (result.level === 'STOP') {
+    await setRiskStateValue(db, `dd_stopped:${assetClass}`, 'true');
+    await insertSystemLog(db, 'WARN', 'RISK',
+      `[${MARKET_LABEL[assetClass]}] DD STOP: ${result.ddPct.toFixed(1)}% — 市場別停止`);
+  } else if (result.level === 'HALT' || result.level === 'WARNING') {
+    await insertSystemLog(db, 'WARN', 'RISK',
+      `[${MARKET_LABEL[assetClass]}] DD ${result.level}: ${result.ddPct.toFixed(1)}% — lotMult=${result.lotMultiplier}`,
+      `HWM=${result.hwm.toFixed(0)} Balance=${result.balance.toFixed(0)}`);
+  }
+}
+
+/** 全市場のDD段階を一括取得（APIレスポンス用） */
+export async function getAllMarketDrawdownLevels(db: D1Database): Promise<Record<AssetClass, { level: DrawdownLevel; ddPct: number }>> {
+  const result = {} as Record<AssetClass, { level: DrawdownLevel; ddPct: number }>;
+  for (const ac of ASSET_CLASSES) {
+    const dd = await getMarketDrawdownLevel(db, ac);
+    result[ac] = { level: dd.level, ddPct: dd.ddPct };
+  }
+  return result;
+}
+
+/** 全市場のHWM更新（毎分cron呼び出し用） */
+export async function updateAllMarketHWMs(db: D1Database): Promise<void> {
+  for (const ac of ASSET_CLASSES) {
+    const balance = await getMarketBalance(db, ac);
+    await updateMarketHWM(db, ac, balance);
   }
 }
 
