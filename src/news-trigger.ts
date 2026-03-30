@@ -40,11 +40,13 @@ export interface NewsTriggerResult {
 
 // ─── 緊急度判定 ────────────────────────────────────────────────────────────
 
-function isEmergency(title: string, scores: { relevance: number; sentiment: number }): boolean {
+function isEmergency(title: string, scores: { relevance: number; sentiment: number; composite: number }): boolean {
   const hasKeyword = EMERGENCY_KEYWORDS.some(kw =>
     title.toLowerCase().includes(kw.toLowerCase())
   );
-  return (scores.relevance >= 9 && scores.sentiment >= 8) || hasKeyword;
+  // スコア条件: relevance≥9 かつ sentiment≥8（高確信度）
+  // キーワード条件: キーワード一致 かつ composite≥8.5（低スコアの誤検知を防止）
+  return (scores.relevance >= 9 && scores.sentiment >= 8) || (hasKeyword && scores.composite >= 8.5);
 }
 
 function isTrendInfluence(scores: { relevance: number; sentiment: number; composite: number }): boolean {

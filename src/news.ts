@@ -80,9 +80,9 @@ const SOURCES: SourceDef[] = [
   // Polygon.io News（センチメント付き・FX/株/暗号資産網羅）— 要 POLYGON_API_KEY
   { name: 'Polygon',          type: 'polygon',    enabled: true,  url: 'https://api.polygon.io/v2/reference/news?limit=10' },
   // Finnhub FX News（FX専用カテゴリ・高レート枠）— 要 FINNHUB_API_KEY（calendar.tsと共有可）
-  { name: 'Finnhub_FX',       type: 'finnhub',    enabled: true,  url: 'https://finnhub.io/api/v1/news?category=forex' },
+  { name: 'Finnhub_FX',       type: 'finnhub',    enabled: false, url: 'https://finnhub.io/api/v1/news?category=forex' },
   // Finnhub 一般ニュース（マクロ経済・中央銀行）
-  { name: 'Finnhub_General',  type: 'finnhub',    enabled: true,  url: 'https://finnhub.io/api/v1/news?category=general' },
+  { name: 'Finnhub_General',  type: 'finnhub',    enabled: false, url: 'https://finnhub.io/api/v1/news?category=general' },
   // MarketAux（sentiment_score -1〜+1 付き・金融ニュース特化）— 要 MARKETAUX_API_KEY
   { name: 'MarketAux',        type: 'marketaux',  enabled: true,  url: 'https://api.marketaux.com/v1/news/all?language=en&filter_entities=true&limit=10' },
   // CryptoPanic（bullish/bearish 投票スコア付き・暗号資産専用）— 無料版終了のため無効化（2026-03-23）
@@ -700,7 +700,7 @@ export async function filterAndTranslateWithHaiku(
       for (const r of results) {
         if (r.index < 0 || r.index >= items.length) continue;
         if (r.accepted === false) {
-          rejectMapCached.set(r.index, r.reject_reason ?? '除外（理由不明）');
+          rejectMapCached.set(r.index, r.reject_reason ?? 'その他');
           continue;
         }
         const item = items[r.index];
@@ -898,7 +898,7 @@ JSON配列のみを返し、他の文字は一切含めないでください。`
 
       // Haikuが明示的に除外 → そのまま不採用
       if (r.accepted === false) {
-        rejectMap.set(r.index, r.reject_reason ?? '除外（理由不明）');
+        rejectMap.set(r.index, r.reject_reason ?? 'その他');
         continue;
       }
 

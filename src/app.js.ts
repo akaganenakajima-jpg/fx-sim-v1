@@ -2184,12 +2184,17 @@ export const JS = `
     var ddStage = ddPctNum >= DD_STP ? 'STOP' : ddPctNum >= DD_HLT ? 'HALT' : ddPctNum >= DD_WARN ? 'WARNING' : ddPctNum >= DD_CAUT ? 'CAUTION' : 'NORMAL';
     var ddOk = ddPctNum < DD_WARN;
 
-    // ニュース採用率計算（分母: 全フェッチ件数 = latestNews.length）
+    // ニュース採用率計算: NEWS_STATシステムログから直近バッチの採用率を取得
+    // latestNews（cacheスナップショット）とacceptedNews（DB累積）は時間窓が異なるため除算不可
     var newsFetched = (data.latestNews || []).length;
-    var newsAnalyzed = (data.newsAnalysis || []).length;
-    var newsAttention = (data.newsAnalysis || []).filter(function(n) { return n.attention; }).length;
-    var newsTotal = newsFetched || newsAnalyzed;
-    var newsAdoptRate = newsTotal > 0 ? Math.round(newsAttention / newsTotal * 100) : 0;
+    var newsStatLog = (data.systemLogs || []).find(function(l) { return l.category === 'NEWS_STAT'; });
+    var newsAdoptRate = 0;
+    if (newsStatLog && newsStatLog.detail) {
+      try {
+        var statDetail = JSON.parse(newsStatLog.detail);
+        newsAdoptRate = statDetail.rate || 0;
+      } catch(e) {}
+    }
     var newsOk = newsFetched > 0;
 
     // Cron詳細
