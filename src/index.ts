@@ -1480,7 +1480,7 @@ async function run(env: Env): Promise<void> {
           openaiApiKey: env.OPENAI_API_KEY,
           anthropicApiKey: env.ANTHROPIC_API_KEY,
         }, regimeContext, prices);
-        const pathBMs = Date.now() - tPathB;
+        pathBMs = Date.now() - tPathB;
         await setCacheValue(env.DB, 'last_path_b_at', String(Date.now()));
         console.log(`[fx-sim] Path B: ${pathBResult.decisions.length}件シグナル, ${pathBResult.reversals.length}件REVERSE (${pathBMs}ms)`);
       } catch (e) {
@@ -1538,6 +1538,13 @@ async function run(env: Env): Promise<void> {
       await insertSystemLog(env.DB, 'WARN', 'CRON',
         `実行時間超過: ${grandTotal}ms`,
         JSON.stringify({ fetchMs, tpSlMs, newsMs, pathBMs, paramReviewMs }));
+    }
+
+    // 毎時ログパージ（system_logs ≤1000件維持）
+    if (now.getUTCMinutes() === 0) {
+      try {
+        await env.DB.prepare(`DELETE FROM system_logs WHERE id NOT IN (SELECT id FROM system_logs ORDER BY id DESC LIMIT 1000)`).run();
+      } catch {}
     }
 
     // 日次処理（JST 0:00 = UTC 15:00 に実行）
