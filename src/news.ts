@@ -452,7 +452,8 @@ JSON配列のみを返し、他の文字は一切含めないでください。`
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           contents: [{ parts: [{ text: prompt }], role: 'user' }],
-          generation_config: { temperature: 0, max_output_tokens: 256 },
+          generationConfig: { temperature: 0, maxOutputTokens: 256 },
+          thinkingConfig: { thinkingBudget: 0 },
         }),
       }
     );
@@ -466,14 +467,16 @@ JSON配列のみを返し、他の文字は一切含めないでください。`
     }
 
     const data = await res.json() as {
-      candidates?: Array<{ content: { parts: Array<{ text: string }> } }>;
+      candidates?: Array<{ content: { parts: Array<{ text: string; thought?: boolean }> } }>;
       usageMetadata?: { promptTokenCount?: number; candidatesTokenCount?: number };
     };
     if (data.usageMetadata) {
       void insertTokenUsage(db, 'gemini-2.5-flash', 'NEWS_FILTER',
         data.usageMetadata.promptTokenCount ?? 0, data.usageMetadata.candidatesTokenCount ?? 0);
     }
-    const text = data.candidates?.[0]?.content?.parts?.[0]?.text ?? '[]';
+    const allPartsFilter = data.candidates?.[0]?.content?.parts ?? [];
+    const responsePartFilter = allPartsFilter.find(p => !p.thought) ?? allPartsFilter[0];
+    const text = responsePartFilter?.text ?? '[]';
     const relevantIndices: number[] = JSON.parse(text);
 
     // キャッシュ保存
@@ -808,7 +811,10 @@ JSON配列のみを返し、他の文字は一切含めないでください。`
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           contents: [{ parts: [{ text: prompt }], role: 'user' }],
-          generation_config: { temperature: 0, max_output_tokens: 4096 },
+          // thinking モード無効化: ニュース分類タスクは連鎖推論不要、かつ
+          // thinking=ON だと parts[0] が思考内容になり JSON 取得に失敗する
+          generationConfig: { temperature: 0, maxOutputTokens: 4096 },
+          thinkingConfig: { thinkingBudget: 0 },
         }),
       }
     );
@@ -822,9 +828,18 @@ JSON配列のみを返し、他の文字は一切含めないでください。`
     }
 
     const data = await res.json() as {
-      candidates?: Array<{ content: { parts: Array<{ text: string }> } }>;
+      candidates?: Array<{ content: { parts: Array<{ text: string; thought?: boolean }> } }>;
+      usageMetadata?: { promptTokenCount?: number; candidatesTokenCount?: number };
     };
-    const rawText = data.candidates?.[0]?.content?.parts?.[0]?.text ?? '[]';
+    if (data.usageMetadata) {
+      void insertTokenUsage(db, 'gemini-2.5-flash', 'NEWS_TRANSLATE',
+        data.usageMetadata.promptTokenCount ?? 0, data.usageMetadata.candidatesTokenCount ?? 0);
+    }
+    // thinking モデルは parts[0] が思考内容（thought:true）、parts[1] 以降が実際の回答
+    // thought フラグのないパートを優先して取得する（thinkingBudget:0 でも念のため）
+    const allParts = data.candidates?.[0]?.content?.parts ?? [];
+    const responsePart = allParts.find(p => !p.thought) ?? allParts[0];
+    const rawText = responsePart?.text ?? '[]';
     // レスポンスに余分なテキストが混入することがあるためJSON配列部分だけ抽出
     const jsonMatch = rawText.match(/\[[\s\S]*\]/);
     const results: HaikuTranslatedItem[] = jsonMatch ? JSON.parse(jsonMatch[0]) : [];
