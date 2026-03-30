@@ -21,6 +21,28 @@
  */
 export const INITIAL_CAPITAL = 10_000;
 
+// ─── ドローダウン段階閾値（テスタ理論準拠） ─────────────────────────────────────
+/**
+ * テスタ氏のDD管理実績:
+ *   デイトレ時代: max DD −10%（all-time HWM比）
+ *   中長期移行後: max DD −20%（all-time HWM比）
+ *   出典: https://x.com/tesuta001/status/1731166226410537088
+ *
+ * WARNING(10%) = テスタのデイトレ上限。ここを超えると本格的な警戒ライン
+ * STOP(20%)    = テスタのスイング上限。ここで完全停止
+ */
+export const DD_CAUTION  =  7;  // Half Kelly
+export const DD_WARNING  = 10;  // Quarter Kelly — テスタ デイトレ上限
+export const DD_HALT     = 15;  // Micro Kelly
+export const DD_STOP     = 20;  // 完全停止 — テスタ スイング上限
+
+/**
+ * 銘柄別日次損失上限（テスタ流「シナリオ崩壊銘柄はやらない」の自動化）
+ * 1銘柄が1日にこれ以上負けたら、その日はその銘柄をスキップする
+ * UTC 00:00 で自動リセット（SQL の WHERE closed_at >= todayStart で実現）
+ */
+export const INSTRUMENT_DAILY_LOSS_CAP = 100;  // ¥100/銘柄/日
+
 // ─── 勝率表示閾値 ──────────────────────────────────────────────────────────────
 /**
  * 勝率グリーン表示の閾値（% 単位の整数）

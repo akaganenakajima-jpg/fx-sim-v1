@@ -377,11 +377,10 @@ export function getDashboardHtml(): string {
   <!-- DD段階バー -->
   <div class="sec">ドローダウン段階</div>
   <div class="dd-bar" id="dd-bar">
-    <div class="dd-seg" style="width:40%;background:var(--green)" title="NORMAL"></div>
-    <div class="dd-seg" style="width:20%;background:var(--orange);opacity:0.3" title="CAUTION"></div>
-    <div class="dd-seg" style="width:15%;background:var(--orange);opacity:0.15" title="WARNING"></div>
-    <div class="dd-seg" style="width:15%;background:var(--red);opacity:0.1" title="HALT"></div>
-    <div class="dd-seg" style="width:10%;background:var(--red);opacity:0.05" title="STOP"></div>
+    <div class="dd-seg" style="width:35%;background:var(--green)" title="NORMAL 〜7%"></div>
+    <div class="dd-seg" style="width:15%;background:var(--orange);opacity:0.3" title="CAUTION 7〜10%"></div>
+    <div class="dd-seg" style="width:25%;background:var(--orange);opacity:0.15" title="WARNING 10〜15%"></div>
+    <div class="dd-seg" style="width:25%;background:var(--red);opacity:0.1" title="HALT 15〜20%"></div>
   </div>
   <div style="margin:0 16px 8px;font-size:11px;color:var(--tertiary)" id="dd-labels">
     <span id="dd-current" style="color:var(--green);font-weight:600;display:block;margin-bottom:2px">--</span>

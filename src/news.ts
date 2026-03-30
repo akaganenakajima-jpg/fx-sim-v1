@@ -80,9 +80,9 @@ const SOURCES: SourceDef[] = [
   // Polygon.io News（センチメント付き・FX/株/暗号資産網羅）— 要 POLYGON_API_KEY
   { name: 'Polygon',          type: 'polygon',    enabled: true,  url: 'https://api.polygon.io/v2/reference/news?limit=10' },
   // Finnhub FX News（FX専用カテゴリ・高レート枠）— 要 FINNHUB_API_KEY（calendar.tsと共有可）
-  { name: 'Finnhub_FX',       type: 'finnhub',    enabled: true,  url: 'https://finnhub.io/api/v1/news?category=forex' },
+  { name: 'Finnhub_FX',       type: 'finnhub',    enabled: false, url: 'https://finnhub.io/api/v1/news?category=forex' },
   // Finnhub 一般ニュース（マクロ経済・中央銀行）
-  { name: 'Finnhub_General',  type: 'finnhub',    enabled: true,  url: 'https://finnhub.io/api/v1/news?category=general' },
+  { name: 'Finnhub_General',  type: 'finnhub',    enabled: false, url: 'https://finnhub.io/api/v1/news?category=general' },
   // MarketAux（sentiment_score -1〜+1 付き・金融ニュース特化）— 要 MARKETAUX_API_KEY
   { name: 'MarketAux',        type: 'marketaux',  enabled: true,  url: 'https://api.marketaux.com/v1/news/all?language=en&filter_entities=true&limit=10' },
   // CryptoPanic（bullish/bearish 投票スコア付き・暗号資産専用）— 無料版終了のため無効化（2026-03-23）
@@ -700,7 +700,7 @@ export async function filterAndTranslateWithHaiku(
       for (const r of results) {
         if (r.index < 0 || r.index >= items.length) continue;
         if (r.accepted === false) {
-          rejectMapCached.set(r.index, r.reject_reason ?? '除外（理由不明）');
+          rejectMapCached.set(r.index, r.reject_reason ?? 'その他');
           continue;
         }
         const item = items[r.index];
@@ -825,7 +825,9 @@ JSON配列のみを返し、他の文字は一切含めないでください。`
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           contents: [{ parts: [{ text: prompt }], role: 'user' }],
-          generationConfig: { temperature: 0, maxOutputTokens: 4096 },
+          // thinkingBudget:0 = thinking無効（ニュースフィルタはJSON出力のみ必要）
+          // thinking有効のままだとthinking tokensがmaxOutputTokensを消費し実回答が切れる
+          generationConfig: { temperature: 0, maxOutputTokens: 8192, thinkingConfig: { thinkingBudget: 0 } },
           // 地政学・軍事ニュースを金融分析コンテキストで処理できるよう設定
           safetySettings: [
             { category: 'HARM_CATEGORY_DANGEROUS_CONTENT', threshold: 'BLOCK_ONLY_HIGH' },
@@ -855,11 +857,21 @@ JSON配列のみを返し、他の文字は一切含めないでください。`
     // thinking モデルは parts[0] が思考内容（thought:true）、parts[1] 以降が実際の回答
     // thought フラグのないパートを優先して取得する（thinkingBudget:0 でも念のため）
     const allParts = data.candidates?.[0]?.content?.parts ?? [];
+    // candidates が空 = safety filter によるブロック → フィルタなしで全通過
+    if (!data.candidates?.length) {
+      const fb = (data as { promptFeedback?: { blockReason?: string } }).promptFeedback;
+      console.log(`[news] filter+translate: candidates=0 blockReason=${fb?.blockReason ?? 'none'} — フィルタなしで全通過`);
+      return items;
+    }
     const responsePart = allParts.find(p => !p.thought) ?? allParts[0];
     const rawText = responsePart?.text ?? '[]';
     // レスポンスに余分なテキストが混入することがあるためJSON配列部分だけ抽出
     const jsonMatch = rawText.match(/\[[\s\S]*\]/);
     const results: HaikuTranslatedItem[] = jsonMatch ? JSON.parse(jsonMatch[0]) : [];
+    if (!jsonMatch) {
+      console.log(`[news] filter+translate: JSON未検出 rawText=${rawText.slice(0, 100)} — フィルタなしで全通過`);
+      return items;
+    }
 
     // キャッシュ保存
     try {
@@ -886,7 +898,7 @@ JSON配列のみを返し、他の文字は一切含めないでください。`
 
       // Haikuが明示的に除外 → そのまま不採用
       if (r.accepted === false) {
-        rejectMap.set(r.index, r.reject_reason ?? '除外（理由不明）');
+        rejectMap.set(r.index, r.reject_reason ?? 'その他');
         continue;
       }
 

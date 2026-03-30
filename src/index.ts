@@ -33,7 +33,7 @@ import { determineRegime, formatRegimeForPrompt, getRegimeProhibitions } from '.
 import { getWeekendStatus, lockProfitsForWeekend, forceCloseAllForWeekend, getWeekendNewsDigest, saveFridayClosePrices, detectGaps, resetWeekendFlags, getTradeableInstruments } from './weekend';
 import { runLogicDecisions } from './logic-trading';
 import { runParamReview } from './param-review';
-import { evaluateRecoveryIfNeeded } from './risk-manager';
+import { evaluateRecoveryIfNeeded, getDrawdownLevel, checkInstrumentDailyLoss } from './risk-manager';
 import { runNewsTrigger, consumeEmergencyForceFlag } from './news-trigger';
 // AI銘柄マネージャー
 import { fetchFundamentals, saveFundamentals, fetchAllListedStocks, cleanupOldFundamentals } from './jquants';
@@ -1304,6 +1304,15 @@ async function run(env: Env): Promise<void> {
 
       // BUY/SELL: ポジション開設
       if (result.decisions.length > 0) {
+        // DD STOPチェック: dd_stopped=true の場合は PATH_B 経由のエントリーも停止
+        // （B2 CB 発動→B1フォールバックでも DD STOP をバイパスしないための保護）
+        const ddCheckForPathB = await getDrawdownLevel(env.DB);
+        if (ddCheckForPathB.level === 'STOP') {
+          await insertSystemLog(env.DB, 'WARN', 'RISK',
+            'DD STOP: PATH_Bエントリー全銘柄スキップ',
+            `DD=${ddCheckForPathB.ddPct.toFixed(1)}% decisions=${result.decisions.length}件`);
+          return handledPairs;
+        }
         let pathBNewEntries = 0; // W005: このtickの新規開設数
         const PATH_B_OPEN_LIMIT = 10; // W005: 全体OPEN上限
         for (const dec of result.decisions) {
@@ -1317,6 +1326,14 @@ async function run(env: Env): Promise<void> {
               `PATH_B OPEN上限ブロック: ${dec.pair}`,
               `OPEN=${openPairsForPathB.size + pathBNewEntries}/${PATH_B_OPEN_LIMIT}`
             ).catch(() => {});
+            continue;
+          }
+          // 銘柄別日次損失上限チェック（テスタ流: シナリオ崩壊銘柄はやらない）
+          const instDailyB = await checkInstrumentDailyLoss(env.DB, dec.pair, new Date());
+          if (instDailyB.paused) {
+            await insertSystemLog(env.DB, 'INFO', 'RISK',
+              `PATH_B 銘柄日次Cap超過スキップ: ${dec.pair}`,
+              `dailyPnl=${instDailyB.dailyPnl.toFixed(0)}円`);
             continue;
           }
           try {
