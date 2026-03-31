@@ -461,6 +461,23 @@ export function isMarketOpen(assetClass: AssetClass, now: Date): boolean {
  * @param db Cloudflare D1 Database
  * @param now 現在時刻（UTC）
  */
+/**
+ * 全 AssetClass の市場別 DD 停止状態を一括取得する（API表示・PATH_B判断用）。
+ * dd_stopped:{ac} = 'true' → その市場は DD STOP 中。
+ */
+export async function getAllMarketDrawdownLevels(db: D1Database): Promise<Record<AssetClass, boolean>> {
+  const result = {} as Record<AssetClass, boolean>;
+  for (const ac of ASSET_CLASSES_FOR_DD) {
+    try {
+      const val = await getRiskStateValue(db, `dd_stopped:${ac}`);
+      result[ac] = val === 'true';
+    } catch {
+      result[ac] = false;
+    }
+  }
+  return result;
+}
+
 export async function checkMarketCloseAndReleaseDDStop(db: D1Database, now: Date): Promise<void> {
   for (const ac of ASSET_CLASSES_FOR_DD) {
     try {

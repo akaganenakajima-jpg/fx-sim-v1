@@ -32,6 +32,7 @@ export interface TempParamEntry {
 
 export interface NewsTriggerResult {
   triggerType:     'EMERGENCY' | 'TREND_INFLUENCE' | 'NONE';
+  triggerId?:      number;  // news_trigger_log.id（FK伝搬用）
   newsTitle?:      string;
   newsScore?:      number;
   affectedPairs?:  string[];
@@ -86,7 +87,7 @@ async function fetchLatestTriggerCandidate(
     .prepare(
       `SELECT id, hash, title_ja, title, composite_score, scores, fetched_at
        FROM news_raw
-       WHERE haiku_accepted = 1
+       WHERE filter_accepted = 1
          AND id > ?
          AND composite_score >= 7.0
        ORDER BY composite_score DESC
@@ -134,12 +135,12 @@ export async function consumeEmergencyForceFlag(db: D1Database): Promise<boolean
   return flagAge < 10 * 60 * 1000;
 }
 
-// ─── トレンド: GPTによる臨時パラメーター生成 ─────────────────────────────
+// ─── トレンド: Gemini Flashによる臨時パラメーター生成 ────────────────────
 
-async function callGptForTempParams(
+async function callGeminiForTempParams(
   newsTitle: string,
   newsScore: number,
-  openaiApiKey: string,
+  geminiApiKey: string,
 ): Promise<{ pairs: TempParamEntry[]; reason: string; expiresInHours: number } | null> {
   const prompt = [
     `あなたはFXロジックトレーディングのパラメーターアナリストです。`,
@@ -182,33 +183,36 @@ async function callGptForTempParams(
   ].join('\n');
 
   try {
-    const res = await fetch('https://api.openai.com/v1/chat/completions', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${openaiApiKey}`,
+    const res = await fetch(
+      `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${geminiApiKey}`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          contents: [{ parts: [{ text: prompt }] }],
+          generationConfig: {
+            responseMimeType: 'application/json',
+            temperature: 0.2,
+          },
+        }),
+        signal: AbortSignal.timeout(15000),
       },
-      body: JSON.stringify({
-        model: 'gpt-4.1-mini',
-        messages: [{ role: 'user', content: prompt }],
-        response_format: { type: 'json_object' },
-        temperature: 0.2,
-      }),
-      signal: AbortSignal.timeout(15000),
-    });
+    );
     if (!res.ok) {
-      console.warn(`[news-trigger] GPT HTTP error: ${res.status} ${res.statusText}`);
+      console.warn(`[news-trigger] Gemini Flash HTTP error: ${res.status} ${res.statusText}`);
       return null;
     }
-    const data = await res.json() as { choices?: Array<{ message: { content: string } }> };
-    const text = data.choices?.[0]?.message?.content;
+    const data = await res.json() as {
+      candidates?: Array<{ content: { parts: Array<{ text: string }> } }>;
+    };
+    const text = data.candidates?.[0]?.content?.parts?.[0]?.text;
     if (!text) {
-      console.warn(`[news-trigger] GPT empty response`);
+      console.warn(`[news-trigger] Gemini Flash empty response`);
       return null;
     }
     return JSON.parse(text) as { pairs: TempParamEntry[]; reason: string; expiresInHours: number };
   } catch (e) {
-    console.warn(`[news-trigger] GPT call failed: ${String(e).slice(0, 100)}`);
+    console.warn(`[news-trigger] Gemini Flash call failed: ${String(e).slice(0, 100)}`);
     return null;
   }
 }
@@ -222,6 +226,7 @@ async function saveTempParams(
   expiresInHours: number,
   newsTitle: string,
   newsScore: number,
+  triggerId?: number,
 ): Promise<string[]> {
   const now = new Date();
   const expiresAt = new Date(now.getTime() + expiresInHours * 60 * 60 * 1000).toISOString();
@@ -233,8 +238,8 @@ async function saveTempParams(
         `INSERT INTO news_temp_params
            (pair, event_type, rsi_oversold, rsi_overbought, adx_min,
             atr_tp_multiplier, atr_sl_multiplier, vix_max,
-            reason, news_title, news_score, expires_at, applied_by, created_at)
-         VALUES (?, 'TREND_INFLUENCE', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'AI_NEWS_v1', ?)`
+            reason, news_title, news_score, expires_at, applied_by, created_at, trigger_id)
+         VALUES (?, 'TREND_INFLUENCE', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'AI_NEWS_v1', ?, ?)`
       )
       .bind(
         e.pair,
@@ -249,6 +254,7 @@ async function saveTempParams(
         newsScore,
         expiresAt,
         now.toISOString(),
+        triggerId ?? null,
       )
       .run();
     appliedPairs.push(e.pair);
@@ -319,7 +325,7 @@ export async function getActiveTempParams(
  */
 export async function runNewsTrigger(
   db: D1Database,
-  openaiApiKey?: string,
+  geminiApiKey?: string,
 ): Promise<NewsTriggerResult> {
   const candidate = await fetchLatestTriggerCandidate(db);
 
@@ -340,13 +346,14 @@ export async function runNewsTrigger(
   if (isEmergency(title, parsedScores)) {
     await setEmergencyForceFlag(db);
 
-    await db
+    const emergencyLog = await db
       .prepare(
-        `INSERT INTO news_trigger_log (trigger_type, news_title, news_score, affected_pairs, detail, created_at)
-         VALUES ('EMERGENCY', ?, ?, NULL, 'PATH_B強制発火フラグセット', ?)`
+        `INSERT INTO news_trigger_log (trigger_type, news_title, news_score, relevance, sentiment, affected_pairs, detail, created_at)
+         VALUES ('EMERGENCY', ?, ?, ?, ?, NULL, 'PATH_B強制発火フラグセット', ?)
+         RETURNING id`
       )
-      .bind(title, row.composite_score, new Date().toISOString())
-      .run();
+      .bind(title, row.composite_score, parsedScores.relevance, parsedScores.sentiment, new Date().toISOString())
+      .first<{ id: number }>();
 
     await insertSystemLog(db, 'INFO', 'NEWS_TRIGGER',
       `緊急ニュース検出 → PATH_B強制発火: ${title.slice(0, 60)}`,
@@ -354,6 +361,7 @@ export async function runNewsTrigger(
 
     return {
       triggerType: 'EMERGENCY',
+      triggerId: emergencyLog?.id,
       newsTitle: title,
       newsScore: row.composite_score ?? undefined,
       emergencyForced: true,
@@ -362,70 +370,79 @@ export async function runNewsTrigger(
 
   // トレンド影響判定 → 臨時パラメーター
   if (isTrendInfluence(parsedScores)) {
-    if (!openaiApiKey) {
+    if (!geminiApiKey) {
       await insertSystemLog(db, 'WARN', 'NEWS_TRIGGER',
         `トレンドニュース検出だがAPIキーなしでスキップ: ${title.slice(0, 60)}`, '');
       return { triggerType: 'TREND_INFLUENCE', newsTitle: title, emergencyForced: false };
     }
 
-    const gptResult = await callGptForTempParams(title, row.composite_score ?? 7.5, openaiApiKey);
+    const geminiResult = await callGeminiForTempParams(title, row.composite_score ?? 7.5, geminiApiKey);
 
-    if (!gptResult) {
-      // GPT呼び出し失敗（APIエラー・タイムアウト）— APIキー有効だが呼び出しに失敗
-      await db
+    if (!geminiResult) {
+      // Gemini呼び出し失敗（APIエラー・タイムアウト）— APIキー有効だが呼び出しに失敗
+      const failLog = await db
         .prepare(
-          `INSERT INTO news_trigger_log (trigger_type, news_title, news_score, affected_pairs, detail, created_at)
-           VALUES ('TREND_INFLUENCE', ?, ?, NULL, 'GPT呼び出し失敗', ?)`
+          `INSERT INTO news_trigger_log (trigger_type, news_title, news_score, relevance, sentiment, affected_pairs, detail, created_at)
+           VALUES ('TREND_INFLUENCE', ?, ?, ?, ?, NULL, 'Gemini呼び出し失敗', ?)
+           RETURNING id`
         )
-        .bind(title, row.composite_score, new Date().toISOString())
-        .run();
+        .bind(title, row.composite_score, parsedScores.relevance, parsedScores.sentiment, new Date().toISOString())
+        .first<{ id: number }>();
       await insertSystemLog(db, 'WARN', 'NEWS_TRIGGER',
-        `GPT呼び出し失敗でTREND_INFLUENCEスキップ: ${title.slice(0, 60)}`,
+        `Gemini呼び出し失敗でTREND_INFLUENCEスキップ: ${title.slice(0, 60)}`,
         `score=${row.composite_score}`);
-      return { triggerType: 'TREND_INFLUENCE', newsTitle: title, emergencyForced: false, affectedPairs: [] };
+      return { triggerType: 'TREND_INFLUENCE', triggerId: failLog?.id, newsTitle: title, emergencyForced: false, affectedPairs: [] };
     }
 
-    if (gptResult.pairs.length === 0) {
-      // GPTが「影響軽微・変更不要」と判断した場合
-      await db
+    if (geminiResult.pairs.length === 0) {
+      // Geminiが「影響軽微・変更不要」と判断した場合
+      const noneLog = await db
         .prepare(
-          `INSERT INTO news_trigger_log (trigger_type, news_title, news_score, affected_pairs, detail, created_at)
-           VALUES ('TREND_INFLUENCE', ?, ?, NULL, '影響軽微・パラメーター変更なし', ?)`
+          `INSERT INTO news_trigger_log (trigger_type, news_title, news_score, relevance, sentiment, affected_pairs, detail, created_at)
+           VALUES ('TREND_INFLUENCE', ?, ?, ?, ?, NULL, '影響軽微・パラメーター変更なし', ?)
+           RETURNING id`
         )
-        .bind(title, row.composite_score, new Date().toISOString())
-        .run();
-      return { triggerType: 'TREND_INFLUENCE', newsTitle: title, emergencyForced: false, affectedPairs: [] };
+        .bind(title, row.composite_score, parsedScores.relevance, parsedScores.sentiment, new Date().toISOString())
+        .first<{ id: number }>();
+      return { triggerType: 'TREND_INFLUENCE', triggerId: noneLog?.id, newsTitle: title, emergencyForced: false, affectedPairs: [] };
     }
 
-    const appliedPairs = await saveTempParams(
-      db,
-      gptResult.pairs,
-      gptResult.reason,
-      gptResult.expiresInHours,
-      title,
-      row.composite_score ?? 7.5,
-    );
-
-    await db
+    const trendLog = await db
       .prepare(
-        `INSERT INTO news_trigger_log (trigger_type, news_title, news_score, affected_pairs, detail, created_at)
-         VALUES ('TREND_INFLUENCE', ?, ?, ?, ?, ?)`
+        `INSERT INTO news_trigger_log (trigger_type, news_title, news_score, relevance, sentiment, affected_pairs, detail, created_at)
+         VALUES ('TREND_INFLUENCE', ?, ?, ?, ?, ?, ?, ?)
+         RETURNING id`
       )
       .bind(
         title,
         row.composite_score,
-        appliedPairs.join(','),
-        gptResult.reason,
+        parsedScores.relevance,
+        parsedScores.sentiment,
+        geminiResult.pairs.map(p => p.pair).join(','),
+        geminiResult.reason,
         new Date().toISOString(),
       )
-      .run();
+      .first<{ id: number }>();
+
+    const triggerId = trendLog?.id;
+
+    const appliedPairs = await saveTempParams(
+      db,
+      geminiResult.pairs,
+      geminiResult.reason,
+      geminiResult.expiresInHours,
+      title,
+      row.composite_score ?? 7.5,
+      triggerId,
+    );
 
     await insertSystemLog(db, 'INFO', 'NEWS_TRIGGER',
       `トレンドニュース → 臨時パラメーター設定: ${appliedPairs.join(',')}`,
-      `${gptResult.reason.slice(0, 100)} expires=${gptResult.expiresInHours}h`);
+      `${geminiResult.reason.slice(0, 100)} expires=${geminiResult.expiresInHours}h`);
 
     return {
       triggerType: 'TREND_INFLUENCE',
+      triggerId,
       newsTitle: title,
       newsScore: row.composite_score ?? undefined,
       affectedPairs: appliedPairs,

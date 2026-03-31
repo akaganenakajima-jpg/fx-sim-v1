@@ -399,7 +399,6 @@ export const JS = `
     renderAlertBanner(data);
     renderHero(data);
     renderStory(data);
-    renderNewsFeedNow(data);
     renderPositions(data);
     renderMarket(data);
     renderWaiting(data);
@@ -715,40 +714,6 @@ export const JS = `
   }
 
   // ══════════════════════════════════════════
-  // renderNewsFeedNow — ニュース速報（今タブ）
-  // ══════════════════════════════════════════
-
-  function renderNewsFeedNow(data) {
-    var feedEl = el('news-feed-now');
-    if (!feedEl) return;
-    var newsHeader = el('news-now-header');
-    var items = (data.newsAnalysis || []).filter(function(n) { return n.attention; }).slice(0, 3);
-    if (items.length === 0) {
-      feedEl.innerHTML = '';
-      if (newsHeader) newsHeader.style.display = 'none';
-      return;
-    }
-    if (newsHeader) newsHeader.style.display = '';
-
-    feedEl.innerHTML = items.map(function(n) {
-      var score = n.impact ? parseInt(n.impact) : 0;
-      if (isNaN(score)) score = 0;
-      var badgeCls = score >= NEWS_EMERGENCY ? 'nf-badge-emergency' : score >= NEWS_TREND ? 'nf-badge-trend' : 'nf-badge-info';
-      var badgeText = score >= NEWS_EMERGENCY ? '緊急' : score >= NEWS_TREND ? 'トレンド' : '情報';
-      var borderCls = score >= NEWS_EMERGENCY ? 'nf-emergency' : score >= NEWS_TREND ? 'nf-trend' : '';
-      var headline = n.title_ja || n.title || '';
-      var aiText = n.desc_ja || n.title_ja || n.title || '';
-
-      return '<div class="nf-item ' + borderCls + '" onclick="switchTab(\\'tab-news\\')">' +
-        '<div class="nf-header"><span class="nf-badge ' + badgeCls + '">' + badgeText + ' · score ' + score + '</span>' +
-        '<span class="nf-time">' + fmtTimeAgo(n.analyzed_at || '') + '</span></div>' +
-        '<div class="nf-headline">' + escHtml(headline) + '</div>' +
-        '<div class="nf-ai"><span class="nf-ai-label">AI判断</span><span class="nf-ai-text">' + escHtml(aiText) + '</span></div>' +
-        '</div>';
-    }).join('');
-  }
-
-  // ══════════════════════════════════════════
   // renderPositions — 保有ポジション
   // ══════════════════════════════════════════
 
@@ -1043,7 +1008,9 @@ export const JS = `
     var borderCls = isEmergency ? 'nf-emergency' : isAttention ? 'nf-trend' : 'nf-info';
     // impactフィールドはAI判断テキスト（数値スコアではない）
     var impactText = typeof n.impact === 'string' ? n.impact : '';
-    var aiText = n.desc_ja || n.description || impactText || '';
+    // aiText優先順: triggerReason（ニュートリガー由来） > desc_ja > description > impact
+    var triggerReason = (n.triggerReason) || '';
+    var aiText = triggerReason || n.desc_ja || n.description || impactText || '';
     var whyHtml = '';
     if (n.why_chain && n.why_chain.length > 0) {
       var whyNewsUid = 'why-news-' + (idx != null ? idx : 'n0');

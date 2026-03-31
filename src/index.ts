@@ -3,7 +3,7 @@
 // fetch:     GET / → ダッシュボード、GET /api/status → JSON、GET /style.css・/app.js → 静的ファイル
 
 import { getUSDJPY } from './rate';
-import { fetchNews, filterAndTranslateWithHaiku, saveRawNews, purgeOldNewsRaw, type SourceFetchStat, type NewsApiKeys } from './news';
+import { fetchNews, filterAndTranslateNews, saveRawNews, purgeOldNewsRaw, type SourceFetchStat, type NewsApiKeys } from './news';
 import { getMarketIndicators } from './indicators';
 import { fetchOgDescription, newsStage1WithHedge, newsStage2, getAdaptiveB2Timeout, premarketAnalysis, RateLimitError, type NewsAnalysisItem, type NewsStage1Result } from './gemini';
 import { checkAndCloseAllPositions, openPosition, calcRealizedRR } from './position';
@@ -33,7 +33,7 @@ import { determineRegime, formatRegimeForPrompt, getRegimeProhibitions } from '.
 import { getWeekendStatus, lockProfitsForWeekend, forceCloseAllForWeekend, getWeekendNewsDigest, saveFridayClosePrices, detectGaps, resetWeekendFlags, getTradeableInstruments } from './weekend';
 import { runLogicDecisions } from './logic-trading';
 import { runParamReview } from './param-review';
-import { evaluateRecoveryIfNeeded, getDrawdownLevel, checkInstrumentDailyLoss, setGlobalDDEnabled, checkMarketCloseAndReleaseDDStop } from './risk-manager';
+import { evaluateRecoveryIfNeeded, getDrawdownLevel, getAllMarketDrawdownLevels, checkInstrumentDailyLoss, setGlobalDDEnabled, checkMarketCloseAndReleaseDDStop } from './risk-manager';
 import { runNewsTrigger, consumeEmergencyForceFlag } from './news-trigger';
 // AI銘柄マネージャー
 import { fetchFundamentals, saveFundamentals, fetchAllListedStocks, cleanupOldFundamentals } from './jquants';
@@ -477,8 +477,8 @@ async function fetchMarketData(env: Env, now: Date): Promise<MarketData | null> 
     );
   }
 
-  // Haiku でフィルタ + タイトル・概要の日本語化を一括処理（title_ja・desc_ja付与）
-  const news = await filterAndTranslateWithHaiku(newsData.items, env.GEMINI_API_KEY, env.DB);
+  // Gemini Flash でフィルタ + タイトル・概要の日本語化を一括処理（title_ja・desc_ja付与）
+  const news = await filterAndTranslateNews(newsData.items, env.GEMINI_API_KEY, env.DB);
   const activeNewsSources = [...new Set(news.map(n => n.source))].join(',');
   const indicators = indicatorsResult.status === 'fulfilled' ? indicatorsResult.value : { vix: null, us10y: null, nikkei: null, sp500: null, usdjpy: null, btcusd: null, gold: null, eurusd: null, ethusd: null, crudeoil: null, natgas: null, copper: null, silver: null, gbpusd: null, audusd: null, solusd: null, dax: null, nasdaq: null, uk100: null, hk33: null, eurjpy: null, gbpjpy: null, audjpy: null, kawasaki_kisen: null, nippon_yusen: null, softbank_g: null, lasertec: null, tokyo_electron: null, disco: null, advantest: null, fast_retailing: null, nippon_steel: null, mufg: null, mitsui_osk: null, tokio_marine: null, mitsubishi_corp: null, toyota: null, sakura_internet: null, mhi: null, ihi: null, anycolor: null, cover_corp: null, nvda: null, tsla: null, aapl: null, amzn: null, amd: null, meta: null, msft: null, googl: null, fearGreed: null, fearGreedLabel: null, cftcJpyNetLong: null };
   const frankfurterRate = frankfurterResult.status === 'fulfilled' ? frankfurterResult.value : null;
@@ -1268,7 +1268,7 @@ async function runCore(env: Env): Promise<void> {
     // 毎cronパージ（system_logs ≤1000件維持）
     try {
       await env.DB.prepare(`DELETE FROM system_logs WHERE id NOT IN (SELECT id FROM system_logs ORDER BY id DESC LIMIT 1000)`).run();
-      await env.DB.prepare(`DELETE FROM market_cache WHERE key LIKE 'news_haiku_%' AND updated_at < datetime('now', '-2 hours')`).run();
+      await env.DB.prepare(`DELETE FROM market_cache WHERE key LIKE 'news_filter_%' AND updated_at < datetime('now', '-2 hours')`).run();
     } catch {}
 
     // 市場クローズ遷移検出 → dd_stopped:{assetClass} 自動解除
@@ -1323,10 +1323,12 @@ async function runAnalysis(env: Env): Promise<void> {
     const tpSlMs = coreData.tpSlMs;
 
     // 2.8 ニューストリガー（緊急→PATH_B強制）
+    let lastTriggerId: number | undefined;
     try {
-      const triggerResult = await runNewsTrigger(env.DB, env.OPENAI_API_KEY);
+      const triggerResult = await runNewsTrigger(env.DB, getApiKey(env));
+      lastTriggerId = triggerResult.triggerId;
       if (triggerResult.triggerType !== 'NONE') {
-        console.log(`[fx-sim] NEWS_TRIGGER: ${triggerResult.triggerType} title=${triggerResult.newsTitle?.slice(0, 50)}`);
+        console.log(`[fx-sim] NEWS_TRIGGER: ${triggerResult.triggerType} title=${triggerResult.newsTitle?.slice(0, 50)} triggerId=${lastTriggerId}`);
       }
     } catch (e) {
       console.warn(`[fx-sim] runNewsTrigger error: ${String(e).slice(0, 80)}`);
@@ -1452,7 +1454,7 @@ async function runAnalysis(env: Env): Promise<void> {
 
       // BUY/SELL: ポジション開設
       if (result.decisions.length > 0) {
-        // DD STOPチェック: dd_stopped=true の場合は PATH_B 経由のエントリーも停止
+        // DD STOPチェック（グローバル）: dd_stopped=true の場合は PATH_B 経由のエントリーも停止
         // （B2 CB 発動→B1フォールバックでも DD STOP をバイパスしないための保護）
         const ddCheckForPathB = await getDrawdownLevel(env.DB);
         if (ddCheckForPathB.level === 'STOP') {
@@ -1461,6 +1463,8 @@ async function runAnalysis(env: Env): Promise<void> {
             `DD=${ddCheckForPathB.ddPct.toFixed(1)}% decisions=${result.decisions.length}件`);
           return handledPairs;
         }
+        // 市場別 DD STOPチェック: 市場ごとのdd_stopped状態を一括取得
+        const marketDDStopped = await getAllMarketDrawdownLevels(env.DB).catch(() => ({} as Record<string, boolean>));
         let pathBNewEntries = 0; // W005: このtickの新規開設数
         const PATH_B_OPEN_LIMIT = 10; // W005: 全体OPEN上限
         for (const dec of result.decisions) {
@@ -1483,6 +1487,15 @@ async function runAnalysis(env: Env): Promise<void> {
               `PATH_B 銘柄日次Cap超過スキップ: ${dec.pair}`,
               `dailyPnl=${instDailyB.dailyPnl.toFixed(0)}円`);
             continue;
+          }
+          // 市場別 DD STOPチェック（銘柄の assetClass が STOP 中ならスキップ）
+          {
+            const instrument = INSTRUMENTS.find(i => i.pair === dec.pair);
+            if (instrument && marketDDStopped[instrument.assetClass]) {
+              await insertSystemLog(env.DB, 'INFO', 'RISK',
+                `PATH_B 市場DD STOP スキップ: ${dec.pair} (${instrument.assetClass})`, '').catch(() => {});
+              continue;
+            }
           }
           try {
             const instrument = INSTRUMENTS.find(i => i.pair === dec.pair);
@@ -1517,8 +1530,8 @@ async function runAnalysis(env: Env): Promise<void> {
       // decisions テーブルに記録
       if (result.decisions.length > 0) {
         const stmt = env.DB.prepare(
-          `INSERT INTO decisions (pair, rate, decision, tp_rate, sl_rate, reasoning, news_summary, vix, us10y, nikkei, sp500, created_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+          `INSERT INTO decisions (pair, rate, decision, tp_rate, sl_rate, reasoning, news_summary, vix, us10y, nikkei, sp500, created_at, trigger_id, why_chain)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
         );
         await env.DB.batch(result.decisions.map(d => {
           const relevantNews = (d.news_analysis ?? result.newsAnalysis)
@@ -1535,7 +1548,9 @@ async function runAnalysis(env: Env): Promise<void> {
             d.pair, prices.get(d.pair) ?? d.rate, d.decision, d.tp_rate, d.sl_rate,
             `[PATH_B] ${d.reasoning}`, pathBNewsSummary,
             indicators.vix, indicators.us10y, indicators.nikkei, indicators.sp500,
-            now.toISOString()
+            now.toISOString(),
+            lastTriggerId ?? null,
+            null  // why_chain（将来的にAI生成）
           );
         }));
       }
@@ -1607,8 +1622,8 @@ async function runAnalysis(env: Env): Promise<void> {
       if (holdPairs.length > 0) {
         try {
           const holdStmt = env.DB.prepare(
-            `INSERT INTO decisions (pair, rate, decision, tp_rate, sl_rate, reasoning, news_summary, vix, us10y, nikkei, sp500, created_at)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+            `INSERT INTO decisions (pair, rate, decision, tp_rate, sl_rate, reasoning, news_summary, vix, us10y, nikkei, sp500, created_at, trigger_id, why_chain)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
           );
           await env.DB.batch(holdPairs.map(pair => {
             const reason = openPairsForPathB.has(pair)
@@ -1618,7 +1633,9 @@ async function runAnalysis(env: Env): Promise<void> {
               pair, prices.get(pair) ?? 0, 'HOLD', null, null,
               `[PATH_B_HOLD] ${reason}`, newsSummary,
               indicators.vix, indicators.us10y, indicators.nikkei, indicators.sp500,
-              now.toISOString()
+              now.toISOString(),
+              lastTriggerId ?? null,
+              null  // why_chain
             );
           }));
         } catch (e) {
@@ -1758,7 +1775,7 @@ async function runDailyTasks(env: Env, _now: Date): Promise<void> {
     await env.DB.prepare(`DELETE FROM system_logs WHERE id NOT IN (SELECT id FROM system_logs ORDER BY id DESC LIMIT 1000)`).run();
     await env.DB.prepare(`DELETE FROM news_fetch_log WHERE id NOT IN (SELECT id FROM news_fetch_log ORDER BY id DESC LIMIT 5000)`).run();
     // news_haiku_* キャッシュパージ（2時間以上前のものを削除 → 10分毎パージと整合）
-    await env.DB.prepare(`DELETE FROM market_cache WHERE key LIKE 'news_haiku_%' AND updated_at < datetime('now', '-2 hours')`).run();
+    await env.DB.prepare(`DELETE FROM market_cache WHERE key LIKE 'news_filter_%' AND updated_at < datetime('now', '-2 hours')`).run();
     // b2_consecutive_fails リセット（CB解除済み且つ古い場合）
     await env.DB.prepare(
       `DELETE FROM market_cache WHERE key = 'b2_consecutive_fails' AND NOT EXISTS (

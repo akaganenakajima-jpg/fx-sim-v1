@@ -7,7 +7,7 @@ import { INSTRUMENTS } from './instruments';
 import { getSessionStats, getPairStats, type SessionStats, type PairStats } from './trade-journal';
 import { wilsonCI, sharpeWithSE, varCvar, kellyFraction, markovTransition, maxDrawdown, rollingReturns, pnlVolatility, profitFactor, bootstrapROI, aiAccuracy, randomBaselineComparison, pairCorrelation, logReturnStats, powerAnalysis, ewmaVolatility, engleGrangerCointegration, hierarchicalWinRate } from './stats';
 import { INITIAL_CAPITAL, RELIABILITY_TRUSTED, RELIABILITY_TENTATIVE } from './constants';
-import { isGlobalDDEnabled } from './risk-manager';
+import { isGlobalDDEnabled, getAllMarketDrawdownLevels } from './risk-manager';
 
 export interface LatestDecision {
   id: number;
@@ -104,7 +104,7 @@ export interface StatusResponse {
   systemLogs: SystemLog[];
   logStats: LogStats;
   latestNews: Array<{ title: string; pubDate: string; description: string; source?: string }>;
-  acceptedNews: Array<{ id: number; source: string; title_ja: string; desc_ja: string; url: string | null; fetched_at: string }>;
+  acceptedNews: Array<{ id: number; source: string; title_ja: string; desc_ja: string; url: string | null; fetched_at: string; pub_date?: string | null; filter_accepted: number }>;
   newsAnalysis: Array<{
     index: number;
     attention: boolean;
@@ -309,6 +309,8 @@ export interface StatusResponse {
    * ⚠️ ユーザー指示による仕様（2026-04-01）: 実弾投入まで false（検証モード）。バグではない。
    */
   globalDDEnabled: boolean;
+  /** 市場別 DD STOP 状態（true = その市場は DD STOP 中） */
+  ddByMarket: Record<string, boolean>;
 }
 
 export async function getApiStatus(db: D1Database, tradingEnv?: { TRADING_ENABLED?: string; OANDA_LIVE?: string; RISK_MAX_DAILY_LOSS?: string; RISK_MAX_LIVE_POSITIONS?: string; RISK_MAX_LOT_SIZE?: string; RISK_ANOMALY_THRESHOLD?: string }): Promise<StatusResponse> {
@@ -385,8 +387,8 @@ export async function getApiStatus(db: D1Database, tradingEnv?: { TRADING_ENABLE
 
       // news_raw から採用記事（最大30件、7日TTL+purgeで自動管理）
       db
-        .prepare(`SELECT id, source, title_ja, desc_ja, url, fetched_at, composite_score AS score, haiku_accepted FROM news_raw WHERE haiku_accepted = 1 ORDER BY id DESC LIMIT 30`)
-        .all<{ id: number; source: string; title_ja: string; desc_ja: string; url: string | null; fetched_at: string; score: number | null; haiku_accepted: number }>(),
+        .prepare(`SELECT id, source, title_ja, desc_ja, url, fetched_at, pub_date, composite_score AS score, filter_accepted FROM news_raw WHERE filter_accepted = 1 ORDER BY id DESC LIMIT 30`)
+        .all<{ id: number; source: string; title_ja: string; desc_ja: string; url: string | null; fetched_at: string; pub_date: string | null; score: number | null; filter_accepted: number }>(),
 
       // システムログ（直近30件）
       db
@@ -723,8 +725,9 @@ export async function getApiStatus(db: D1Database, tradingEnv?: { TRADING_ENABLE
       desc_ja: r.desc_ja,
       url: r.url ?? null,
       fetched_at: r.fetched_at,
+      pub_date: r.pub_date ?? null,
       score: r.score ?? null,
-      haiku_accepted: r.haiku_accepted,
+      filter_accepted: r.filter_accepted,
     })),
     newsAnalysis,
     systemLogs: sysLogs,
@@ -782,6 +785,7 @@ export async function getApiStatus(db: D1Database, tradingEnv?: { TRADING_ENABLE
     paramHistory: buildParamHistory(paramReviewLogRaw as unknown as { results: Array<{ pair: string; param_version: number; reason: string; win_rate: number | null; actual_rr: number | null; profit_factor: number | null; trades_eval: number | null; created_at: string }> }),
     recentIndicatorLogs: (indicatorLogsRaw as unknown as { results: IndicatorLog[] }).results ?? [],
     globalDDEnabled: await isGlobalDDEnabled(db).catch(() => false),
+    ddByMarket: await getAllMarketDrawdownLevels(db).catch(() => ({} as Record<string, boolean>)),
   };
 }
 
@@ -804,13 +808,14 @@ async function buildCausalSummary(db: D1Database): Promise<CausalSummary | null>
     ).first<{ vix: number | null; nikkei: number | null; sp500: number | null }>();
 
     // 3. 直近のニューストリガー
-    let newsTriggers: Array<{ trigger_type: string; news_title: string; news_score: number; created_at: string }> = [];
+    let newsTriggers: Array<{ id: number; trigger_type: string; news_title: string; news_score: number; relevance: number | null; sentiment: number | null; detail: string | null; created_at: string }> = [];
     try {
       const ntRaw = await db.prepare(
-        `SELECT trigger_type, news_title, news_score, created_at FROM news_trigger_log
+        `SELECT id, trigger_type, news_title, news_score, relevance, sentiment, detail, created_at
+         FROM news_trigger_log
          WHERE created_at > datetime('now', '-12 hours')
          ORDER BY created_at DESC LIMIT 5`
-      ).all<{ trigger_type: string; news_title: string; news_score: number; created_at: string }>();
+      ).all<{ id: number; trigger_type: string; news_title: string; news_score: number; relevance: number | null; sentiment: number | null; detail: string | null; created_at: string }>();
       newsTriggers = ntRaw.results ?? [];
     } catch { /* テーブル未存在 */ }
 

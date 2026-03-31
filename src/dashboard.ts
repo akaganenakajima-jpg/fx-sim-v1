@@ -175,10 +175,6 @@ export function getDashboardHtml(): string {
   <div class="sec" id="wait-header">待機</div>
   <div class="wait-grid" id="wait-grid"></div>
 
-  <!-- 速報ニュース（attention=trueのニュースをHOMEタブに表示） -->
-  <div class="sec" id="news-now-header" style="display:none">速報</div>
-  <div id="news-feed-now"></div>
-
   <!-- アクティビティフィード -->
   <div class="sec">アクティビティ</div>
   <div id="ai-timeline"></div>
@@ -462,7 +458,7 @@ export function getDashboardHtml(): string {
   <div id="news-drawer-body" class="news-drawer-body"></div>
 </div>
 
-<script src="/app.js?v=19"></script>
+<script src="/app.js?v=25"></script>
 </body>
 </html>`;
 }
