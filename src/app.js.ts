@@ -2226,17 +2226,26 @@ export const JS = `
     // 総合DD管理トグル（⚠️ ユーザー指示による仕様: 実弾投入まで false）
     var ddEnabled = !!data.globalDDEnabled;
     var ddToggleSub = ddEnabled ? '有効 \u2014 DD 20%で完全停止' : '実弾投入まで無効（検証モード）';
-    var ddToggleHtml = '<div class="dd-toggle-card">' +
-      '<div class="dd-toggle-info">' +
-        '<div class="dd-toggle-title">総合DD管理</div>' +
-        '<div class="dd-toggle-sub' + (ddEnabled ? ' active' : '') + '" id="dd-toggle-sub">' + ddToggleSub + '</div>' +
-      '</div>' +
-      '<label class="ios-switch">' +
-        '<input type="checkbox" id="dd-toggle-input"' + (ddEnabled ? ' checked' : '') + ' onchange="onDDToggleChange(this)">' +
-        '<span class="ios-switch-slider"></span>' +
-      '</label>' +
-    '</div>';
-    container.insertAdjacentHTML('beforebegin', ddToggleHtml);
+    // 既存カードがあれば状態だけ更新（ポーリング毎の増殖防止）
+    var existingCard = document.getElementById('dd-toggle-card');
+    if (existingCard) {
+      var inp = document.getElementById('dd-toggle-input');
+      if (inp) inp.checked = ddEnabled;
+      var sub = document.getElementById('dd-toggle-sub');
+      if (sub) { sub.textContent = ddToggleSub; sub.className = 'dd-toggle-sub' + (ddEnabled ? ' active' : ''); }
+    } else {
+      var ddToggleHtml = '<div class="dd-toggle-card" id="dd-toggle-card">' +
+        '<div class="dd-toggle-info">' +
+          '<div class="dd-toggle-title">総合DD管理</div>' +
+          '<div class="dd-toggle-sub' + (ddEnabled ? ' active' : '') + '" id="dd-toggle-sub">' + ddToggleSub + '</div>' +
+        '</div>' +
+        '<label class="ios-switch">' +
+          '<input type="checkbox" id="dd-toggle-input"' + (ddEnabled ? ' checked' : '') + ' onchange="onDDToggleChange(this)">' +
+          '<span class="ios-switch-slider"></span>' +
+        '</label>' +
+      '</div>';
+      container.insertAdjacentHTML('beforebegin', ddToggleHtml);
+    }
 
     var checks = [
       { name: 'Cron 実行',   ok: cronOkStatus,     value: cronVal,    cls: cronMs && cronSec >= 30 && cronSec < 50 ? 'warn' : null, expandHtml: cronExpandHtml },
