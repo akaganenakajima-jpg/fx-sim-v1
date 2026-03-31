@@ -234,6 +234,17 @@ body{background:var(--bg);color:var(--text);font-size:15px;line-height:1.47;
 .health-text{font-size:20px;font-weight:700}
 .health-sub{font-size:13px;color:var(--secondary);margin-top:4px}
 .health-checks{margin:0 16px}
+.dd-toggle-card{display:flex;justify-content:space-between;align-items:center;padding:16px;background:var(--surface);border-radius:var(--rs);margin:0 16px 8px}
+.dd-toggle-info{flex:1}
+.dd-toggle-title{font-size:15px;font-weight:600;color:var(--text)}
+.dd-toggle-sub{font-size:12px;color:var(--secondary);margin-top:2px}
+.dd-toggle-sub.active{color:var(--red)}
+.ios-switch{position:relative;display:inline-block;width:51px;height:31px;flex-shrink:0}
+.ios-switch input{opacity:0;width:0;height:0}
+.ios-switch-slider{position:absolute;cursor:pointer;inset:0;background:rgba(120,120,128,0.32);border-radius:31px;transition:background 200ms ease}
+.ios-switch-slider:before{content:'';position:absolute;width:27px;height:27px;left:2px;top:2px;background:#fff;border-radius:50%;box-shadow:0 2px 6px rgba(0,0,0,0.3);transition:transform 200ms ease}
+input:checked+.ios-switch-slider{background:var(--red)}
+input:checked+.ios-switch-slider:before{transform:translateX(20px)}
 .hc{padding:16px;background:var(--surface);border-radius:var(--rs);margin-bottom:8px;cursor:pointer;-webkit-tap-highlight-color:transparent}
 .hc:active{opacity:0.8}
 .hc-row{display:flex;justify-content:space-between;align-items:center}

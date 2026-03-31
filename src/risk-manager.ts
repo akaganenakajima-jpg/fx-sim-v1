@@ -4,7 +4,7 @@
 // SPRT回復判定: パフォーマンスベースでDD段階を昇降
 
 import { insertSystemLog } from './db';
-import type { InstrumentConfig } from './instruments';
+import type { InstrumentConfig, AssetClass } from './instruments';
 import { INITIAL_CAPITAL, DD_CAUTION, DD_WARNING, DD_HALT, DD_STOP, INSTRUMENT_DAILY_LOSS_CAP } from './constants';
 
 // ─── DD段階（5段階: テスタ理論準拠 + Kelly基準） ────
