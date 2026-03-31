@@ -32,6 +32,7 @@ export interface TempParamEntry {
 
 export interface NewsTriggerResult {
   triggerType:     'EMERGENCY' | 'TREND_INFLUENCE' | 'NONE';
+  triggerId?:      number;  // news_trigger_log.id（FK伝搬用）
   newsTitle?:      string;
   newsScore?:      number;
   affectedPairs?:  string[];
@@ -225,6 +226,7 @@ async function saveTempParams(
   expiresInHours: number,
   newsTitle: string,
   newsScore: number,
+  triggerId?: number,
 ): Promise<string[]> {
   const now = new Date();
   const expiresAt = new Date(now.getTime() + expiresInHours * 60 * 60 * 1000).toISOString();
@@ -236,8 +238,8 @@ async function saveTempParams(
         `INSERT INTO news_temp_params
            (pair, event_type, rsi_oversold, rsi_overbought, adx_min,
             atr_tp_multiplier, atr_sl_multiplier, vix_max,
-            reason, news_title, news_score, expires_at, applied_by, created_at)
-         VALUES (?, 'TREND_INFLUENCE', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'AI_NEWS_v1', ?)`
+            reason, news_title, news_score, expires_at, applied_by, created_at, trigger_id)
+         VALUES (?, 'TREND_INFLUENCE', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'AI_NEWS_v1', ?, ?)`
       )
       .bind(
         e.pair,
@@ -252,6 +254,7 @@ async function saveTempParams(
         newsScore,
         expiresAt,
         now.toISOString(),
+        triggerId ?? null,
       )
       .run();
     appliedPairs.push(e.pair);
@@ -343,13 +346,13 @@ export async function runNewsTrigger(
   if (isEmergency(title, parsedScores)) {
     await setEmergencyForceFlag(db);
 
-    await db
+    const emgResult = await db
       .prepare(
         `INSERT INTO news_trigger_log (trigger_type, news_title, news_score, relevance, sentiment, affected_pairs, detail, created_at)
-         VALUES ('EMERGENCY', ?, ?, ?, ?, NULL, 'PATH_B強制発火フラグセット', ?)`
+         VALUES ('EMERGENCY', ?, ?, ?, ?, NULL, 'PATH_B強制発火フラグセット', ?) RETURNING id`
       )
       .bind(title, row.composite_score, parsedScores.relevance, parsedScores.sentiment, new Date().toISOString())
-      .run();
+      .first<{ id: number }>();
 
     await insertSystemLog(db, 'INFO', 'NEWS_TRIGGER',
       `緊急ニュース検出 → PATH_B強制発火: ${title.slice(0, 60)}`,
@@ -357,6 +360,7 @@ export async function runNewsTrigger(
 
     return {
       triggerType: 'EMERGENCY',
+      triggerId: emgResult?.id,
       newsTitle: title,
       newsScore: row.composite_score ?? undefined,
       emergencyForced: true,
@@ -375,30 +379,48 @@ export async function runNewsTrigger(
 
     if (!geminiResult) {
       // Gemini Flash呼び出し失敗（APIエラー・タイムアウト）
-      await db
+      const failRow = await db
         .prepare(
           `INSERT INTO news_trigger_log (trigger_type, news_title, news_score, relevance, sentiment, affected_pairs, detail, created_at)
-           VALUES ('TREND_INFLUENCE', ?, ?, ?, ?, NULL, 'Gemini Flash呼び出し失敗', ?)`
+           VALUES ('TREND_INFLUENCE', ?, ?, ?, ?, NULL, 'Gemini Flash呼び出し失敗', ?) RETURNING id`
         )
         .bind(title, row.composite_score, parsedScores.relevance, parsedScores.sentiment, new Date().toISOString())
-        .run();
+        .first<{ id: number }>();
       await insertSystemLog(db, 'WARN', 'NEWS_TRIGGER',
         `Gemini Flash呼び出し失敗でTREND_INFLUENCEスキップ: ${title.slice(0, 60)}`,
         `score=${row.composite_score}`);
-      return { triggerType: 'TREND_INFLUENCE', newsTitle: title, emergencyForced: false, affectedPairs: [] };
+      return { triggerType: 'TREND_INFLUENCE', triggerId: failRow?.id, newsTitle: title, emergencyForced: false, affectedPairs: [] };
     }
 
     if (geminiResult.pairs.length === 0) {
       // AIが「影響軽微・変更不要」と判断した場合
-      await db
+      const noImpactRow = await db
         .prepare(
           `INSERT INTO news_trigger_log (trigger_type, news_title, news_score, relevance, sentiment, affected_pairs, detail, created_at)
-           VALUES ('TREND_INFLUENCE', ?, ?, ?, ?, NULL, '影響軽微・パラメーター変更なし', ?)`
+           VALUES ('TREND_INFLUENCE', ?, ?, ?, ?, NULL, '影響軽微・パラメーター変更なし', ?) RETURNING id`
         )
         .bind(title, row.composite_score, parsedScores.relevance, parsedScores.sentiment, new Date().toISOString())
-        .run();
-      return { triggerType: 'TREND_INFLUENCE', newsTitle: title, emergencyForced: false, affectedPairs: [] };
+        .first<{ id: number }>();
+      return { triggerType: 'TREND_INFLUENCE', triggerId: noImpactRow?.id, newsTitle: title, emergencyForced: false, affectedPairs: [] };
     }
+
+    // 先にtrigger_logを記録してIDを取得 → saveTempParamsに渡す
+    const trendRow = await db
+      .prepare(
+        `INSERT INTO news_trigger_log (trigger_type, news_title, news_score, relevance, sentiment, affected_pairs, detail, created_at)
+         VALUES ('TREND_INFLUENCE', ?, ?, ?, ?, ?, ?, ?) RETURNING id`
+      )
+      .bind(
+        title,
+        row.composite_score,
+        parsedScores.relevance,
+        parsedScores.sentiment,
+        geminiResult.pairs.map(p => p.pair).join(','),
+        geminiResult.reason,
+        new Date().toISOString(),
+      )
+      .first<{ id: number }>();
+    const trendTriggerId = trendRow?.id;
 
     const appliedPairs = await saveTempParams(
       db,
@@ -407,23 +429,8 @@ export async function runNewsTrigger(
       geminiResult.expiresInHours,
       title,
       row.composite_score ?? 7.5,
+      trendTriggerId,
     );
-
-    await db
-      .prepare(
-        `INSERT INTO news_trigger_log (trigger_type, news_title, news_score, relevance, sentiment, affected_pairs, detail, created_at)
-         VALUES ('TREND_INFLUENCE', ?, ?, ?, ?, ?, ?, ?)`
-      )
-      .bind(
-        title,
-        row.composite_score,
-        parsedScores.relevance,
-        parsedScores.sentiment,
-        appliedPairs.join(','),
-        geminiResult.reason,
-        new Date().toISOString(),
-      )
-      .run();
 
     await insertSystemLog(db, 'INFO', 'NEWS_TRIGGER',
       `トレンドニュース → 臨時パラメーター設定: ${appliedPairs.join(',')}`,
@@ -431,6 +438,7 @@ export async function runNewsTrigger(
 
     return {
       triggerType: 'TREND_INFLUENCE',
+      triggerId: trendTriggerId,
       newsTitle: title,
       newsScore: row.composite_score ?? undefined,
       affectedPairs: appliedPairs,

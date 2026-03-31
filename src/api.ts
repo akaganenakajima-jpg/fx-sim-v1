@@ -301,6 +301,8 @@ export interface StatusResponse {
     news_score: number;
     relevance: number | null;
     sentiment: number | null;
+    /** トリガー詳細（AI reason / 失敗理由等） */
+    detail?: string;
     created_at: string;
     /** trigger_id経由で紐づくdecisions（trade_decisionsと同形式） */
     actions?: Array<{ pair: string; decision: string; reasoning: string | null; rate: number | null; tp_rate: number | null; sl_rate: number | null; created_at: string | null; why_chain: string[] | null }>;
@@ -702,10 +704,10 @@ export async function getApiStatus(db: D1Database, tradingEnv?: { TRADING_ENABLE
   let newsTriggers: StatusResponse['newsTriggers'] = [];
   try {
     const ntRaw = await db.prepare(
-      `SELECT id, trigger_type, news_title, news_score, relevance, sentiment, created_at FROM news_trigger_log
+      `SELECT id, trigger_type, news_title, news_score, relevance, sentiment, detail, created_at FROM news_trigger_log
        WHERE created_at > datetime('now', '-12 hours')
        ORDER BY created_at DESC LIMIT 10`
-    ).all<{ id: number; trigger_type: string; news_title: string; news_score: number; relevance: number | null; sentiment: number | null; created_at: string }>();
+    ).all<{ id: number; trigger_type: string; news_title: string; news_score: number; relevance: number | null; sentiment: number | null; detail: string | null; created_at: string }>();
     const triggers = ntRaw.results ?? [];
     // trigger_id 経由で紐づくアクション・パラメーター変更を取得（IPA SA §1.3 Forward Traceability）
     if (triggers.length > 0) {
@@ -752,6 +754,7 @@ export async function getApiStatus(db: D1Database, tradingEnv?: { TRADING_ENABLE
         news_score: t.news_score,
         relevance: t.relevance,
         sentiment: t.sentiment,
+        detail: t.detail ?? undefined,
         created_at: t.created_at,
         actions: actionsMap.get(t.id) ?? undefined,
         paramChanges: paramsMap.get(t.id) ?? undefined,
