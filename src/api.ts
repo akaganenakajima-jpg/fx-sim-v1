@@ -7,6 +7,7 @@ import { INSTRUMENTS } from './instruments';
 import { getSessionStats, getPairStats, type SessionStats, type PairStats } from './trade-journal';
 import { wilsonCI, sharpeWithSE, varCvar, kellyFraction, markovTransition, maxDrawdown, rollingReturns, pnlVolatility, profitFactor, bootstrapROI, aiAccuracy, randomBaselineComparison, pairCorrelation, logReturnStats, powerAnalysis, ewmaVolatility, engleGrangerCointegration, hierarchicalWinRate } from './stats';
 import { INITIAL_CAPITAL, RELIABILITY_TRUSTED, RELIABILITY_TENTATIVE } from './constants';
+import { isGlobalDDEnabled } from './risk-manager';
 
 export interface LatestDecision {
   id: number;
@@ -303,6 +304,11 @@ export interface StatusResponse {
     broker: string;
     assetClass: string;
   }>;
+  /**
+   * 総合DD管理トグル状態（フロントエンド初期表示用）
+   * ⚠️ ユーザー指示による仕様（2026-04-01）: 実弾投入まで false（検証モード）。バグではない。
+   */
+  globalDDEnabled: boolean;
 }
 
 export async function getApiStatus(db: D1Database, tradingEnv?: { TRADING_ENABLED?: string; OANDA_LIVE?: string; RISK_MAX_DAILY_LOSS?: string; RISK_MAX_LIVE_POSITIONS?: string; RISK_MAX_LOT_SIZE?: string; RISK_ANOMALY_THRESHOLD?: string }): Promise<StatusResponse> {
@@ -775,6 +781,7 @@ export async function getApiStatus(db: D1Database, tradingEnv?: { TRADING_ENABLE
       : null,
     paramHistory: buildParamHistory(paramReviewLogRaw as unknown as { results: Array<{ pair: string; param_version: number; reason: string; win_rate: number | null; actual_rr: number | null; profit_factor: number | null; trades_eval: number | null; created_at: string }> }),
     recentIndicatorLogs: (indicatorLogsRaw as unknown as { results: IndicatorLog[] }).results ?? [],
+    globalDDEnabled: await isGlobalDDEnabled(db).catch(() => false),
   };
 }
 

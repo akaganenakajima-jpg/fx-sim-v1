@@ -66,6 +66,30 @@ export const JS = `
   window.toggleWhyTree  = toggleWhyTree;
   window.setThSort      = setThSort;
 
+  // ── 総合DD管理トグル ──
+  // ⚠️ ユーザー指示による仕様（2026-04-01）: 実弾投入まで false がデフォルト。バグではない。
+  async function onDDToggleChange(checkbox) {
+    var enabled = checkbox.checked;
+    var prevChecked = !enabled;
+    try {
+      var res = await fetch('/api/settings', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ key: 'global_dd_enabled', value: enabled ? 'true' : 'false' }),
+      });
+      if (!res.ok) throw new Error('HTTP ' + res.status);
+      var sub = document.getElementById('dd-toggle-sub');
+      if (sub) {
+        sub.textContent = enabled ? '\u6709\u52b9 \u2014 DD 20%\u3067\u5b8c\u5168\u505c\u6b62' : '\u5b9f\u5f3e\u6295\u5165\u307e\u3067\u7121\u52b9\uff08\u691c\u8a3c\u30e2\u30fc\u30c9\uff09';
+        sub.className = 'dd-toggle-sub' + (enabled ? ' active' : '');
+      }
+    } catch (e) {
+      // 失敗時はスイッチを元に戻す
+      checkbox.checked = prevChecked;
+    }
+  }
+  window.onDDToggleChange = onDDToggleChange;
+
   // ── 銘柄入替え承認/拒否 ──
   function rotationDecide(id, action) {
     fetch('/api/rotation', {
@@ -2229,6 +2253,21 @@ export const JS = `
     // ニュース詳細
     var newsExpandHtml = '<div class="hc-detail"><span class="hc-detail-label">24h分析:</span> ' + newsTotal + '件 → 採用 ' + newsAttention + '件</div>' +
       '<div class="hc-detail"><span class="hc-detail-label">ソース:</span> Reuters / Reddit</div>';
+
+    // 総合DD管理トグル（⚠️ ユーザー指示による仕様: 実弾投入まで false）
+    var ddEnabled = !!data.globalDDEnabled;
+    var ddToggleSub = ddEnabled ? '有効 \u2014 DD 20%で完全停止' : '実弾投入まで無効（検証モード）';
+    var ddToggleHtml = '<div class="dd-toggle-card">' +
+      '<div class="dd-toggle-info">' +
+        '<div class="dd-toggle-title">総合DD管理</div>' +
+        '<div class="dd-toggle-sub' + (ddEnabled ? ' active' : '') + '" id="dd-toggle-sub">' + ddToggleSub + '</div>' +
+      '</div>' +
+      '<label class="ios-switch">' +
+        '<input type="checkbox" id="dd-toggle-input"' + (ddEnabled ? ' checked' : '') + ' onchange="onDDToggleChange(this)">' +
+        '<span class="ios-switch-slider"></span>' +
+      '</label>' +
+    '</div>';
+    container.insertAdjacentHTML('beforebegin', ddToggleHtml);
 
     var checks = [
       { name: 'Cron 実行',   ok: cronOkStatus,     value: cronVal,    cls: cronMs && cronSec >= 30 && cronSec < 50 ? 'warn' : null, expandHtml: cronExpandHtml },

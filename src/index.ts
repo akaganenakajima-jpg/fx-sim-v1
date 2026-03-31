@@ -33,7 +33,7 @@ import { determineRegime, formatRegimeForPrompt, getRegimeProhibitions } from '.
 import { getWeekendStatus, lockProfitsForWeekend, forceCloseAllForWeekend, getWeekendNewsDigest, saveFridayClosePrices, detectGaps, resetWeekendFlags, getTradeableInstruments } from './weekend';
 import { runLogicDecisions } from './logic-trading';
 import { runParamReview } from './param-review';
-import { evaluateRecoveryIfNeeded, getDrawdownLevel, checkInstrumentDailyLoss } from './risk-manager';
+import { evaluateRecoveryIfNeeded, getDrawdownLevel, checkInstrumentDailyLoss, setGlobalDDEnabled, checkMarketCloseAndReleaseDDStop } from './risk-manager';
 import { runNewsTrigger, consumeEmergencyForceFlag } from './news-trigger';
 // AI銘柄マネージャー
 import { fetchFundamentals, saveFundamentals, fetchAllListedStocks, cleanupOldFundamentals } from './jquants';
@@ -309,6 +309,37 @@ export default {
           }
         }
         return new Response('Method Not Allowed', { status: 405 });
+
+      case '/api/settings':
+        if (request.method === 'POST') {
+          let settingsBody: { key: string; value: string };
+          try {
+            settingsBody = await request.json() as { key: string; value: string };
+          } catch {
+            return new Response(JSON.stringify({ success: false, message: 'Invalid JSON body' }), {
+              status: 400, headers: { 'Content-Type': 'application/json' },
+            });
+          }
+          // ホワイトリスト検証（グローバルDD管理のみ許可）
+          if (settingsBody.key !== 'global_dd_enabled' || !['true', 'false'].includes(settingsBody.value)) {
+            return new Response(JSON.stringify({ success: false, message: 'Invalid key or value' }), {
+              status: 400, headers: { 'Content-Type': 'application/json' },
+            });
+          }
+          try {
+            await setGlobalDDEnabled(env.DB, settingsBody.value === 'true');
+            return new Response(JSON.stringify({ success: true }), {
+              headers: { 'Content-Type': 'application/json' },
+            });
+          } catch (e) {
+            return new Response(JSON.stringify({ success: false, message: String(e) }), {
+              headers: { 'Content-Type': 'application/json' },
+              status: 500,
+            });
+          }
+        }
+        return new Response('Method Not Allowed', { status: 405 });
+
       case '/api/scores': {
         try {
           const today = new Date().toISOString().split('T')[0];
@@ -1238,6 +1269,12 @@ async function runCore(env: Env): Promise<void> {
     try {
       await env.DB.prepare(`DELETE FROM system_logs WHERE id NOT IN (SELECT id FROM system_logs ORDER BY id DESC LIMIT 1000)`).run();
       await env.DB.prepare(`DELETE FROM market_cache WHERE key LIKE 'news_haiku_%' AND updated_at < datetime('now', '-2 hours')`).run();
+    } catch {}
+
+    // 市場クローズ遷移検出 → dd_stopped:{assetClass} 自動解除
+    // ⚠️ ユーザー指示による仕様（2026-04-01）: 翌営業日持ち越し禁止。バグではない。
+    try {
+      await checkMarketCloseAndReleaseDDStop(env.DB, now);
     } catch {}
 
     const coreMs = Date.now() - cronStart;
