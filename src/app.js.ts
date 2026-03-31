@@ -2210,6 +2210,8 @@ export const JS = `
 
     // ニュース採用率計算: NEWS_STATシステムログから直近バッチの採用率を取得
     // latestNews（cacheスナップショット）とacceptedNews（DB累積）は時間窓が異なるため除算不可
+    var newsTotal = (data.newsAnalysis || []).length;
+    var newsAttention = (data.newsAnalysis || []).filter(function(n) { return n.attention; }).length;
     var newsFetched = (data.latestNews || []).length;
     var newsStatLog = (data.systemLogs || []).find(function(l) { return l.category === 'NEWS_STAT'; });
     var newsAdoptRate = 0;
