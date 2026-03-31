@@ -334,7 +334,7 @@ export async function getWeekendNewsDigest(
       `SELECT title, title_ja, source, pub_date, composite_score
        FROM news_raw
        WHERE fetched_at >= datetime('now', '-' || ? || ' hours')
-         AND haiku_accepted = 1
+         AND filter_accepted = 1
        ORDER BY composite_score DESC, fetched_at DESC
        LIMIT 100`
     )

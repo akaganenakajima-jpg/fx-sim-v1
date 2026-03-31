@@ -1173,16 +1173,16 @@ export async function updateFilterResults(
       const a = accepted.find(x => x.index === i)!;
       stmts.push(
         db.prepare(
-          // haiku_accepted != -1: 一度スコア拒否された記事を後続バッチで採用に上書きしない
-          `UPDATE news_raw SET haiku_accepted = 1, title_ja = ?, desc_ja = ?, scores = ?, composite_score = ? WHERE hash = ? AND haiku_accepted != -1`
+          // filter_accepted != -1: 一度スコア拒否された記事を後続バッチで採用に上書きしない
+          `UPDATE news_raw SET filter_accepted = 1, title_ja = ?, desc_ja = ?, scores = ?, composite_score = ? WHERE hash = ? AND filter_accepted != -1`
         ).bind(a.title_ja, a.desc_ja, scoresJson, sc?.composite ?? null, hash)
       );
     } else {
       const reason = rejectMap.get(i) || '除外（理由不明）';
       stmts.push(
         db.prepare(
-          // haiku_accepted != 1: 採用済み記事を後続バッチで上書きしない（バグ防止）
-          `UPDATE news_raw SET haiku_accepted = -1, reject_reason = ?, scores = ?, composite_score = ? WHERE hash = ? AND haiku_accepted != 1`
+          // filter_accepted != 1: 採用済み記事を後続バッチで上書きしない（バグ防止）
+          `UPDATE news_raw SET filter_accepted = -1, reject_reason = ?, scores = ?, composite_score = ? WHERE hash = ? AND filter_accepted != 1`
         ).bind(reason, scoresJson, sc?.composite ?? null, hash)
       );
     }
@@ -1464,10 +1464,10 @@ export async function getAdaptiveCompositeThreshold(db: D1Database): Promise<num
     const stats = await db.prepare(`
       SELECT
         COUNT(*) as total,
-        SUM(CASE WHEN haiku_accepted = 1 THEN 1 ELSE 0 END) as accepted
+        SUM(CASE WHEN filter_accepted = 1 THEN 1 ELSE 0 END) as accepted
       FROM (
-        SELECT haiku_accepted FROM news_raw
-        WHERE haiku_accepted IS NOT NULL
+        SELECT filter_accepted FROM news_raw
+        WHERE filter_accepted IS NOT NULL
         ORDER BY id DESC
         LIMIT ${SAMPLE_SIZE}
       )

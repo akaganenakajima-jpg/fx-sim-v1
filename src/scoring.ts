@@ -286,7 +286,7 @@ export async function countNewsForSymbol(
     SELECT COUNT(*) as cnt FROM news_raw
     WHERE created_at >= ?
     AND (title_ja LIKE ? OR desc_ja LIKE ?)
-    AND haiku_accepted = 1
+    AND filter_accepted = 1
   `).bind(since, `%${displayName}%`, `%${displayName}%`)
     .first<{ cnt: number }>();
   return result?.cnt ?? 0;
