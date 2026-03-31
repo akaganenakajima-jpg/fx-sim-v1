@@ -42,6 +42,29 @@ async function setRiskStateValue(db: D1Database, key: string, value: string): Pr
     .run();
 }
 
+// ─── 総合DD toggle ────────────────────────────────
+/**
+ * 総合DD管理の有効/無効を返す。
+ *
+ * ⚠️ ユーザー指示による仕様（2026-04-01）:
+ *   実弾投入まで OFF がデフォルト。未設定（null）も false として扱う。
+ *   DD% が 20% 超でも STOP を出さない。これはバグではなく意図的な設計。
+ *
+ * @returns false → DD完全無効（常にNORMAL）、true → 従来のDD管理が有効
+ */
+export async function isGlobalDDEnabled(db: D1Database): Promise<boolean> {
+  const val = await getRiskStateValue(db, 'global_dd_enabled');
+  return (val ?? 'false') === 'true';
+}
+
+/**
+ * 総合DD管理のON/OFFを書き込む。
+ * フロントエンドの POST /api/settings から呼び出される。
+ */
+export async function setGlobalDDEnabled(db: D1Database, enabled: boolean): Promise<void> {
+  await setRiskStateValue(db, 'global_dd_enabled', enabled ? 'true' : 'false');
+}
+
 // ─── HWM管理 ────────────────────────────────────
 
 const INITIAL_BALANCE = INITIAL_CAPITAL;
@@ -125,6 +148,18 @@ export async function checkInstrumentDailyLoss(
 // ─── DD段階判定 ──────────────────────────────────
 
 export async function getDrawdownLevel(db: D1Database): Promise<DrawdownResult> {
+  // ─── グローバルDDトグルチェック ─────────────────
+  // ⚠️ ユーザー指示による仕様（2026-04-01）:
+  //   global_dd_enabled=false（デフォルト）の場合、DD%やdd_stoppedの値に
+  //   関わらず常にNORMAL/lotMultiplier=1.0を返す。実弾投入まで無効。バグではない。
+  const globalDDEnabled = await isGlobalDDEnabled(db);
+  if (!globalDDEnabled) {
+    const balance = await getCurrentBalance(db);
+    const hwm = await getHWM(db);
+    const ddPct = hwm > 0 ? ((hwm - balance) / hwm) * 100 : 0;
+    return { level: 'NORMAL', ddPct, hwm, balance, lotMultiplier: 1.0 };
+  }
+
   // DD完全停止チェック（>=15%で手動リセットまで復帰不可）
   const ddStopped = await getRiskStateValue(db, 'dd_stopped');
   if (ddStopped === 'true') {
@@ -379,3 +414,77 @@ export async function checkCorrelationGuard(
 
   return { allowed: true, reason: 'OK' };
 }
+
+// ─── 市場別クローズ判定（DD管理専用） ──────────────
+
+const ASSET_CLASSES_FOR_DD: AssetClass[] = ['forex', 'index', 'stock', 'commodity', 'crypto'];
+
+/**
+ * 指定 AssetClass が現在オープン中かを返す（DD管理専用ユーティリティ）。
+ *
+ * ⚠️ CLAUDE.md §週末市場クローズ制約の適用外:
+ *   取引判断ではなくDD管理のための判定。取引エントリー制御は weekend.ts を使うこと。
+ *
+ * ⚠️ ユーザー指示による仕様（2026-04-01）:
+ *   crypto の 00:00 UTC は「日次リセット」。24/7市場だが意図的な設計。バグではない。
+ *   stock は JP株（06:00 UTC）+ US株（21:00 UTC）が混在。最後に閉じるUS株に合わせ 21:00 UTC を採用。
+ *
+ * @param assetClass 判定対象の市場区分
+ * @param now 判定時刻（UTC）
+ */
+export function isMarketOpen(assetClass: AssetClass, now: Date): boolean {
+  const day = now.getUTCDay();    // 0=日, 1=月, ..., 5=金, 6=土
+  const h   = now.getUTCHours();
+  const m   = now.getUTCMinutes();
+  const hm  = h * 60 + m;        // 分単位で比較
+
+  // crypto: 00:00:00 UTC のみクローズ（日次リセット）。週末も取引可能。
+  if (assetClass === 'crypto') {
+    return hm !== 0;
+  }
+
+  // 土日は全市場クローズ（crypto除く）
+  if (day === 0 || day === 6) return false;
+
+  // 平日: 21:00 UTC にクローズ（forex / index / stock / commodity）
+  return hm < 21 * 60;
+}
+
+/**
+ * 市場クローズ遷移（open→closed）を検出し、dd_stopped:{assetClass} を自動クリアする。
+ * runCore()（1分cron）の末尾から呼び出すこと。
+ *
+ * ⚠️ ユーザー指示による仕様（2026-04-01）:
+ *   市場クローズ時に DD STOP を自動解除。翌営業日持ち越し禁止。バグではない。
+ * ⚠️ CLAUDE.md §週末市場クローズ制約の適用外（取引判断関数ではない）
+ *
+ * @param db Cloudflare D1 Database
+ * @param now 現在時刻（UTC）
+ */
+export async function checkMarketCloseAndReleaseDDStop(db: D1Database, now: Date): Promise<void> {
+  for (const ac of ASSET_CLASSES_FOR_DD) {
+    try {
+      const currentlyOpen = isMarketOpen(ac, now);
+      const storedVal = await getRiskStateValue(db, `market_open:${ac}`);
+      // 未設定の場合は 'true'（前回 open）として扱う
+      const wasOpen = (storedVal ?? 'true') === 'true';
+
+      // 状態を常に更新（遷移がなくても同期する）
+      await setRiskStateValue(db, `market_open:${ac}`, currentlyOpen ? 'true' : 'false');
+
+      // 遷移検出: open → closed
+      if (wasOpen && !currentlyOpen) {
+        const ddStopped = await getRiskStateValue(db, `dd_stopped:${ac}`);
+        if (ddStopped === 'true') {
+          await setRiskStateValue(db, `dd_stopped:${ac}`, 'false');
+          await insertSystemLog(db, 'INFO', 'RISK',
+            `[${ac}] 市場クローズで DD STOP を自動解除`,
+            `now=${now.toISOString()}`);
+        }
+      }
+    } catch {
+      // DD管理エラーは cron 全体を止めない
+    }
+  }
+}
+
