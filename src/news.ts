@@ -990,6 +990,7 @@ JSON配列のみを返し、他の文字は一切含めないでください。`
 
 /** latest_news キャッシュを title_ja・desc_ja 付きで更新 */
 async function _updateLatestNewsCache(items: NewsItem[], db: D1Database): Promise<void> {
+  if (items.length === 0) return; // 空配列で既存キャッシュを上書きしない
   try {
     await db.prepare(
       "INSERT OR REPLACE INTO market_cache (key, value, updated_at) VALUES (?, ?, datetime('now'))"
