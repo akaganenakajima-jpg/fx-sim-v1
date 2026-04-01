@@ -717,7 +717,7 @@ export async function newsStage1(params: {
     body: JSON.stringify({
       systemInstruction: { parts: [{ text: systemPrompt }] },
       contents: [{ role: 'user', parts: [{ text: userMessage }] }],
-      generationConfig: { responseMimeType: 'application/json', thinkingConfig: { thinkingBudget: 0 } },
+      generationConfig: { responseMimeType: 'application/json' },
     }),
   }, STAGE1_TIMEOUT_MS);
 
