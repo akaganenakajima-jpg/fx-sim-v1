@@ -256,7 +256,8 @@ export async function runLogicDecisions(
       : baseParams;
 
     const currentRate = prices.get(pair);
-    if (currentRate == null) continue;
+    if (currentRate == null || currentRate <= 0) continue; // レート0は取得失敗扱い
+
 
     // すでにOPENポジションあり → スキップ
     if (openPairs.has(pair)) {

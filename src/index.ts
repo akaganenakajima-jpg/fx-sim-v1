@@ -1471,7 +1471,7 @@ async function runAnalysis(env: Env): Promise<void> {
         for (const dec of result.decisions) {
           if (dec.decision === 'HOLD') continue;
           const currentRate = prices.get(dec.pair);
-          if (currentRate == null) continue;
+          if (currentRate == null || currentRate <= 0) continue; // レート0は取得失敗扱い
           if (openPairsForPathB.has(dec.pair)) continue;
           // W005: OPEN上限ハードブロック（初期OPEN + このtick新規合計が上限以上なら停止）
           if (openPairsForPathB.size + pathBNewEntries >= PATH_B_OPEN_LIMIT) {
