@@ -663,6 +663,17 @@ export async function filterAndTranslateNews(
 ): Promise<NewsItem[]> {
   if (!geminiApiKey || items.length === 0) return items;
 
+  // 429 クールダウン中は Gemini を呼ばずスキップ
+  try {
+    const cooldown = await db.prepare(
+      "SELECT value FROM market_cache WHERE key = 'news_filter_cooldown'"
+    ).first<{ value: string }>();
+    if (cooldown && parseInt(cooldown.value, 10) > Date.now()) {
+      console.log(`[news] filter+translate: クールダウン中 (until=${new Date(parseInt(cooldown.value, 10)).toISOString()}) — フィルタなしで全通過`);
+      return items;
+    }
+  } catch { /* 読み取り失敗は無視 */ }
+
   // 適応的閾値を一度だけ計算（キャッシュパス・本番パス共用）
   const adaptiveThreshold = await getAdaptiveCompositeThreshold(db);
 
@@ -843,6 +854,14 @@ JSON配列のみを返し、他の文字は一切含めないでください。`
     if (!res.ok) {
       const errBody = await res.text().catch(() => '(body read failed)');
       console.log(`[news] filter+translate API error: ${res.status} (${latencyMs}ms) body=${errBody.slice(0, 200)} — フィルタなしで全通過`);
+      // 429 (レート制限) の場合: 5分間クールダウンキーを立てて連続コールを抑制
+      if (res.status === 429) {
+        const cooldownUntil = Date.now() + 5 * 60 * 1000;
+        await db.prepare(
+          "INSERT OR REPLACE INTO market_cache (key, value, updated_at) VALUES ('news_filter_cooldown', ?, datetime('now'))"
+        ).bind(String(cooldownUntil)).run().catch(() => {});
+        console.log(`[news] filter+translate: 429 → 5分クールダウン設定 (until=${new Date(cooldownUntil).toISOString()})`);
+      }
       return items;
     }
 

@@ -36,6 +36,7 @@ export interface RecentDecision {
   sp500: number | null;
   tp_rate: number | null;
   sl_rate: number | null;
+  trigger_id: number | null;
   created_at: string;
 }
 
@@ -348,7 +349,7 @@ export async function getApiStatus(db: D1Database, tradingEnv?: { TRADING_ENABLE
       // 判定履歴（BUY/SELLのみ直近20件）
       db
         .prepare(
-          `SELECT id, pair, decision, rate, reasoning, news_summary, reddit_signal, vix, us10y, nikkei, sp500, tp_rate, sl_rate, created_at
+          `SELECT id, pair, decision, rate, reasoning, news_summary, reddit_signal, vix, us10y, nikkei, sp500, tp_rate, sl_rate, trigger_id, created_at
            FROM decisions WHERE decision != 'HOLD' ORDER BY id DESC LIMIT 20`
         )
         .all<RecentDecision>(),

@@ -101,10 +101,7 @@ export const RR_DEFINITION_PROMPT =
   '- 「pnlがプラスだから良い」という判断は禁止。RR < 1.0 のプラス取引は「負け」である\n' +
   '- 「勝ち」という表現は上記定義以外での使用を禁止する\n';
 
-const GEMINI_ENDPOINT =
-  'https://generativelanguage.googleapis.com/v1beta/models/gemini-3.1-pro-preview:generateContent';
-
-// B2専用: 高速モデル（8sタイムアウト内に収まる）
+// gemini-2.5-flash: v1beta で動作確認済み（PATH_B1/B2・newsStage1/newsStage2 共通）
 const GEMINI_FLASH_ENDPOINT =
   'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent';
 
@@ -714,13 +711,13 @@ export async function newsStage1(params: {
     '- 【テーマ株モード】[テーマ株・モメンタム重視]タグの銘柄は小型テーマ株（モメンタム型）です。判断基準: (1)ファンダメンタルズよりモメンタム（出来高変化・投資家の注目度）を最重視 (2)ニュースの「話題性」と「投資家殺到度」で方向判断 (3)乱高下を恐れず方向が明確なら積極エントリー (4)RR2.0以上を狙いSLはATR×1.0〜1.5で広めにOK\n' +
     '- 【方向バイアス参考情報】[BUY:RR+X/SELL:RR+Y]は過去実績の方向別平均RR。参考情報として利用し、ニュースの方向性が明確な場合はバイアスより優先すること';
 
-  const res = await fetchWithTimeout(`${GEMINI_ENDPOINT}?key=${apiKey}`, {
+  const res = await fetchWithTimeout(`${GEMINI_FLASH_ENDPOINT}?key=${apiKey}`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
       systemInstruction: { parts: [{ text: systemPrompt }] },
       contents: [{ role: 'user', parts: [{ text: userMessage }] }],
-      generationConfig: { responseMimeType: 'application/json' },
+      generationConfig: { responseMimeType: 'application/json', thinkingConfig: { thinkingBudget: 0 } },
     }),
   }, STAGE1_TIMEOUT_MS);
 
@@ -738,7 +735,7 @@ export async function newsStage1(params: {
 
   // トークン使用量記録
   if (db && data.usageMetadata) {
-    void insertTokenUsage(db, 'gemini-3.1-pro-preview', 'PATH_B1_GEMINI',
+    void insertTokenUsage(db, 'gemini-2.5-flash', 'PATH_B1_GEMINI',
       data.usageMetadata.promptTokenCount ?? 0,
       data.usageMetadata.candidatesTokenCount ?? 0);
   }

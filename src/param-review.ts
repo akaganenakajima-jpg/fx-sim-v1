@@ -415,7 +415,7 @@ async function callGeminiForReview(
   prompt: string,
   apiKey: string,
 ): Promise<{ result: ReviewResult | null; errorCode?: number }> {
-  const ENDPOINT = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-3.1-pro-preview:generateContent';
+  const ENDPOINT = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent';
   try {
     const res = await fetch(`${ENDPOINT}?key=${apiKey}`, {
       method: 'POST',

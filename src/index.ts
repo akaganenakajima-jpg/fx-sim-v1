@@ -1269,6 +1269,7 @@ async function runCore(env: Env): Promise<void> {
     try {
       await env.DB.prepare(`DELETE FROM system_logs WHERE id NOT IN (SELECT id FROM system_logs ORDER BY id DESC LIMIT 1000)`).run();
       await env.DB.prepare(`DELETE FROM market_cache WHERE key LIKE 'news_filter_%' AND updated_at < datetime('now', '-2 hours')`).run();
+      await env.DB.prepare(`DELETE FROM market_cache WHERE key LIKE 'news_haiku_%' AND updated_at < datetime('now', '-2 hours')`).run();
     } catch {}
 
     // 市場クローズ遷移検出 → dd_stopped:{assetClass} 自動解除
@@ -1774,8 +1775,9 @@ async function runDailyTasks(env: Env, _now: Date): Promise<void> {
   try {
     await env.DB.prepare(`DELETE FROM system_logs WHERE id NOT IN (SELECT id FROM system_logs ORDER BY id DESC LIMIT 1000)`).run();
     await env.DB.prepare(`DELETE FROM news_fetch_log WHERE id NOT IN (SELECT id FROM news_fetch_log ORDER BY id DESC LIMIT 5000)`).run();
-    // news_haiku_* キャッシュパージ（2時間以上前のものを削除 → 10分毎パージと整合）
+    // news_filter_* / news_haiku_* キャッシュパージ（2時間以上前のものを削除 → 10分毎パージと整合）
     await env.DB.prepare(`DELETE FROM market_cache WHERE key LIKE 'news_filter_%' AND updated_at < datetime('now', '-2 hours')`).run();
+    await env.DB.prepare(`DELETE FROM market_cache WHERE key LIKE 'news_haiku_%' AND updated_at < datetime('now', '-2 hours')`).run();
     // b2_consecutive_fails リセット（CB解除済み且つ古い場合）
     await env.DB.prepare(
       `DELETE FROM market_cache WHERE key = 'b2_consecutive_fails' AND NOT EXISTS (
