@@ -33,7 +33,7 @@ import { determineRegime, formatRegimeForPrompt, getRegimeProhibitions } from '.
 import { getWeekendStatus, lockProfitsForWeekend, forceCloseAllForWeekend, getWeekendNewsDigest, saveFridayClosePrices, detectGaps, resetWeekendFlags, getTradeableInstruments } from './weekend';
 import { runLogicDecisions } from './logic-trading';
 import { runParamReview } from './param-review';
-import { evaluateRecoveryIfNeeded, getDrawdownLevel, checkInstrumentDailyLoss, getMarketDrawdownLevel } from './risk-manager';
+import { evaluateRecoveryIfNeeded, getDrawdownLevel, checkInstrumentDailyLoss, getMarketDrawdownLevel, setGlobalDDEnabled, clearGlobalDDStopped, clearMarketDDStopped } from './risk-manager';
 import { runNewsTrigger, consumeEmergencyForceFlag } from './news-trigger';
 // AI銘柄マネージャー
 import { fetchFundamentals, saveFundamentals, fetchAllListedStocks, cleanupOldFundamentals } from './jquants';
@@ -279,6 +279,57 @@ export default {
             status: 500,
           });
         }
+      case '/api/settings':
+        if (request.method === 'POST') {
+          type SettingsBody = {
+            global_dd_enabled?: boolean;
+            dd_stopped?: boolean;         // false = グローバルSTOPフラグをクリア
+            dd_stopped_market?: Record<string, boolean>; // false = 市場別STOPフラグをクリア
+          };
+          let settingsBody: SettingsBody;
+          try {
+            settingsBody = await request.json() as SettingsBody;
+          } catch {
+            return new Response(JSON.stringify({ success: false, message: 'Invalid JSON body' }), {
+              status: 400, headers: { 'Content-Type': 'application/json' },
+            });
+          }
+          try {
+            const VALID_ASSET_CLASSES = ['forex', 'index', 'stock', 'commodity', 'crypto'];
+            let acted = false;
+            if (typeof settingsBody.global_dd_enabled === 'boolean') {
+              await setGlobalDDEnabled(env.DB, settingsBody.global_dd_enabled);
+              acted = true;
+            }
+            if (settingsBody.dd_stopped === false) {
+              await clearGlobalDDStopped(env.DB);
+              acted = true;
+            }
+            if (settingsBody.dd_stopped_market && typeof settingsBody.dd_stopped_market === 'object') {
+              for (const [ac, val] of Object.entries(settingsBody.dd_stopped_market)) {
+                if (VALID_ASSET_CLASSES.includes(ac) && val === false) {
+                  await clearMarketDDStopped(env.DB, ac);
+                  acted = true;
+                }
+              }
+            }
+            if (!acted) {
+              return new Response(JSON.stringify({ success: false, message: 'No valid settings provided' }), {
+                status: 400, headers: { 'Content-Type': 'application/json' },
+              });
+            }
+            return new Response(JSON.stringify({ success: true }), {
+              headers: { 'Content-Type': 'application/json' },
+            });
+          } catch (e) {
+            return new Response(JSON.stringify({ success: false, message: String(e) }), {
+              status: 500, headers: { 'Content-Type': 'application/json' },
+            });
+          }
+        }
+        return new Response(JSON.stringify({ success: false, message: 'Method Not Allowed' }), {
+          status: 405, headers: { 'Content-Type': 'application/json' },
+        });
       case '/api/rotation':
         if (request.method === 'POST') {
           // JSONパース失敗（空body含む）は 400 で返す

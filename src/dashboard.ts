@@ -370,6 +370,34 @@ export function getDashboardHtml(): string {
     <div class="health-sub" id="health-sub">--</div>
   </div>
 
+  <!-- DDコントロールパネル -->
+  <div class="sec">DD制御パネル</div>
+
+  <!-- 1. 総合DD機能ON/OFF -->
+  <div class="dd-toggle-row" id="dd-toggle-row" onclick="toggleGlobalDD()">
+    <div>
+      <div style="font-size:15px;font-weight:600">総合DD機能</div>
+      <div style="font-size:12px;color:var(--secondary);margin-top:2px" id="dd-toggle-sub">実弾投入まで無効（検証モード）</div>
+    </div>
+    <div class="dd-toggle-track" id="dd-toggle-track" role="switch" aria-checked="false">
+      <div class="dd-toggle-thumb"></div>
+    </div>
+  </div>
+
+  <!-- 2. グローバルSTOPフラグ解除 -->
+  <div class="dd-toggle-row" id="dd-stopped-row" onclick="clearDDStopped('global')" style="display:none">
+    <div>
+      <div style="font-size:15px;font-weight:600">⛔ グローバルDD STOP</div>
+      <div style="font-size:12px;color:var(--secondary);margin-top:2px" id="dd-stopped-sub">タップして解除</div>
+    </div>
+    <div class="dd-toggle-track on" id="dd-stopped-track" role="switch" aria-checked="true">
+      <div class="dd-toggle-thumb"></div>
+    </div>
+  </div>
+
+  <!-- 3. 市場別STOPフラグ -->
+  <div id="dd-market-stops"></div>
+
   <!-- DD段階バー -->
   <div class="sec">ドローダウン段階</div>
   <div class="dd-bar" id="dd-bar">

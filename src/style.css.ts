@@ -96,6 +96,14 @@ body{background:var(--bg);color:var(--text);font-size:15px;line-height:1.47;
 .kpi{padding:12px 8px;background:var(--surface);border-radius:var(--rs);text-align:center}
 .kpi-val{font-size:18px;font-weight:700;font-variant-numeric:tabular-nums}.kpi-lbl{font-size:11px;color:var(--tertiary);margin-top:4px}
 
+/* ═══ DD global toggle ═══ */
+.dd-toggle-row{display:flex;align-items:center;justify-content:space-between;padding:14px 16px;background:var(--surface);border-radius:var(--rs);margin:0 16px 8px;cursor:pointer;min-height:44px;-webkit-tap-highlight-color:transparent}
+.dd-toggle-row-danger{background:rgba(255,69,58,0.1);border:1px solid rgba(255,69,58,0.25)}
+.dd-toggle-track{width:51px;height:31px;border-radius:16px;background:rgba(142,142,147,0.3);position:relative;transition:background 0.2s ease;flex-shrink:0}
+.dd-toggle-track.on{background:var(--red)}
+.dd-toggle-thumb{position:absolute;top:2px;left:2px;width:27px;height:27px;border-radius:50%;background:#fff;box-shadow:0 2px 6px rgba(0,0,0,0.35);transition:transform 0.2s ease}
+.dd-toggle-track.on .dd-toggle-thumb{transform:translateX(20px)}
+
 /* ═══ DD stage bar (v6) ═══ */
 .dd-bar{display:flex;height:8px;border-radius:4px;overflow:hidden;margin:0 16px 8px;background:var(--tertiary)}
 .dd-seg{height:100%}

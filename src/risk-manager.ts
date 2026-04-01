@@ -66,6 +66,40 @@ export async function setGlobalDDEnabled(db: D1Database, enabled: boolean): Prom
   await setRiskStateValue(db, 'global_dd_enabled', enabled ? 'true' : 'false');
 }
 
+/**
+ * グローバル dd_stopped フラグを手動クリア（フロントエンドの解除スイッチ用）。
+ * ⚠️ global_dd_enabled=true のときに解除すると即取引再開する。事前に DD% を確認すること。
+ */
+export async function clearGlobalDDStopped(db: D1Database): Promise<void> {
+  await setRiskStateValue(db, 'dd_stopped', 'false');
+}
+
+/**
+ * 市場別 dd_stopped:{assetClass} フラグを手動クリア。
+ * 自動クリアは市場クローズ遷移時。手動クリアはフロントエンドの解除スイッチから。
+ */
+export async function clearMarketDDStopped(db: D1Database, assetClass: string): Promise<void> {
+  await setRiskStateValue(db, `dd_stopped:${assetClass}`, 'false');
+}
+
+/**
+ * 全市場の dd_stopped フラグ状態を取得（APIレスポンス用）。
+ */
+export async function getDDStoppedStatus(db: D1Database): Promise<{
+  global: boolean;
+  markets: Record<string, boolean>;
+}> {
+  const globalVal = await getRiskStateValue(db, 'dd_stopped');
+  const global = globalVal === 'true';
+  const markets: Record<string, boolean> = {};
+  const assetClasses: AssetClass[] = ['forex', 'index', 'stock', 'commodity', 'crypto'];
+  for (const ac of assetClasses) {
+    const val = await getRiskStateValue(db, `dd_stopped:${ac}`);
+    markets[ac] = val === 'true';
+  }
+  return { global, markets };
+}
+
 // ─── HWM管理 ────────────────────────────────────
 
 const INITIAL_BALANCE = INITIAL_CAPITAL;

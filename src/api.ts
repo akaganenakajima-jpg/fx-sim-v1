@@ -4,7 +4,7 @@ import type { Position } from './db';
 // fetchNewsはcron側の責務。API側はlatest_newsキャッシュのみ参照
 import { getRiskStatus, type RiskEnv } from './risk-guard';
 import { INSTRUMENTS, getDefaultParams, type AssetClass } from './instruments';
-import { getAllMarketDrawdownLevels, type DrawdownLevel } from './risk-manager';
+import { getAllMarketDrawdownLevels, isGlobalDDEnabled, getDDStoppedStatus, type DrawdownLevel } from './risk-manager';
 import { getSessionStats, getPairStats, type SessionStats, type PairStats } from './trade-journal';
 import { wilsonCI, sharpeWithSE, varCvar, kellyFraction, markovTransition, maxDrawdown, rollingReturns, pnlVolatility, profitFactor, bootstrapROI, aiAccuracy, randomBaselineComparison, pairCorrelation, logReturnStats, powerAnalysis, ewmaVolatility, engleGrangerCointegration, hierarchicalWinRate } from './stats';
 import { INITIAL_CAPITAL, RELIABILITY_TRUSTED, RELIABILITY_TENTATIVE } from './constants';
@@ -321,6 +321,10 @@ export interface StatusResponse {
   }>;
   /** 市場別DD段階（AssetClass単位の独立DD管理） */
   ddByMarket: Record<string, { level: string; ddPct: number }> | null;
+  /** 総合DDトグル状態（false=検証モード、true=DD有効） */
+  globalDDEnabled: boolean;
+  /** DD停止フラグの現在状態（グローバル + 市場別） */
+  ddStoppedStatus: { global: boolean; markets: Record<string, boolean> };
 }
 
 export async function getApiStatus(db: D1Database, tradingEnv?: { TRADING_ENABLED?: string; OANDA_LIVE?: string; RISK_MAX_DAILY_LOSS?: string; RISK_MAX_LIVE_POSITIONS?: string; RISK_MAX_LOT_SIZE?: string; RISK_ANOMALY_THRESHOLD?: string }): Promise<StatusResponse> {
@@ -858,6 +862,8 @@ export async function getApiStatus(db: D1Database, tradingEnv?: { TRADING_ENABLE
     paramHistory: buildParamHistory(paramReviewLogRaw as unknown as { results: Array<{ pair: string; param_version: number; reason: string; win_rate: number | null; actual_rr: number | null; profit_factor: number | null; trades_eval: number | null; created_at: string }> }),
     recentIndicatorLogs: (indicatorLogsRaw as unknown as { results: IndicatorLog[] }).results ?? [],
     ddByMarket: await getAllMarketDrawdownLevels(db).catch(() => null),
+    globalDDEnabled: await isGlobalDDEnabled(db).catch(() => false),
+    ddStoppedStatus: await getDDStoppedStatus(db).catch(() => ({ global: false, markets: {} })),
   };
 }
 

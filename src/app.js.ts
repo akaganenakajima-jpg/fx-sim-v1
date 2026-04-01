@@ -94,6 +94,113 @@ export const JS = `
   }
   window.rotationDecide = rotationDecide;
 
+  // ── DD制御パネル ──
+  var _ddEnabled = false;
+  var _ddStopped = false;
+  var _ddStoppedMarkets = {}; // { forex: false, index: true, ... }
+
+  var DD_MARKET_LABELS = { forex: '為替', index: '株式指数', stock: '個別株', commodity: '商品', crypto: '暗号資産' };
+
+  // 設定送信の共通関数（楽観的更新 + ロールバック）
+  function _postSettings(payload, onSuccess, onFail) {
+    fetch('/api/settings', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    })
+      .then(function(res) { return res.json(); })
+      .then(function(data) {
+        if (data.success) { onSuccess(); }
+        else { onFail('設定エラー: ' + (data.message || '不明なエラー')); }
+      })
+      .catch(function(e) { onFail('通信エラー: ' + e); });
+  }
+
+  // 総合DD機能トグル
+  function toggleGlobalDD() {
+    var newVal = !_ddEnabled;
+    _applyDDToggleUI(newVal);
+    _postSettings(
+      { global_dd_enabled: newVal },
+      function() { _ddEnabled = newVal; },
+      function(msg) { _applyDDToggleUI(_ddEnabled); alert(msg); }
+    );
+  }
+  function _applyDDToggleUI(enabled) {
+    var track = el('dd-toggle-track');
+    var sub = el('dd-toggle-sub');
+    if (track) { track.classList.toggle('on', enabled); track.setAttribute('aria-checked', String(enabled)); }
+    if (sub) sub.textContent = enabled ? '有効 — DD 20%で完全停止' : '実弾投入まで無効（検証モード）';
+  }
+
+  // グローバルSTOPフラグ解除
+  function clearDDStopped(target) {
+    if (target === 'global') {
+      var row = el('dd-stopped-row');
+      if (row) row.style.opacity = '0.5';
+      _postSettings(
+        { dd_stopped: false },
+        function() {
+          _ddStopped = false;
+          _applyDDStoppedUI();
+        },
+        function(msg) {
+          if (el('dd-stopped-row')) el('dd-stopped-row').style.opacity = '1';
+          alert(msg);
+        }
+      );
+    } else {
+      // 市場別
+      var payload = { dd_stopped_market: {} };
+      payload.dd_stopped_market[target] = false;
+      var rowId = 'dd-mstop-' + target;
+      var rowEl = el(rowId);
+      if (rowEl) rowEl.style.opacity = '0.5';
+      _postSettings(
+        payload,
+        function() {
+          _ddStoppedMarkets[target] = false;
+          _renderMarketStops();
+        },
+        function(msg) {
+          if (el(rowId)) el(rowId).style.opacity = '1';
+          alert(msg);
+        }
+      );
+    }
+  }
+
+  // グローバルSTOP行の表示更新
+  function _applyDDStoppedUI() {
+    var row = el('dd-stopped-row');
+    if (!row) return;
+    if (_ddStopped) {
+      row.style.display = '';
+      row.style.opacity = '1';
+    } else {
+      row.style.display = 'none';
+    }
+  }
+
+  // 市場別STOP行の描画
+  function _renderMarketStops() {
+    var container = el('dd-market-stops');
+    if (!container) return;
+    var markets = Object.keys(_ddStoppedMarkets).filter(function(k) { return _ddStoppedMarkets[k]; });
+    if (markets.length === 0) { container.innerHTML = ''; return; }
+    container.innerHTML = markets.map(function(ac) {
+      var label = DD_MARKET_LABELS[ac] || ac;
+      return '<div class="dd-toggle-row dd-toggle-row-danger" id="dd-mstop-' + ac + '" data-market="' + ac + '" onclick="clearDDStopped(this.dataset.market)">' +
+        '<div><div style="font-size:15px;font-weight:600">\u26D4 ' + label + ' DD STOP</div>' +
+        '<div style="font-size:12px;color:var(--secondary);margin-top:2px">\u30BF\u30C3\u30D7\u3057\u3066\u89E3\u9664</div></div>' +
+        '<div class="dd-toggle-track on" role="switch" aria-checked="true"><div class="dd-toggle-thumb"></div></div>' +
+        '</div>';
+    }).join('');
+  }
+
+  window.toggleGlobalDD = toggleGlobalDD;
+  window.clearDDStopped = clearDDStopped;
+
   var CATEGORY_ORDER = ['為替', '株式指数', '日本株', '米国株', '暗号資産', '商品', '債券'];
 
   // INSTRUMENTS はAPIレスポンスの data.instruments から動的に初期化される
@@ -2263,6 +2370,16 @@ export const JS = `
   // ══════════════════════════════════════════
 
   function renderSystemTab(data) {
+    // DD制御パネル — 全フラグを初期化
+    _ddEnabled = !!data.globalDDEnabled;
+    _applyDDToggleUI(_ddEnabled);
+
+    var stopped = (data.ddStoppedStatus || {});
+    _ddStopped = !!(stopped.global);
+    _ddStoppedMarkets = stopped.markets || {};
+    _applyDDStoppedUI();
+    _renderMarketStops();
+
     // ヘルスヒーロー
     var healthText = el('health-text');
     var healthSub = el('health-sub');
