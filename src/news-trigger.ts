@@ -8,7 +8,7 @@
 //   fx-strategy.md §2.3: 緊急局面でのAI完全裁量エントリーが期待値を最大化
 //   stats/ts.md §2: イベントスタディ — 突発ニュース後の価格インパクトは60〜120分で収束
 
-import { insertSystemLog, setCacheValue } from './db';
+import { insertSystemLog, setCacheValue, getCacheValue } from './db';
 
 // ─── 緊急判定キーワード ────────────────────────────────────────────────────
 // これらが含まれかつスコアが高い場合はEMERGENCYとして扱う
@@ -359,6 +359,30 @@ export async function runNewsTrigger(
       `緊急ニュース検出 → PATH_B強制発火: ${title.slice(0, 60)}`,
       `score=${row.composite_score} relevance=${parsedScores.relevance} sentiment=${parsedScores.sentiment}`);
 
+    // news_analysisキャッシュにEMERGENCYカードを追記 → UIに緊急バッジとして表示
+    try {
+      const existingRaw = await getCacheValue(db, 'news_analysis');
+      const existing: any[] = existingRaw
+        ? (() => { try { return JSON.parse(existingRaw); } catch { return []; } })()
+        : [];
+      const syntheticEmergency = {
+        index: -1,
+        attention: true,
+        trigger_type: 'EMERGENCY',
+        affected_pairs: [],
+        impact: `緊急: relevance=${parsedScores.relevance} sentiment=${parsedScores.sentiment}`,
+        title_ja: title,
+        pubDate: row.fetched_at,
+        score: row.composite_score != null ? Math.round(row.composite_score * 10) / 10 : null,
+        analyzed_at: new Date().toISOString(),
+        why_chain: [],
+      };
+      const deduplicated = existing.filter((e: any) => e.title_ja !== title);
+      await setCacheValue(db, 'news_analysis', JSON.stringify([syntheticEmergency, ...deduplicated].slice(0, 80)));
+    } catch (e) {
+      console.warn(`[news-trigger] news_analysis EMERGENCY更新失敗: ${String(e).slice(0, 60)}`);
+    }
+
     return {
       triggerType: 'EMERGENCY',
       triggerId: emergencyLog?.id,
@@ -439,6 +463,34 @@ export async function runNewsTrigger(
     await insertSystemLog(db, 'INFO', 'NEWS_TRIGGER',
       `トレンドニュース → 臨時パラメーター設定: ${appliedPairs.join(',')}`,
       `${geminiResult.reason.slice(0, 100)} expires=${geminiResult.expiresInHours}h`);
+
+    // news_analysisキャッシュにTREND_INFLUENCE変更カードを追記 → UIニュースタブに表示される
+    try {
+      const existingRaw = await getCacheValue(db, 'news_analysis');
+      const existing: any[] = existingRaw
+        ? (() => { try { return JSON.parse(existingRaw); } catch { return []; } })()
+        : [];
+      const syntheticEntry = {
+        index: -1,
+        attention: true,
+        trigger_type: 'TREND_INFLUENCE',
+        affected_pairs: appliedPairs,
+        impact: geminiResult.reason,
+        title_ja: title,
+        pubDate: row.fetched_at,
+        score: row.composite_score != null ? Math.round(row.composite_score * 10) / 10 : null,
+        param_changed: true,
+        param_expires_hours: geminiResult.expiresInHours,
+        analyzed_at: new Date().toISOString(),
+        triggerReason: geminiResult.reason,
+        why_chain: [],
+      };
+      // 同タイトルの旧エントリーを除去して先頭に挿入
+      const deduplicated = existing.filter((e: any) => e.title_ja !== title);
+      await setCacheValue(db, 'news_analysis', JSON.stringify([syntheticEntry, ...deduplicated].slice(0, 80)));
+    } catch (e) {
+      console.warn(`[news-trigger] news_analysisキャッシュ更新失敗: ${String(e).slice(0, 60)}`);
+    }
 
     return {
       triggerType: 'TREND_INFLUENCE',

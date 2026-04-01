@@ -146,11 +146,11 @@ body{background:var(--bg);color:var(--text);font-size:15px;line-height:1.47;
 .hm-g{display:grid;grid-template-columns:72px repeat(4,1fr);gap:2px;font-size:11px}
 .hm-h{padding:4px 6px;color:var(--tertiary);font-weight:600;text-align:center;font-size:11px}.hm-h:first-child{text-align:left}.hm-p{padding:4px 6px;font-weight:500}.hm-c{padding:4px 6px;text-align:center;border-radius:4px;font-variant-numeric:tabular-nums}
 .news-feed{margin:0 16px}.nf-item{padding:16px;background:var(--surface);border-radius:var(--rs);margin-bottom:8px;border-left:3px solid var(--tertiary)}
-.nf-item.nf-emergency{border-left-color:var(--red)}.nf-item.nf-trend{border-left-color:var(--orange)}
+.nf-item.nf-emergency{border-left-color:var(--red)}.nf-item.nf-trend-change{border-left-color:var(--blue)}.nf-item.nf-trend{border-left-color:var(--orange)}
 .nf-header{display:flex;justify-content:space-between;align-items:center;margin-bottom:8px}
-.nf-badge{font-size:11px;font-weight:700;padding:2px 8px;border-radius:4px}
-.nf-badge-emergency{background:rgba(255,69,58,0.15);color:var(--red)}.nf-badge-trend{background:rgba(255,159,10,0.15);color:var(--orange)}.nf-badge-info{background:rgba(142,142,147,0.15);color:var(--secondary)}
-.nf-time{font-size:11px;color:var(--tertiary)}.nf-headline{font-size:14px;font-weight:600;line-height:1.4;margin-bottom:8px}
+.nf-badge{display:inline-block;font-size:11px;font-weight:700;padding:2px 8px;border-radius:4px;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.nf-badge-emergency{background:rgba(255,69,58,0.15);color:var(--red)}.nf-badge-trend-change{background:rgba(10,132,255,0.15);color:var(--blue)}.nf-badge-trend{background:rgba(255,159,10,0.15);color:var(--orange)}.nf-badge-info{background:rgba(142,142,147,0.15);color:var(--secondary)}
+.nf-time{font-size:11px;color:var(--tertiary);white-space:nowrap;flex-shrink:0;margin-left:8px}.nf-headline{font-size:14px;font-weight:600;line-height:1.4;margin-bottom:8px}
 .nf-ai{display:flex;gap:8px;align-items:flex-start;margin-bottom:8px;padding:8px 12px;background:rgba(10,132,255,0.06);border-radius:8px}
 .nf-ai-label{font-size:11px;color:var(--blue);white-space:nowrap;font-weight:600;flex-shrink:0}.nf-ai-text{font-size:13px;color:var(--secondary);line-height:1.6}
 .nf-action{display:flex;gap:8px;align-items:center}.nf-action-text{font-size:12px;color:var(--secondary)}.nf-action-text b{font-weight:600}

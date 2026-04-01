@@ -1590,9 +1590,28 @@ async function runAnalysis(env: Env): Promise<void> {
           const d = e.pubDate || e.analyzed_at || '';
           return d ? new Date(d).getTime() >= cutoff24h : false;
         });
-        const newTitles = new Set(enriched.map((e: any) => e.title));
+        // Stage 2分類（trigger_type）を既存エントリから継承 — PATH_Bが上書きしてもバッジ種別を保護
+        const existingByTitle = new Map<string, any>();
+        for (const e of existingAnalysis) {
+          const t = e.title_ja || e.title;
+          if (t) existingByTitle.set(t, e);
+        }
+        const enrichedWithTrigger = enriched.map((e: any) => {
+          const prev = existingByTitle.get(e.title ?? e.title_ja);
+          if (prev?.trigger_type) {
+            return {
+              ...e,
+              trigger_type: prev.trigger_type,
+              param_changed: prev.param_changed ?? false,
+              param_expires_hours: prev.param_expires_hours ?? null,
+              triggerReason: prev.triggerReason ?? e.triggerReason ?? null,
+            };
+          }
+          return e;
+        });
+        const newTitles = new Set(enrichedWithTrigger.map((e: any) => e.title));
         const preserved = existingIn24h.filter((e: any) => !newTitles.has(e.title));
-        const mergedAnalysis = [...enriched, ...preserved].slice(0, 80);
+        const mergedAnalysis = [...enrichedWithTrigger, ...preserved].slice(0, 80);
         await setCacheValue(env.DB, 'news_analysis', JSON.stringify(mergedAnalysis));
 
         // latest_news も過去24時間蓄積

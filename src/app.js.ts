@@ -192,6 +192,19 @@ export const JS = `
     return d.toLocaleString('ja-JP', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' });
   }
 
+  function fmtPubDate(dateStr) {
+    if (!dateStr) return '—';
+    // Safari fix: RFC2822末尾の " Z" は " GMT" に変換（Safariは "Z" 単体を不正なタイムゾーンとして拒否する）
+    var s = dateStr.replace(/\s+Z$/, ' GMT');
+    var d = new Date(s);
+    if (isNaN(d.getTime())) return '—';
+    var mm = String(d.getMonth() + 1).padStart(2, '0');
+    var dd = String(d.getDate()).padStart(2, '0');
+    var hh = String(d.getHours()).padStart(2, '0');
+    var mi = String(d.getMinutes()).padStart(2, '0');
+    return mm + '/' + dd + ' ' + hh + ':' + mi;
+  }
+
   function fmtTimeAgo(dateStr) {
     if (!dateStr) return '—';
     var diff = Date.now() - new Date(dateStr).getTime();
@@ -411,8 +424,8 @@ export const JS = `
     // ニュースドロワー
     var newsForDrawer = (data.acceptedNews || []).length > 0
       ? (data.acceptedNews || []).map(function(n) {
-          return { title: n.title_ja, title_ja: n.title_ja, description: n.desc_ja, desc_ja: n.desc_ja, pubDate: n.fetched_at, source: n.source, url: n.url || null };
-        })
+          return { title: n.title_ja, title_ja: n.title_ja, description: n.desc_ja, desc_ja: n.desc_ja, pubDate: n.pub_date || n.fetched_at, source: n.source, url: n.url || null };
+        }).sort(function(a, b) { return new Date(b.pubDate || 0).getTime() - new Date(a.pubDate || 0).getTime(); })
       : (data.latestNews || []);
     if (window._renderNews) window._renderNews(newsForDrawer, data.newsAnalysis || []);
 
@@ -428,7 +441,7 @@ export const JS = `
         var isAtt = (data.newsAnalysis || []).some(function(a) { return a.title === (n.title_ja || n.title) && a.impact_level >= 3; });
         return '<div class="panel-news-item' + (isAtt ? ' panel-news-attention' : '') + '">' +
           '<div class="panel-news-title">' + escHtml(n.title_ja || n.title || '') + '</div>' +
-          '<div class="panel-news-meta">' + escHtml(n.source || '') + ' · ' + fmtTimeAgo(n.pubDate) + '</div>' +
+          '<div class="panel-news-meta">' + escHtml(n.source || '') + ' · ' + fmtPubDate(n.pubDate) + '</div>' +
         '</div>';
       }).join('');
     }
@@ -968,7 +981,7 @@ export const JS = `
         var rest = unItems.length - shown.length;
         unanalyzed.innerHTML = shown.map(function(n) {
           return '<div style="padding:12px 0;border-bottom:1px solid rgba(255,255,255,0.04);font-size:13px">' +
-            '<span style="color:var(--tertiary);font-size:11px;margin-right:8px">' + fmtTimeAgo(n.pubDate || '') + '</span>' +
+            '<span style="color:var(--tertiary);font-size:11px;margin-right:8px">' + fmtPubDate(n.pubDate || '') + '</span>' +
             escHtml(n.title_ja || n.title) + '</div>';
         }).join('') +
         (rest > 0 ? '<div style="padding:12px 0;font-size:12px;color:var(--tertiary);text-align:center">他' + rest + '件...</div>' : '');
@@ -999,13 +1012,24 @@ export const JS = `
   }
 
   function newsCard(n, highlight, idx) {
-    // attention=trueなら緊急/トレンド扱い、falseなら情報
-    var isAttention = !!n.attention;
-    var isEmergency = isAttention && n.affected_pairs && n.affected_pairs.length >= 2;
-    var badgeCls = isEmergency ? 'nf-badge-emergency' : isAttention ? 'nf-badge-trend' : 'nf-badge-info';
-    var badgeBase = isEmergency ? '緊急' : isAttention ? 'トレンド' : '情報';
+    // Stage 2（news_trigger_log）の分類を優先、なければattentionでフォールバック
+    var triggerType   = n.trigger_type || '';
+    var isEmergency   = triggerType === 'EMERGENCY';
+    var isTrendChange = triggerType === 'TREND_INFLUENCE';
+    var isAttention   = !isEmergency && !isTrendChange && !!n.attention;
+    var badgeCls  = isEmergency   ? 'nf-badge-emergency'
+                  : isTrendChange ? 'nf-badge-trend-change'
+                  : isAttention   ? 'nf-badge-trend'
+                  : 'nf-badge-info';
+    var badgeBase = isEmergency   ? '緊急'
+                  : isTrendChange ? 'トレンド変化'
+                  : isAttention   ? '注目'
+                  : '情報';
     var badgeText = n.score != null ? badgeBase + ' · score ' + n.score : badgeBase;
-    var borderCls = isEmergency ? 'nf-emergency' : isAttention ? 'nf-trend' : 'nf-info';
+    var borderCls = isEmergency   ? 'nf-emergency'
+                  : isTrendChange ? 'nf-trend-change'
+                  : isAttention   ? 'nf-trend'
+                  : '';
     // impactフィールドはAI判断テキスト（数値スコアではない）
     var impactText = typeof n.impact === 'string' ? n.impact : '';
     // aiText優先順: triggerReason（ニュートリガー由来） > desc_ja > description > impact
@@ -1025,7 +1049,7 @@ export const JS = `
         '<span class="nf-action-text">影響銘柄: <b>' + n.affected_pairs.join(', ') + '</b></span></div>';
     }
     var crossHtml = '';
-    if (isAttention) {
+    if (isEmergency || isTrendChange || isAttention) {
       crossHtml = '<div style="margin-top:8px"><span class="cross-link" onclick="switchTab(\\\'tab-portfolio\\\')">\\u2192 今タブでポジション確認</span>' +
         '<span class="cross-link" style="margin-left:16px" onclick="switchTab(\\\'tab-ai\\\')">\\u2192 AIタブで判定確認</span></div>';
     }
@@ -1059,8 +1083,18 @@ export const JS = `
         (n.linked_trade.tp_rate ? ' \\u00b7 TP ' + fmtPrice(ltPair, n.linked_trade.tp_rate) : '') +
         (n.linked_trade.sl_rate ? ' \\u00b7 SL ' + fmtPrice(ltPair, n.linked_trade.sl_rate) : '') +
         '</span></div>';
+    } else if (n.param_changed && n.affected_pairs && n.affected_pairs.length > 0) {
+      // TREND_INFLUENCE: パラメーター変更カード
+      var paramPairs = n.affected_pairs.join(', ');
+      var expiryNote = n.param_expires_hours ? ' · ' + n.param_expires_hours + 'h有効' : '';
+      tradeActionHtml = '<div class="nf-action"><span style="font-size:12px;color:var(--blue)">\u2699</span>' +
+        '<span class="nf-action-text"><b style="color:var(--blue)">パラメーター変更</b>: ' + escHtml(paramPairs) + '<span style="color:var(--tertiary)">' + expiryNote + '</span></span></div>';
+    } else if (isEmergency) {
+      // EMERGENCY: PATH_B強制発火（銘柄はPATH_B B1が後で判断）
+      tradeActionHtml = '<div class="nf-action"><span style="font-size:12px;color:var(--red)">\u26a0</span>' +
+        '<span class="nf-action-text" style="color:var(--red)">PATH_B緊急発火 → 全銘柄AI判断中</span></div>';
     } else if (isAttention) {
-      // hold_reason があれば見送り理由を表示、なければ旧データ表示
+      // PATH_B B1注目ニュース: 見送り理由
       var holdMsg = n.hold_reason ? ('見送り: ' + escHtml(n.hold_reason)) : '判断ログなし（旧データ）';
       var holdColor = n.hold_reason === '既存ポジションあり' ? 'var(--blue)' : 'var(--tertiary)';
       tradeActionHtml = '<div style="margin-top:6px;padding:6px 12px;font-size:11px;color:' + holdColor + ';background:rgba(255,255,255,0.03);border-radius:var(--rs)">' + holdMsg + '</div>';
@@ -1069,7 +1103,7 @@ export const JS = `
         '<span class="nf-action-text" style="color:var(--tertiary)">影響なし · パラメーター変更なし</span></div>';
     }
     return '<div class="nf-item ' + borderCls + '">' +
-      '<div class="nf-header"><span class="nf-badge ' + badgeCls + '">' + badgeText + '</span><span class="nf-time">' + fmtTimeAgo(n.analyzed_at || n.pubDate || '') + '</span></div>' +
+      '<div class="nf-header"><span class="nf-badge ' + badgeCls + '">' + badgeText + '</span><span class="nf-time">' + fmtPubDate(n.pubDate || n.analyzed_at || '') + '</span></div>' +
       '<div class="nf-headline">' + escHtml(n.title_ja || n.title || '') + '</div>' +
       (aiText ? '<div class="nf-ai"><span class="nf-ai-label">' + (isAttention ? 'AI判断' : 'AI') + '</span><span class="nf-ai-text">' + escHtml(aiText) + '</span></div>' : '') +
       pairsHtml + tradeActionHtml +
@@ -2642,7 +2676,7 @@ export const JS = `
         var flag = (a && a.attention) ? '<span class="news-flag">注目</span>' : '';
         var dateStr = '';
         if (item.pubDate) {
-          try { dateStr = new Date(item.pubDate).toLocaleString('ja-JP', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' }); } catch(e) {}
+          dateStr = fmtPubDate(item.pubDate);
         }
         return '<div class="news-item' + (a && a.attention ? ' news-attention' : '') + '" data-news-idx="' + idx + '">' +
           '<div class="news-item-title">' + flag + escHtml(a && a.title_ja ? a.title_ja : title) + '</div>' +
