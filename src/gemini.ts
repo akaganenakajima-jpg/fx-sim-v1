@@ -411,7 +411,7 @@ export interface NewsAnalysisItem {
   affected_pairs: string[];
   link?: string;
   og_description?: string; // B2でfetch後に付与
-  [key: string]: unknown; // インデックスシグネチャ（translateTitlesWithHaiku互換）
+  [key: string]: unknown; // インデックスシグネチャ（translateNewsTitles互換）
 }
 
 /** Path B B1出力 */

@@ -33,7 +33,7 @@ import { determineRegime, formatRegimeForPrompt, getRegimeProhibitions } from '.
 import { getWeekendStatus, lockProfitsForWeekend, forceCloseAllForWeekend, getWeekendNewsDigest, saveFridayClosePrices, detectGaps, resetWeekendFlags, getTradeableInstruments } from './weekend';
 import { runLogicDecisions } from './logic-trading';
 import { runParamReview } from './param-review';
-import { evaluateRecoveryIfNeeded, getDrawdownLevel, getAllMarketDrawdownLevels, checkInstrumentDailyLoss, setGlobalDDEnabled, checkMarketCloseAndReleaseDDStop } from './risk-manager';
+import { evaluateRecoveryIfNeeded, getDrawdownLevel, checkInstrumentDailyLoss } from './risk-manager';
 import { runNewsTrigger, consumeEmergencyForceFlag } from './news-trigger';
 // AI銘柄マネージャー
 import { fetchFundamentals, saveFundamentals, fetchAllListedStocks, cleanupOldFundamentals } from './jquants';
@@ -309,37 +309,6 @@ export default {
           }
         }
         return new Response('Method Not Allowed', { status: 405 });
-
-      case '/api/settings':
-        if (request.method === 'POST') {
-          let settingsBody: { key: string; value: string };
-          try {
-            settingsBody = await request.json() as { key: string; value: string };
-          } catch {
-            return new Response(JSON.stringify({ success: false, message: 'Invalid JSON body' }), {
-              status: 400, headers: { 'Content-Type': 'application/json' },
-            });
-          }
-          // ホワイトリスト検証（グローバルDD管理のみ許可）
-          if (settingsBody.key !== 'global_dd_enabled' || !['true', 'false'].includes(settingsBody.value)) {
-            return new Response(JSON.stringify({ success: false, message: 'Invalid key or value' }), {
-              status: 400, headers: { 'Content-Type': 'application/json' },
-            });
-          }
-          try {
-            await setGlobalDDEnabled(env.DB, settingsBody.value === 'true');
-            return new Response(JSON.stringify({ success: true }), {
-              headers: { 'Content-Type': 'application/json' },
-            });
-          } catch (e) {
-            return new Response(JSON.stringify({ success: false, message: String(e) }), {
-              headers: { 'Content-Type': 'application/json' },
-              status: 500,
-            });
-          }
-        }
-        return new Response('Method Not Allowed', { status: 405 });
-
       case '/api/scores': {
         try {
           const today = new Date().toISOString().split('T')[0];
@@ -465,7 +434,7 @@ async function fetchMarketData(env: Env, now: Date): Promise<MarketData | null> 
       failedSources.map(s => s.source).join(','));
   }
 
-  // news_raw ステージングテーブルに全記事を保存（Haikuフィルタ前）
+  // news_raw ステージングテーブルに全記事を保存（フィルタ前）
   saveRawNews(newsData.items, env.DB).catch(e =>
     console.warn(`[fx-sim] saveRawNews error: ${String(e).slice(0, 100)}`)
   );
@@ -782,7 +751,7 @@ async function runPathB(
     }
   }
 
-  // B1成功後: filterAndTranslateWithHaikuで付与済みのtitle_jaを転写（APIコール不要）
+  // B1成功後: filterAndTranslateNewsで付与済みのtitle_jaを転写（APIコール不要）
   for (const item of stage1.news_analysis) {
     const src = news[item.index];
     item.title_ja = src?.title_ja ?? src?.title ?? '';
@@ -1269,13 +1238,6 @@ async function runCore(env: Env): Promise<void> {
     try {
       await env.DB.prepare(`DELETE FROM system_logs WHERE id NOT IN (SELECT id FROM system_logs ORDER BY id DESC LIMIT 1000)`).run();
       await env.DB.prepare(`DELETE FROM market_cache WHERE key LIKE 'news_filter_%' AND updated_at < datetime('now', '-2 hours')`).run();
-      await env.DB.prepare(`DELETE FROM market_cache WHERE key LIKE 'news_haiku_%' AND updated_at < datetime('now', '-2 hours')`).run();
-    } catch {}
-
-    // 市場クローズ遷移検出 → dd_stopped:{assetClass} 自動解除
-    // ⚠️ ユーザー指示による仕様（2026-04-01）: 翌営業日持ち越し禁止。バグではない。
-    try {
-      await checkMarketCloseAndReleaseDDStop(env.DB, now);
     } catch {}
 
     const coreMs = Date.now() - cronStart;
@@ -1324,12 +1286,10 @@ async function runAnalysis(env: Env): Promise<void> {
     const tpSlMs = coreData.tpSlMs;
 
     // 2.8 ニューストリガー（緊急→PATH_B強制）
-    let lastTriggerId: number | undefined;
     try {
       const triggerResult = await runNewsTrigger(env.DB, getApiKey(env));
-      lastTriggerId = triggerResult.triggerId;
       if (triggerResult.triggerType !== 'NONE') {
-        console.log(`[fx-sim] NEWS_TRIGGER: ${triggerResult.triggerType} title=${triggerResult.newsTitle?.slice(0, 50)} triggerId=${lastTriggerId}`);
+        console.log(`[fx-sim] NEWS_TRIGGER: ${triggerResult.triggerType} title=${triggerResult.newsTitle?.slice(0, 50)}`);
       }
     } catch (e) {
       console.warn(`[fx-sim] runNewsTrigger error: ${String(e).slice(0, 80)}`);
@@ -1455,7 +1415,7 @@ async function runAnalysis(env: Env): Promise<void> {
 
       // BUY/SELL: ポジション開設
       if (result.decisions.length > 0) {
-        // DD STOPチェック（グローバル）: dd_stopped=true の場合は PATH_B 経由のエントリーも停止
+        // DD STOPチェック: dd_stopped=true の場合は PATH_B 経由のエントリーも停止
         // （B2 CB 発動→B1フォールバックでも DD STOP をバイパスしないための保護）
         const ddCheckForPathB = await getDrawdownLevel(env.DB);
         if (ddCheckForPathB.level === 'STOP') {
@@ -1464,8 +1424,6 @@ async function runAnalysis(env: Env): Promise<void> {
             `DD=${ddCheckForPathB.ddPct.toFixed(1)}% decisions=${result.decisions.length}件`);
           return handledPairs;
         }
-        // 市場別 DD STOPチェック: 市場ごとのdd_stopped状態を一括取得
-        const marketDDStopped = await getAllMarketDrawdownLevels(env.DB).catch(() => ({} as Record<string, boolean>));
         let pathBNewEntries = 0; // W005: このtickの新規開設数
         const PATH_B_OPEN_LIMIT = 10; // W005: 全体OPEN上限
         for (const dec of result.decisions) {
@@ -1488,15 +1446,6 @@ async function runAnalysis(env: Env): Promise<void> {
               `PATH_B 銘柄日次Cap超過スキップ: ${dec.pair}`,
               `dailyPnl=${instDailyB.dailyPnl.toFixed(0)}円`);
             continue;
-          }
-          // 市場別 DD STOPチェック（銘柄の assetClass が STOP 中ならスキップ）
-          {
-            const instrument = INSTRUMENTS.find(i => i.pair === dec.pair);
-            if (instrument && marketDDStopped[instrument.assetClass]) {
-              await insertSystemLog(env.DB, 'INFO', 'RISK',
-                `PATH_B 市場DD STOP スキップ: ${dec.pair} (${instrument.assetClass})`, '').catch(() => {});
-              continue;
-            }
           }
           try {
             const instrument = INSTRUMENTS.find(i => i.pair === dec.pair);
@@ -1531,8 +1480,8 @@ async function runAnalysis(env: Env): Promise<void> {
       // decisions テーブルに記録
       if (result.decisions.length > 0) {
         const stmt = env.DB.prepare(
-          `INSERT INTO decisions (pair, rate, decision, tp_rate, sl_rate, reasoning, news_summary, vix, us10y, nikkei, sp500, created_at, trigger_id, why_chain)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+          `INSERT INTO decisions (pair, rate, decision, tp_rate, sl_rate, reasoning, news_summary, vix, us10y, nikkei, sp500, created_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
         );
         await env.DB.batch(result.decisions.map(d => {
           const relevantNews = (d.news_analysis ?? result.newsAnalysis)
@@ -1549,9 +1498,7 @@ async function runAnalysis(env: Env): Promise<void> {
             d.pair, prices.get(d.pair) ?? d.rate, d.decision, d.tp_rate, d.sl_rate,
             `[PATH_B] ${d.reasoning}`, pathBNewsSummary,
             indicators.vix, indicators.us10y, indicators.nikkei, indicators.sp500,
-            now.toISOString(),
-            lastTriggerId ?? null,
-            null  // why_chain（将来的にAI生成）
+            now.toISOString()
           );
         }));
       }
@@ -1590,28 +1537,9 @@ async function runAnalysis(env: Env): Promise<void> {
           const d = e.pubDate || e.analyzed_at || '';
           return d ? new Date(d).getTime() >= cutoff24h : false;
         });
-        // Stage 2分類（trigger_type）を既存エントリから継承 — PATH_Bが上書きしてもバッジ種別を保護
-        const existingByTitle = new Map<string, any>();
-        for (const e of existingAnalysis) {
-          const t = e.title_ja || e.title;
-          if (t) existingByTitle.set(t, e);
-        }
-        const enrichedWithTrigger = enriched.map((e: any) => {
-          const prev = existingByTitle.get(e.title ?? e.title_ja);
-          if (prev?.trigger_type) {
-            return {
-              ...e,
-              trigger_type: prev.trigger_type,
-              param_changed: prev.param_changed ?? false,
-              param_expires_hours: prev.param_expires_hours ?? null,
-              triggerReason: prev.triggerReason ?? e.triggerReason ?? null,
-            };
-          }
-          return e;
-        });
-        const newTitles = new Set(enrichedWithTrigger.map((e: any) => e.title));
+        const newTitles = new Set(enriched.map((e: any) => e.title));
         const preserved = existingIn24h.filter((e: any) => !newTitles.has(e.title));
-        const mergedAnalysis = [...enrichedWithTrigger, ...preserved].slice(0, 80);
+        const mergedAnalysis = [...enriched, ...preserved].slice(0, 80);
         await setCacheValue(env.DB, 'news_analysis', JSON.stringify(mergedAnalysis));
 
         // latest_news も過去24時間蓄積
@@ -1642,8 +1570,8 @@ async function runAnalysis(env: Env): Promise<void> {
       if (holdPairs.length > 0) {
         try {
           const holdStmt = env.DB.prepare(
-            `INSERT INTO decisions (pair, rate, decision, tp_rate, sl_rate, reasoning, news_summary, vix, us10y, nikkei, sp500, created_at, trigger_id, why_chain)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+            `INSERT INTO decisions (pair, rate, decision, tp_rate, sl_rate, reasoning, news_summary, vix, us10y, nikkei, sp500, created_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
           );
           await env.DB.batch(holdPairs.map(pair => {
             const reason = openPairsForPathB.has(pair)
@@ -1653,9 +1581,7 @@ async function runAnalysis(env: Env): Promise<void> {
               pair, prices.get(pair) ?? 0, 'HOLD', null, null,
               `[PATH_B_HOLD] ${reason}`, newsSummary,
               indicators.vix, indicators.us10y, indicators.nikkei, indicators.sp500,
-              now.toISOString(),
-              lastTriggerId ?? null,
-              null  // why_chain
+              now.toISOString()
             );
           }));
         } catch (e) {
@@ -1794,9 +1720,8 @@ async function runDailyTasks(env: Env, _now: Date): Promise<void> {
   try {
     await env.DB.prepare(`DELETE FROM system_logs WHERE id NOT IN (SELECT id FROM system_logs ORDER BY id DESC LIMIT 1000)`).run();
     await env.DB.prepare(`DELETE FROM news_fetch_log WHERE id NOT IN (SELECT id FROM news_fetch_log ORDER BY id DESC LIMIT 5000)`).run();
-    // news_filter_* / news_haiku_* キャッシュパージ（2時間以上前のものを削除 → 10分毎パージと整合）
+    // news_filter_* キャッシュパージ（2時間以上前）
     await env.DB.prepare(`DELETE FROM market_cache WHERE key LIKE 'news_filter_%' AND updated_at < datetime('now', '-2 hours')`).run();
-    await env.DB.prepare(`DELETE FROM market_cache WHERE key LIKE 'news_haiku_%' AND updated_at < datetime('now', '-2 hours')`).run();
     // b2_consecutive_fails リセット（CB解除済み且つ古い場合）
     await env.DB.prepare(
       `DELETE FROM market_cache WHERE key = 'b2_consecutive_fails' AND NOT EXISTS (
