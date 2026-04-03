@@ -1,3 +1,5 @@
+import { AsyncLocalStorage } from 'node:async_hooks';
+
 export interface Position {
   id: number;
   pair: string;
@@ -136,14 +138,25 @@ export async function getCacheValue(
 }
 
 // ─── runId コンテキスト（cron実行トレース用）─────────────────────────────────
-// Workers は 1リクエスト=1スレッドのためモジュールレベル変数で安全に共有
-let _currentRunId: string | null = null;
+// Workers の V8 Isolate は非同期処理のインターリーブにより複数リクエストを
+// 並行処理するため、モジュールレベル変数はリクエスト間で汚染が発生する。
+// AsyncLocalStorage を使ってリクエストスコープで安全に保持する。
+// （compatibility_date >= 2023-03-01 でグローバル利用可能）
+const _runIdStorage = new AsyncLocalStorage<string>();
 
-/** cron実行の冒頭で呼び出し、トレースIDをセットする */
-export function setRunId(id: string): void { _currentRunId = id; }
+/**
+ * 指定した runId のスコープで fn を実行する。
+ * scheduled ハンドラーのエントリーポイントで呼び出すことで、
+ * その非同期チェーン全体に runId が伝播する。
+ */
+export function withRunId<T>(id: string, fn: () => Promise<T>): Promise<T> {
+  return _runIdStorage.run(id, fn);
+}
 
-/** 現在のトレースIDを取得する */
-export function getRunId(): string | null { return _currentRunId; }
+/** 現在の実行コンテキストの runId を取得する */
+export function getRunId(): string | null {
+  return _runIdStorage.getStore() ?? null;
+}
 
 export async function insertSystemLog(
   db: D1Database,
@@ -157,7 +170,7 @@ export async function insertSystemLog(
       `INSERT INTO system_logs (level, category, message, detail, run_id, created_at)
        VALUES (?, ?, ?, ?, ?, ?)`
     )
-    .bind(level, category, message, detail ?? null, _currentRunId, new Date().toISOString())
+    .bind(level, category, message, detail ?? null, _runIdStorage.getStore() ?? null, new Date().toISOString())
     .run();
 }
 
