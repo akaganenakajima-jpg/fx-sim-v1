@@ -2529,6 +2529,61 @@ export const JS = `
       }
     }
 
+    // ── テクニカルスコア内訳（Logic判定からbreakdownを抽出して表示）──
+    // reasoning 例: "[LOGIC] ... score=0.65 [rsi=0.80*0.35 er=0.50*0.25 mtf=1.0*0.2 ...] RR=2.00"
+    // HOLDの場合: "entry_score=0.28<0.30 [rsi=0.40*0.35 ...]"
+    (function() {
+      var SCORE_LABELS = { rsi: 'RSI', er: '効率比(ER)', mtf: 'トレンド', sr: 'S/R強度', pa: 'PA', bb: 'BB', div: 'ダイバ' };
+      var allRec = (lastData.recentDecisions || []).filter(function(d) { return d.pair === pair; });
+      var logicDec = null;
+      for (var li = 0; li < allRec.length; li++) {
+        var r = allRec[li].reasoning || '';
+        if (r.indexOf('rsi=') !== -1) { logicDec = allRec[li]; break; }
+      }
+      if (!logicDec) return;
+
+      var lReasoning = logicDec.reasoning || '';
+      // breakdown ブロック: [rsi=...] の形を抽出
+      var bdMatch = lReasoning.match(/\[rsi=[^\]]+\]/);
+      if (!bdMatch) return;
+      var bdStr = bdMatch[0].slice(1, -1);
+      var tokens = bdStr.match(/(\w+)=([0-9.]+)\*([0-9.]+)/g) || [];
+      if (tokens.length === 0) return;
+
+      // 総合スコア（score=X.XX または entry_score=X.XX）
+      var totalMatch = lReasoning.match(/(?:score|entry_score)=([0-9.]+)/);
+      var totalScore = totalMatch ? parseFloat(totalMatch[1]) : null;
+      var totalColor = totalScore !== null
+        ? (totalScore >= 0.8 ? 'var(--green)' : totalScore >= 0.5 ? 'var(--orange)' : 'var(--red)')
+        : 'var(--tertiary)';
+
+      var rowsHtml = tokens.map(function(token) {
+        var m = token.match(/(\w+)=([0-9.]+)\*([0-9.]+)/);
+        if (!m) return '';
+        var key = m[1];
+        var score = parseFloat(m[2]);
+        var weight = parseFloat(m[3]);
+        var pct = Math.min(100, Math.round(score * 100));
+        var fillColor = score >= 0.8 ? 'var(--green)' : score >= 0.5 ? 'var(--orange)' : 'var(--tertiary)';
+        var label = (SCORE_LABELS as any)[key] || key.toUpperCase();
+        return '<div class="score-row">' +
+          '<span class="score-label" style="width:72px;flex-shrink:0">' + label + '</span>' +
+          '<div class="score-bar"><div class="score-fill" style="width:' + pct + '%;background:' + fillColor + ';transition:width 0.4s ease"></div></div>' +
+          '<span class="score-val">' + pct + '%<span style="color:var(--tertiary);font-size:10px">×' + weight.toFixed(2) + '</span></span>' +
+          '</div>';
+      }).join('');
+
+      body.innerHTML += '<div style="margin-top:12px;padding:10px 12px;background:var(--bg);border-radius:var(--rs)">' +
+        '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">' +
+          '<span style="font-size:12px;font-weight:600">テクニカルスコア</span>' +
+          (totalScore !== null
+            ? '<span style="font-size:13px;font-weight:700;color:' + totalColor + '">' + Math.round(totalScore * 100) + '%</span>'
+            : '') +
+        '</div>' +
+        rowsHtml +
+        '</div>';
+    })();
+
     // AI判断
     var decisions = (lastData.recentDecisions || []).filter(function(d) { return d.pair === pair; });
     if (decisions.length > 0) {
