@@ -272,6 +272,22 @@ const MIGRATIONS: Array<{ version: number; description: string; sql: string }> =
     description: 'system_logs に run_id カラム追加（cron実行トレースID用）',
     sql: 'ALTER TABLE system_logs ADD COLUMN run_id TEXT',
   },
+  // v235-237: Ph.10b エグジット強化 + モメンタムフィルター
+  {
+    version: 235,
+    description: 'instrument_params に time_based_exit_minutes カラム追加（建値撤退タイムリミット）',
+    sql: 'ALTER TABLE instrument_params ADD COLUMN time_based_exit_minutes INTEGER NOT NULL DEFAULT 120',
+  },
+  {
+    version: 236,
+    description: 'instrument_params に trailing_step_atr カラム追加（シャンデリア・エグジット幅）',
+    sql: 'ALTER TABLE instrument_params ADD COLUMN trailing_step_atr REAL NOT NULL DEFAULT 0.5',
+  },
+  {
+    version: 237,
+    description: 'instrument_params に macd_histogram_trend カラム追加（MACDヒストグラム拡大判定）',
+    sql: 'ALTER TABLE instrument_params ADD COLUMN macd_histogram_trend INTEGER NOT NULL DEFAULT 1',
+  },
 ];
 
 export async function runMigrations(db: D1Database): Promise<void> {

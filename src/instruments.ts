@@ -1019,6 +1019,10 @@ export function getDefaultParams(inst: InstrumentConfig): Record<string, number 
     sma_long_period:          40,
     volatility_ratio_min:     0.8,
     sma_angle_min:            0.0,
+    // Ph.10b: エグジット強化 + モメンタムフィルター
+    time_based_exit_minutes:  isStock ? 180 : 120,
+    trailing_step_atr:        0.5,
+    macd_histogram_trend:     1,
   };
 }
 
