@@ -83,13 +83,13 @@ body{background:var(--bg);color:var(--text);font-size:15px;line-height:1.47;
 .why-evidence{color:var(--tertiary);font-size:11px;font-style:italic;margin-top:2px}
 .why-sub{margin-left:12px;padding-left:12px;border-left:1px solid rgba(255,255,255,0.06)}
 
-/* ═══ Score bar (v6) ═══ */
-.score-row{display:flex;align-items:center;gap:8px;padding:4px 0;font-size:11px}
-.score-label{width:32px;flex-shrink:0;color:var(--secondary);font-weight:500}
-.score-bar{flex:1;height:6px;background:var(--tertiary);border-radius:3px;overflow:hidden}
-.score-fill{height:100%;border-radius:3px;background:var(--green)}
-.score-val{width:80px;text-align:right;color:var(--tertiary);font-variant-numeric:tabular-nums;font-size:11px}
-.score-total{font-size:12px;font-weight:600;padding:4px 0;margin-top:4px;border-top:1px solid rgba(255,255,255,0.06)}
+/* ═══ Score bar (v7) ═══ */
+.score-row{display:flex;align-items:center;gap:10px;padding:3px 0}
+.score-label{width:28px;flex-shrink:0;color:var(--secondary);font-size:11px;font-weight:600;letter-spacing:0.5px}
+.score-bar{flex:1;height:4px;background:rgba(255,255,255,0.08);border-radius:2px;overflow:hidden}
+.score-fill{height:100%;border-radius:2px}
+.score-val{width:32px;text-align:right;color:var(--tertiary);font-variant-numeric:tabular-nums;font-size:11px;font-weight:500}
+.score-total{font-size:11px;font-weight:600;padding-top:8px;margin-top:6px;border-top:1px solid rgba(255,255,255,0.06);display:flex;align-items:center;gap:6px;color:var(--secondary)}
 
 /* ═══ KPI grid (v6) ═══ */
 .kpi-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:4px;margin:8px 16px 0}
