@@ -1994,11 +1994,14 @@ export const JS = `
           var strategyLabel = pConf.strategy_primary || pConf.strategy || '—';
           var thresholdColor = 'var(--green)';
           scoreHtml = '<div style="margin-bottom:12px;padding:8px 12px;background:var(--bg);border-radius:var(--rs)">' +
-            '<div style="font-size:11px;color:var(--tertiary);font-weight:600;margin-bottom:8px">現在のエントリースコア内訳</div>' +
+            '<div style="font-size:10px;color:var(--tertiary);font-weight:700;margin-bottom:8px;letter-spacing:0.5px;text-transform:uppercase;">現在のエントリースコア内訳</div>' +
             scoreRowsHtml +
-            '<div class="score-total">閾値: <span style="color:' + thresholdColor + '">' + threshold.toFixed(2) + '</span>' +
-            ' <span style="font-size:11px;color:var(--secondary)">(重み合計 ' + totalW.toFixed(2) + ')</span>' +
-            ' \\u00b7 <span style="color:var(--blue)">' + escHtml(strategyLabel) + '</span></div>' +
+            '<div class="score-total">' +
+              '<span>閾値: <span style="color:' + thresholdColor + '">' + threshold.toFixed(2) + '</span></span>' +
+              '<span style="color:var(--tertiary); font-weight:500;">(重み合計 ' + totalW.toFixed(2) + ')</span>' +
+              '<span style="color:var(--tertiary)">\\u00b7</span>' +
+              '<span style="color:var(--blue)">' + escHtml(strategyLabel) + '</span>' +
+            '</div>' +
           '</div>';
         }
       }
