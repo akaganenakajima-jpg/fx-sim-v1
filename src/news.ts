@@ -622,8 +622,17 @@ function scoreUniqueness(topic: string | undefined, recentTopics: string[]): num
   return 10; // ユニーク
 }
 
+/**
+ * 地政学リスク・マクロ重要キーワード — isStockSpecific例外判定に使用
+ * これらのキーワードを含むニュースは個別株ソース(.T)でも市場全体に影響するため
+ * breadth(影響範囲)スコアを無効化しない
+ */
+const GEO_MACRO_KEYWORDS_RE =
+  /ホルムズ|イラン|原油|CPI|FOMC|地政学|戦争|軍事|関税|tariff|sanction|制裁|戦略備蓄|核|ミサイル|石油|コモディティ/i;
+
 /** 7軸加重合計スコアを計算（0〜10）
- * isStockSpecific=trueの場合、breadth(b)を無効化しrelevance(r)に再配分 */
+ * isStockSpecific=trueの場合、breadth(b)を無効化しrelevance(r)に再配分
+ * ただし地政学・マクロキーワードを含む場合は例外（breadth有効）*/
 function computeComposite(
   t: number, u: number, r: number, c: number,
   s: number, b: number, n: number,
@@ -708,7 +717,8 @@ export async function filterAndTranslateNews(
         const u = scoreUniqueness(r.topic, recentTopicsCached);
         const credBase = scoreCredibility(item.source);
         const ai = r.scores ?? { r: 6, c: credBase, s: 5, b: 5, n: 6 };
-        const isStockSpecific = Boolean(item.source?.includes('.T'));
+        const isStockSpecific = Boolean(item.source?.includes('.T')) &&
+          !GEO_MACRO_KEYWORDS_RE.test(item.title ?? '');
         const composite = computeComposite(t, u, ai.r, ai.c, ai.s, ai.b, ai.n, isStockSpecific);
         const rounded = Math.round(composite * 10) / 10;             // 0-10（閾値比較用）
         const composite100 = Math.round(composite * 100) / 10;       // 0-100（DB保存・表示用）
@@ -912,7 +922,8 @@ JSON配列のみを返し、他の文字は一切含めないでください。`
       // AI側スコア（なければデフォルト値）
       const ai = r.scores ?? { r: 6, c: credBase, s: 5, b: 5, n: 6 };
 
-      const isStockSpecific = Boolean(item.source?.includes('.T'));
+      const isStockSpecific = Boolean(item.source?.includes('.T')) &&
+        !GEO_MACRO_KEYWORDS_RE.test(item.title ?? '');
       const composite = computeComposite(t, u, ai.r, ai.c, ai.s, ai.b, ai.n, isStockSpecific);
       const rounded = Math.round(composite * 10) / 10;               // 0-10（閾値比較用）
       const composite100 = Math.round(composite * 100) / 10;         // 0-100（DB保存・表示用）
