@@ -135,6 +135,16 @@ export async function getCacheValue(
   return row?.value ?? null;
 }
 
+// ─── runId コンテキスト（cron実行トレース用）─────────────────────────────────
+// Workers は 1リクエスト=1スレッドのためモジュールレベル変数で安全に共有
+let _currentRunId: string | null = null;
+
+/** cron実行の冒頭で呼び出し、トレースIDをセットする */
+export function setRunId(id: string): void { _currentRunId = id; }
+
+/** 現在のトレースIDを取得する */
+export function getRunId(): string | null { return _currentRunId; }
+
 export async function insertSystemLog(
   db: D1Database,
   level: 'INFO' | 'WARN' | 'ERROR',
@@ -144,10 +154,10 @@ export async function insertSystemLog(
 ): Promise<void> {
   await db
     .prepare(
-      `INSERT INTO system_logs (level, category, message, detail, created_at)
-       VALUES (?, ?, ?, ?, ?)`
+      `INSERT INTO system_logs (level, category, message, detail, run_id, created_at)
+       VALUES (?, ?, ?, ?, ?, ?)`
     )
-    .bind(level, category, message, detail ?? null, new Date().toISOString())
+    .bind(level, category, message, detail ?? null, _currentRunId, new Date().toISOString())
     .run();
 }
 

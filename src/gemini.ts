@@ -727,7 +727,7 @@ export async function newsStage1(params: {
       const retryAfter = parseInt(res.headers.get('Retry-After') ?? '60', 10);
       throw new RateLimitError(apiKey, retryAfter > 0 ? retryAfter : 60, body);
     }
-    throw new Error(`newsStage1 API error ${res.status}: ${body.slice(0, 200)}`);
+    throw new Error(`newsStage1 API error ${res.status}: ${body.slice(0, 2000)}`);
   }
 
   const data = await res.json<GeminiResponse>();
@@ -862,7 +862,7 @@ export async function newsStage2(params: {
       const retryAfter = parseInt(res.headers.get('Retry-After') ?? '60', 10);
       throw new RateLimitError(apiKey, retryAfter > 0 ? retryAfter : 60, body);
     }
-    throw new Error(`newsStage2 API error ${res.status}: ${body.slice(0, 200)}`);
+    throw new Error(`newsStage2 API error ${res.status}: ${body.slice(0, 2000)}`);
   }
 
   const data = await res.json<GeminiResponse>();
@@ -926,7 +926,7 @@ export async function newsStage1WithHedge(params: {
       lastGeminiErr = err;
       const isAbort = (err as Error)?.name === 'AbortError';
       const is429 = err instanceof RateLimitError;
-      console.warn(`[fx-sim] B1 Gemini[${i}] failed (${isAbort ? 'timeout' : is429 ? '429' : 'other'}): ${String(err).split('\n')[0].slice(0, 60)}`);
+      console.warn(`[fx-sim] B1 Gemini[${i}] failed (${isAbort ? 'timeout' : is429 ? '429' : 'other'}): ${String(err).split('\n')[0].slice(0, 200)}`);
 
       if (isAbort) {
         abortCount++;
@@ -947,7 +947,7 @@ export async function newsStage1WithHedge(params: {
       const result = await newsStage1GPT({ ...params, apiKey: openaiApiKey, db, _timeoutOverride: FALLBACK_TIMEOUT_MS } as any);
       return { ...result, provider: 'gpt' };
     } catch (gptErr) {
-      console.warn(`[fx-sim] B1 GPT failed: ${String(gptErr).split('\n')[0].slice(0, 80)}`);
+      console.warn(`[fx-sim] B1 GPT failed: ${String(gptErr).split('\n')[0].slice(0, 200)}`);
     }
   }
 
@@ -957,7 +957,7 @@ export async function newsStage1WithHedge(params: {
       const result = await newsStage1Claude({ ...params, apiKey: anthropicApiKey, db, _timeoutOverride: FALLBACK_TIMEOUT_MS } as any);
       return { ...result, provider: 'claude' };
     } catch (claudeErr) {
-      console.warn(`[fx-sim] B1 Claude failed: ${String(claudeErr).split('\n')[0].slice(0, 80)}`);
+      console.warn(`[fx-sim] B1 Claude failed: ${String(claudeErr).split('\n')[0].slice(0, 200)}`);
     }
   }
 
@@ -1076,7 +1076,7 @@ async function newsStage1GPT(params: {
 
   if (!res.ok) {
     const body = await res.text();
-    throw new Error(`GPT newsStage1 error ${res.status}: ${body.slice(0, 200)}`);
+    throw new Error(`GPT newsStage1 error ${res.status}: ${body.slice(0, 2000)}`);
   }
 
   const data = await res.json<{
@@ -1210,7 +1210,7 @@ async function newsStage1Claude(params: {
 
   if (!res.ok) {
     const body = await res.text();
-    throw new Error(`Claude newsStage1 error ${res.status}: ${body.slice(0, 200)}`);
+    throw new Error(`Claude newsStage1 error ${res.status}: ${body.slice(0, 2000)}`);
   }
 
   const data = await res.json<{
@@ -1298,7 +1298,7 @@ JSON形式で返してください:
     const result = await callPremarketGemini(params.apiKey, systemPrompt, userMessage, params.db);
     return { ...result, provider: 'gemini' };
   } catch (e) {
-    console.warn(`[premarket] Gemini failed: ${String(e).slice(0, 80)}`);
+    console.warn(`[premarket] Gemini failed: ${String(e).slice(0, 200)}`);
   }
 
   // 2. GPT フォールバック
@@ -1307,7 +1307,7 @@ JSON形式で返してください:
       const result = await callPremarketGPT(params.openaiApiKey, systemPrompt, userMessage, params.db);
       return { ...result, provider: 'gpt' };
     } catch (e) {
-      console.warn(`[premarket] GPT failed: ${String(e).slice(0, 80)}`);
+      console.warn(`[premarket] GPT failed: ${String(e).slice(0, 200)}`);
     }
   }
 
@@ -1317,7 +1317,7 @@ JSON形式で返してください:
       const result = await callPremarketClaude(params.anthropicApiKey, systemPrompt, userMessage, params.db);
       return { ...result, provider: 'claude' };
     } catch (e) {
-      console.warn(`[premarket] Claude failed: ${String(e).slice(0, 80)}`);
+      console.warn(`[premarket] Claude failed: ${String(e).slice(0, 200)}`);
     }
   }
 

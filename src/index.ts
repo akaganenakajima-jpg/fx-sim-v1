@@ -13,6 +13,7 @@ import {
   setCacheValue,
   closePosition,
   getOpenPositions,
+  setRunId,
 } from './db';
 import { slPatternAnalysis, logReturn } from './stats';
 import { getDashboardHtml } from './dashboard';
@@ -408,10 +409,10 @@ async function fetchMarketData(env: Env, now: Date): Promise<MarketData | null> 
   ]);
 
   if (newsResult.status === 'rejected') {
-    await insertSystemLog(env.DB, 'WARN', 'NEWS', 'ニュース取得失敗', String(newsResult.reason).slice(0, 200));
+    await insertSystemLog(env.DB, 'WARN', 'NEWS', 'ニュース取得失敗', String(newsResult.reason).slice(0, 2000));
   }
   if (indicatorsResult.status === 'rejected') {
-    await insertSystemLog(env.DB, 'WARN', 'INDICATORS', '指標取得失敗', String(indicatorsResult.reason).slice(0, 200));
+    await insertSystemLog(env.DB, 'WARN', 'INDICATORS', '指標取得失敗', String(indicatorsResult.reason).slice(0, 2000));
   }
 
   const newsData = newsResult.status === 'fulfilled' ? newsResult.value : { items: [], stats: [] as SourceFetchStat[] };
@@ -984,7 +985,9 @@ async function runPathB(
 async function runCore(env: Env): Promise<void> {
   const now = new Date();
   const cronStart = Date.now();
-  console.log(`[fx-sim] core start ${now.toISOString()}`);
+  const runId = crypto.randomUUID().slice(0, 8);
+  setRunId(runId);
+  console.log(`[fx-sim] core start ${now.toISOString()} runId=${runId}`);
 
   try {
     // スキーママイグレーション（バージョン管理方式）
@@ -1043,11 +1046,11 @@ async function runCore(env: Env): Promise<void> {
             const highConf = pmResult.predictions.filter(p => p.confidence >= 70).length;
             await insertSystemLog(env.DB, 'INFO', 'PREMARKET',
               `プレマーケット分析完了 (${pmResult.provider}): ${highConf}件高確信`,
-              pmResult.market_summary.slice(0, 200));
+              pmResult.market_summary.slice(0, 2000));
           }
         } catch (e) {
           await insertSystemLog(env.DB, 'WARN', 'PREMARKET',
-            'プレマーケット分析失敗', String(e).slice(0, 200));
+            'プレマーケット分析失敗', String(e).slice(0, 2000));
         }
       }
     }
@@ -1248,9 +1251,9 @@ async function runCore(env: Env): Promise<void> {
     };
     await setCacheValue(env.DB, 'core_shared_data', JSON.stringify(coreData));
 
-    // 毎cronパージ（system_logs ≤1000件維持）
+    // 毎cronパージ（system_logs ≤5000件維持）
     try {
-      await env.DB.prepare(`DELETE FROM system_logs WHERE id NOT IN (SELECT id FROM system_logs ORDER BY id DESC LIMIT 1000)`).run();
+      await env.DB.prepare(`DELETE FROM system_logs WHERE id NOT IN (SELECT id FROM system_logs ORDER BY id DESC LIMIT 5000)`).run();
       await env.DB.prepare(`DELETE FROM market_cache WHERE key LIKE 'news_filter_%' AND updated_at < datetime('now', '-2 hours')`).run();
     } catch {}
 
@@ -1261,10 +1264,10 @@ async function runCore(env: Env): Promise<void> {
     console.error('[fx-sim] core unhandled error:', e);
     await sendNotification(
       getWebhookUrl(env),
-      `🔴 [fx-sim] core エラー: ${String(e).slice(0, 200)}`,
+      `🔴 [fx-sim] core エラー: ${String(e).slice(0, 500)}`,
     );
     try {
-      await insertSystemLog(env.DB, 'ERROR', 'CRON', 'core 予期しないエラー', String(e).slice(0, 300));
+      await insertSystemLog(env.DB, 'ERROR', 'CRON', 'core 予期しないエラー', String(e).slice(0, 2000));
     } catch {}
   }
 }
@@ -1273,7 +1276,9 @@ async function runCore(env: Env): Promise<void> {
 async function runAnalysis(env: Env): Promise<void> {
   const now = new Date();
   const cronStart = Date.now();
-  console.log(`[fx-sim] analysis start ${now.toISOString()}`);
+  const runId = crypto.randomUUID().slice(0, 8);
+  setRunId(runId);
+  console.log(`[fx-sim] analysis start ${now.toISOString()} runId=${runId}`);
 
   try {
     // runCore が保存した共通データを読み出す
@@ -1727,19 +1732,19 @@ async function runAnalysis(env: Env): Promise<void> {
     console.error('[fx-sim] analysis unhandled error:', e);
     await sendNotification(
       getWebhookUrl(env),
-      `🔴 [fx-sim] analysis エラー: ${String(e).slice(0, 200)}`,
+      `🔴 [fx-sim] analysis エラー: ${String(e).slice(0, 500)}`,
     );
     try {
-      await insertSystemLog(env.DB, 'ERROR', 'CRON', 'analysis 予期しないエラー', String(e).slice(0, 300));
+      await insertSystemLog(env.DB, 'ERROR', 'CRON', 'analysis 予期しないエラー', String(e).slice(0, 2000));
     } catch {}
   }
 }
 
 // ── 日次タスク（ログパージ・サマリー・銘柄スコア更新）──
 async function runDailyTasks(env: Env, _now: Date): Promise<void> {
-  // ログパージ
+  // ログパージ（≤5000件維持）
   try {
-    await env.DB.prepare(`DELETE FROM system_logs WHERE id NOT IN (SELECT id FROM system_logs ORDER BY id DESC LIMIT 1000)`).run();
+    await env.DB.prepare(`DELETE FROM system_logs WHERE id NOT IN (SELECT id FROM system_logs ORDER BY id DESC LIMIT 5000)`).run();
     await env.DB.prepare(`DELETE FROM news_fetch_log WHERE id NOT IN (SELECT id FROM news_fetch_log ORDER BY id DESC LIMIT 5000)`).run();
     // news_filter_* キャッシュパージ（2時間以上前）
     await env.DB.prepare(`DELETE FROM market_cache WHERE key LIKE 'news_filter_%' AND updated_at < datetime('now', '-2 hours')`).run();

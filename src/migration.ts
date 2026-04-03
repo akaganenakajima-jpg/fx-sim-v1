@@ -266,6 +266,12 @@ const MIGRATIONS: Array<{ version: number; description: string; sql: string }> =
     description: 'instrument_params に sma_angle_min カラム追加（デフォルト0.0）',
     sql: 'ALTER TABLE instrument_params ADD COLUMN sma_angle_min REAL NOT NULL DEFAULT 0.0',
   },
+  // v234: system_logs に run_id カラム追加（cron実行トレースID）
+  {
+    version: 234,
+    description: 'system_logs に run_id カラム追加（cron実行トレースID用）',
+    sql: 'ALTER TABLE system_logs ADD COLUMN run_id TEXT',
+  },
 ];
 
 export async function runMigrations(db: D1Database): Promise<void> {
