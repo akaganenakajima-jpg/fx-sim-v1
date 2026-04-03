@@ -720,7 +720,6 @@ export async function filterAndTranslateNews(
         const isStockSpecific = Boolean(item.source?.includes('.T')) &&
           !GEO_MACRO_KEYWORDS_RE.test(item.title ?? '');
         const composite = computeComposite(t, u, ai.r, ai.c, ai.s, ai.b, ai.n, isStockSpecific);
-        const rounded = Math.round(composite * 10) / 10;             // 0-10（閾値比較用）
         const composite100 = Math.round(composite * 100) / 10;       // 0-100（DB保存・表示用）
         scoresMapCached.set(r.index, {
           timeliness: t, uniqueness: u,
@@ -925,7 +924,6 @@ JSON配列のみを返し、他の文字は一切含めないでください。`
       const isStockSpecific = Boolean(item.source?.includes('.T')) &&
         !GEO_MACRO_KEYWORDS_RE.test(item.title ?? '');
       const composite = computeComposite(t, u, ai.r, ai.c, ai.s, ai.b, ai.n, isStockSpecific);
-      const rounded = Math.round(composite * 10) / 10;               // 0-10（閾値比較用）
       const composite100 = Math.round(composite * 100) / 10;         // 0-100（DB保存・表示用）
 
       scoresMap.set(r.index, {

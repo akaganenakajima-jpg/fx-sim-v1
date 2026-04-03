@@ -1014,6 +1014,11 @@ export function getDefaultParams(inst: InstrumentConfig): Record<string, number 
     divergence_lookback:      14,
     min_confirm_signals:      2,
     er_upper_limit:           0.85,
+    // Ph.10: SMAベースMTF + BBブレイクアウト
+    sma_short_period:         10,
+    sma_long_period:          40,
+    volatility_ratio_min:     0.8,
+    sma_angle_min:            0.0,
   };
 }
 
