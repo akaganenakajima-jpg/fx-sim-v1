@@ -598,6 +598,17 @@ button:focus-visible { outline: 2px solid var(--blue); outline-offset: 2px; }
   .pc-tabbar-item svg { width: 16px; height: 16px; }
   .sbar { position: static; }
   .tab-panel.active { display: block; }
+  /* カード系のコンテナをグリッド化し、間延びを防止 */
+  #journey-cards, #evo-cards, #ai-pr-cards, #ai-news-cards {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
+    gap: 16px;
+    padding: 0 16px 24px;
+  }
+  /* モバイル用の上下マージンをリセットし、グリッドのgapに任せる */
+  .journey-card, .evo-card, .verdict-card {
+    margin: 0 !important;
+  }
 }
 @media (min-width: 1280px) {
   .pc-tabbar { display: none !important; }
