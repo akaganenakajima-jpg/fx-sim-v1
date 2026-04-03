@@ -71,15 +71,32 @@ export const RR_BADGE_BLUE  = 1.0;
 // ─── ニューススコア閾値 ────────────────────────────────────────────────────────
 /**
  * EMERGENCY バッジ閾値（PATH_B 強制発火・緊急バナー表示）
+ * composite_score は 0〜100 スケール（AI返却値0〜10 を *10 して保存）
  * @see src/news-trigger.ts
  */
 export const NEWS_SCORE_EMERGENCY = 90;
 
 /**
  * TREND_INFLUENCE バッジ閾値（影響銘柄のパラメーター一時調整）
+ * composite_score は 0〜100 スケール
  * @see src/news-trigger.ts
  */
 export const NEWS_SCORE_TREND = 70;
+
+/**
+ * EMERGENCY 判定: 個別軸スコア最小値（AIが 0〜10 で返す値）
+ * composite_score とは独立したスケール（*10 変換なし）
+ * @see src/news-trigger.ts
+ */
+export const NEWS_TRIGGER_EMERGENCY_RELEVANCE = 9;   // 市場有効性
+export const NEWS_TRIGGER_EMERGENCY_SENTIMENT = 8;   // シグナル強度
+
+/**
+ * TREND_INFLUENCE 判定: 個別軸スコア最小値（AIが 0〜10 で返す値）
+ * @see src/news-trigger.ts
+ */
+export const NEWS_TRIGGER_TREND_RELEVANCE = 7;       // 市場有効性
+export const NEWS_TRIGGER_TREND_SENTIMENT = 7;       // シグナル強度
 
 // ─── VIX ヒートマップ ─────────────────────────────────────────────────────────
 /** VIX 効果ヒートマップ: 警告オレンジ表示閾値（高影響） */
