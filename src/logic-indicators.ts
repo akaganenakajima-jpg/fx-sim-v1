@@ -81,6 +81,11 @@ export interface InstrumentParamsRow {
   divergence_lookback:    number;  // ダイバージェンス比較期間
   min_confirm_signals:    number;  // 最低N個のスコア要因が閾値超必要
   er_upper_limit:         number;  // mean_reversion時のER上限
+  // Ph.10: SMAベースMTF + BBブレイクアウトパラメーター
+  sma_short_period:       number;  // 短期SMA期間（MTF整合判定用）
+  sma_long_period:        number;  // 長期SMA期間（MTF整合判定用）
+  volatility_ratio_min:   number;  // BBブレイクアウト発火最低ボラティリティ比（ATR/historicalAtrMean）
+  sma_angle_min:          number;  // 短期SMAの傾き最小値（0=方向だけ確認）
 }
 
 // ─── RSI計算 ─────────────────────────────────────────────────────────────────
@@ -156,30 +161,49 @@ export function calcER(closes: number[], period: number): number | null {
   return netMove / totalMove;
 }
 
-// ─── BB幅計算（ボリンジャーバンド正規化バンド幅）────────────────────────────
-// 直近period本の標準偏差から正規化バンド幅（%BBW）を算出し、
-// 過去区間の平均バンド幅と比較してスクイーズ/拡大を判定するための材料を返す
+// ─── SMA計算 ─────────────────────────────────────────────────────────────────
+// 単純移動平均（Simple Moving Average）: 直近period本の算術平均
 
-export function calcBBWidth(closes: number[], period: number): { width: number; avgWidth: number } | null {
+export function calcSMA(closes: number[], period: number): number | null {
+  if (closes.length < period) return null;
+  const slice = closes.slice(-period);
+  return slice.reduce((a, b) => a + b, 0) / period;
+}
+
+// ─── ボリンジャーバンド計算 ──────────────────────────────────────────────────
+// 直近period本の平均±2σを算出。スクイーズ判定用の width/avgWidth に加え
+// ブレイクアウトトリガー用の upperBand / lowerBand も返す。
+//
+// ※ calcBBWidth の上位互換。calcBBWidth は削除し本関数に統一する。
+
+export function calcBollingerBands(closes: number[], period: number): {
+  width: number;     // 正規化バンド幅（%BBW = 4σ/mean）
+  avgWidth: number;  // 過去半区間の平均バンド幅（スクイーズ比較用）
+  upperBand: number; // 上バンド（mean + 2σ）
+  lowerBand: number; // 下バンド（mean - 2σ）
+  midBand: number;   // 中心線（SMA）
+} | null {
   if (closes.length < period * 2) return null;
 
-  // 直近periodの標準偏差 → バンド幅
+  // 直近periodの標準偏差 → バンド幅と上下バンド
   const recent = closes.slice(-period);
   const mean = recent.reduce((a, b) => a + b, 0) / period;
   const variance = recent.reduce((a, c) => a + (c - mean) ** 2, 0) / period;
   const std = Math.sqrt(variance);
-  const width = mean > 0 ? (2 * std) / mean : 0; // 正規化バンド幅（%BBW）
+  const width = mean > 0 ? (4 * std) / mean : 0; // 正規化バンド幅（4σ/mean = %BBW）
+  const upperBand = mean + 2 * std;
+  const lowerBand = mean - 2 * std;
 
-  // 過去の平均バンド幅（比較用）
+  // 過去の平均バンド幅（比較用: 前半区間で算出）
   const halfLen = Math.floor(closes.length / 2);
-  const older = closes.slice(halfLen - period, halfLen);
-  if (older.length < period) return { width, avgWidth: width };
+  const older = closes.slice(Math.max(0, halfLen - period), halfLen);
+  if (older.length < period) return { width, avgWidth: width, upperBand, lowerBand, midBand: mean };
   const olderMean = older.reduce((a, b) => a + b, 0) / period;
   const olderVariance = older.reduce((a, c) => a + (c - olderMean) ** 2, 0) / period;
   const olderStd = Math.sqrt(olderVariance);
-  const avgWidth = olderMean > 0 ? (2 * olderStd) / olderMean : width;
+  const avgWidth = olderMean > 0 ? (4 * olderStd) / olderMean : width;
 
-  return { width, avgWidth: avgWidth || width };
+  return { width, avgWidth: avgWidth || width, upperBand, lowerBand, midBand: mean };
 }
 
 // ─── RSIダイバージェンス検出（2点近似）────────────────────────────────────
@@ -286,11 +310,21 @@ export function calcTechnicalSignal(
       ? Math.min(1, er!)
       : Math.min(1, Math.max(0, 1 - er!));  // mean_reversion: ERが低いほど高スコア
 
-    // 3. MTFスコア（0〜1）: 長期方向とエントリー方向の整合性
-    const longTermDirection = closes[closes.length - 1] - closes[0];
-    const mtfAligned = (direction === 'BUY' && longTermDirection > 0)
-                    || (direction === 'SELL' && longTermDirection < 0);
-    const mtfScore = mtfAligned ? 1.0 : 0.0;
+    // 3. MTFスコア（0〜1）: SMAクロスと傾きによるトレンド整合性判定
+    // 短期SMA > 長期SMA かつ短期SMAが上向き → BUY整合
+    // 短期SMA < 長期SMA かつ短期SMAが下向き → SELL整合
+    const smaShort = calcSMA(closes, params.sma_short_period);
+    const smaLong  = calcSMA(closes, params.sma_long_period);
+    const smaShortPrev = calcSMA(closes.slice(0, -1), params.sma_short_period);
+    let mtfScore = 0.0;
+    if (smaShort !== null && smaLong !== null && smaShortPrev !== null) {
+      const smaAngle = smaShort - smaShortPrev; // 短期SMAの直近1本分の傾き
+      if (direction === 'BUY') {
+        mtfScore = (smaShort > smaLong && smaAngle > params.sma_angle_min) ? 1.0 : 0.0;
+      } else {
+        mtfScore = (smaShort < smaLong && smaAngle < -params.sma_angle_min) ? 1.0 : 0.0;
+      }
+    }
 
     // 4. サポレジ近接度スコア（0〜1）
     const recentHigh = Math.max(...closes.slice(-20));
@@ -311,7 +345,7 @@ export function calcTechnicalSignal(
       : 0.5;
 
     // 6. BBスクイーズスコア（0〜1）
-    const bbData = calcBBWidth(closes, params.bb_period);
+    const bbData = calcBollingerBands(closes, params.bb_period);
     let bbScore = 0.5;
     if (bbData) {
       const ratio = bbData.avgWidth > 0 ? bbData.width / bbData.avgWidth : 1;
@@ -344,6 +378,38 @@ export function calcTechnicalSignal(
 
     return { rsi: rsiScore, er: erScore, mtf: mtfScore, sr: Math.max(0, Math.min(1, srScore)), pa: paScore, bb: bbScore, div: divScore, total, breakdown };
   };
+
+  // ── Ph.10: BBスクイーズ・ブレイクアウト判定（順張り）────────────────────
+  // 発火条件:
+  //   1. ATRがhistoricalAtrMean比でvolatility_ratio_min以上（静止相場を除外）
+  //   2. BBバンド幅がbb_squeeze_threshold未満（スクイーズ状態）
+  //   3. 現在レートがupper/lowerBandを突破している（ブレイクアウト確認）
+  // TP/SLは順張り方向（逆張りRSIと逆: BUYはTP上・SL下）
+  const bbBreak = calcBollingerBands(closes, params.bb_period);
+  if (bbBreak !== null && historicalAtrMean !== null && historicalAtrMean > 0) {
+    const volatilityRatio = atr / historicalAtrMean;
+    const widthRatio = bbBreak.avgWidth > 0 ? bbBreak.width / bbBreak.avgWidth : 1;
+    if (volatilityRatio >= params.volatility_ratio_min && widthRatio < params.bb_squeeze_threshold) {
+      if (currentRate > bbBreak.upperBand) {
+        // BUYブレイクアウト: +2σ上抜け（順張り: TP上・SL下）
+        const tp = parseFloat((currentRate + atr * atr_tp_multiplier).toFixed(5));
+        const sl = parseFloat((currentRate - atr * atr_sl_multiplier).toFixed(5));
+        const scores = calcScores('BUY');
+        return { pair, rsi, atr, er, regime, signal: 'BUY',
+                 reason: `BBスクイーズ・ブレイクアウト(+2σ上抜け) VR=${volatilityRatio.toFixed(2)} 幅比=${widthRatio.toFixed(2)} upper=${bbBreak.upperBand.toFixed(4)}`,
+                 tp_rate: tp, sl_rate: sl, scores };
+      }
+      if (currentRate < bbBreak.lowerBand) {
+        // SELLブレイクアウト: -2σ下抜け（順張り: TP下・SL上）
+        const tp = parseFloat((currentRate - atr * atr_tp_multiplier).toFixed(5));
+        const sl = parseFloat((currentRate + atr * atr_sl_multiplier).toFixed(5));
+        const scores = calcScores('SELL');
+        return { pair, rsi, atr, er, regime, signal: 'SELL',
+                 reason: `BBスクイーズ・ブレイクアウト(-2σ下抜け) VR=${volatilityRatio.toFixed(2)} 幅比=${widthRatio.toFixed(2)} lower=${bbBreak.lowerBand.toFixed(4)}`,
+                 tp_rate: tp, sl_rate: sl, scores };
+      }
+    }
+  }
 
   // BUYシグナル: RSI が oversold 以下（売られすぎ）
   if (rsi < rsi_oversold) {

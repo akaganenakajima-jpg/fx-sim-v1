@@ -245,6 +245,27 @@ const MIGRATIONS: Array<{ version: number; description: string; sql: string }> =
             AND pnl > 0
             AND (realized_rr IS NULL OR realized_rr < 1.0)`,
   },
+  // v230-233: Ph.10 SMAベースMTF + BBスクイーズ・ブレイクアウト用パラメーター追加
+  {
+    version: 230,
+    description: 'instrument_params に sma_short_period カラム追加（デフォルト10）',
+    sql: 'ALTER TABLE instrument_params ADD COLUMN sma_short_period INTEGER NOT NULL DEFAULT 10',
+  },
+  {
+    version: 231,
+    description: 'instrument_params に sma_long_period カラム追加（デフォルト40）',
+    sql: 'ALTER TABLE instrument_params ADD COLUMN sma_long_period INTEGER NOT NULL DEFAULT 40',
+  },
+  {
+    version: 232,
+    description: 'instrument_params に volatility_ratio_min カラム追加（デフォルト0.8）',
+    sql: 'ALTER TABLE instrument_params ADD COLUMN volatility_ratio_min REAL NOT NULL DEFAULT 0.8',
+  },
+  {
+    version: 233,
+    description: 'instrument_params に sma_angle_min カラム追加（デフォルト0.0）',
+    sql: 'ALTER TABLE instrument_params ADD COLUMN sma_angle_min REAL NOT NULL DEFAULT 0.0',
+  },
 ];
 
 export async function runMigrations(db: D1Database): Promise<void> {
