@@ -10,6 +10,8 @@ import { sendNotification, buildTpSlMessage } from './notify';
 import { updateThompsonParams } from './thompson';
 import { logTradeJournal } from './trade-journal';
 import { getCurrentBalance } from './risk-manager';
+import { TP_COOLDOWN_MIN, MAX_RISK_PER_TRADE_PCT, MIN_TRADES_FOR_KELLY } from './constants';
+import { calcATR } from './logic-indicators';
 
 function calcPnl(
   direction: 'BUY' | 'SELL',
@@ -80,8 +82,10 @@ export async function checkAndCloseAllPositions(
     }
     const multiplier = instr.pnlMultiplier;
 
-    // ── Ph.8: 最大保有時間チェック ──
-    const paramRow = await db.prepare('SELECT max_hold_minutes FROM instrument_params WHERE pair=?').bind(pos.pair).first<{max_hold_minutes: number}>();
+    // ── instrument_params 一括取得（Ph.8 + Ph.10b） ──
+    const paramRow = await db.prepare(
+      'SELECT max_hold_minutes, time_based_exit_minutes, trailing_step_atr FROM instrument_params WHERE pair=?'
+    ).bind(pos.pair).first<{max_hold_minutes: number; time_based_exit_minutes: number; trailing_step_atr: number}>();
     const maxHold = paramRow?.max_hold_minutes ?? 480;
     if (maxHold > 0 && maxHold < 9999) {
       const entryTime = new Date(pos.entry_at).getTime();
@@ -116,10 +120,52 @@ export async function checkAndCloseAllPositions(
       }
     }
 
+    // ── Ph.10b: 建値撤退タイムリミット（TIME_LIMIT） ──
+    // time_based_exit_minutes を超過 かつ RR < 0.5 なら損切り前に撤退
+    // max_hold_minutes（TIME_STOP）とは独立: TIME_LIMITは「まだ利が乗っていない」ポジションの早期撤退
+    const timeLimitMin = paramRow?.time_based_exit_minutes ?? 0;
+    if (timeLimitMin > 0 && pos.sl_rate != null) {
+      const entryTime = new Date(pos.entry_at).getTime();
+      const holdMin = (Date.now() - entryTime) / 60000;
+      if (holdMin > timeLimitMin) {
+        const rr = calcRealizedRR(pos.direction, pos.entry_rate, currentRate, pos.sl_rate);
+        if (rr < 0.5) {
+          const pnl = calcPnl(pos.direction, pos.entry_rate, currentRate, multiplier);
+          const lr = logReturn(pos.entry_rate, currentRate);
+          console.log(`[position] TIME_LIMIT: ${pos.pair} id=${pos.id} held=${Math.round(holdMin)}min > ${timeLimitMin}min RR=${rr.toFixed(2)} pnl=${pnl.toFixed(2)}`);
+          await closePosition(db, pos.id, currentRate, 'TIME_LIMIT', pnl, lr, rr);
+          await updateDecisionOutcome(db, pos.pair, pos.direction, pos.entry_at, rr >= 1.0 ? 'WIN' : 'LOSE');
+          await insertSystemLog(db, 'INFO', 'POSITION',
+            `建値撤退: ${pos.pair} ${pos.direction} ${Math.round(holdMin)}分保有 RR=${rr.toFixed(2)} PnL ${pnl >= 0 ? '+' : ''}${pnl.toFixed(2)}`,
+            JSON.stringify({ id: pos.id, holdMin: Math.round(holdMin), timeLimitMin, rr, pnl }));
+          continue;
+        }
+      }
+    }
+
     // トレイリングストップ: 含み益が activation 幅を超えたらSLを引き上げ
+    // Ph.10b: trailing_step_atr > 0 の場合、シャンデリアエグジット（ATR×倍率）で動的距離を使用
     if (instr && pos.sl_rate != null) {
       const activation = instr.trailingActivation;
-      const distance = instr.trailingDistance;
+      let distance = instr.trailingDistance;
+
+      // シャンデリアエグジット: ATRベースの動的距離
+      const chandelierAtr = paramRow?.trailing_step_atr ?? 0;
+      if (chandelierAtr > 0) {
+        // 直近レートからATRを計算（market_cache から取得、なければ固定距離のまま）
+        const rateRows = await db.prepare(
+          'SELECT value FROM market_cache WHERE key = ?'
+        ).bind(`closes_${pos.pair}`).first<{value: string}>();
+        if (rateRows?.value) {
+          try {
+            const closes: number[] = JSON.parse(rateRows.value);
+            const currentAtr = calcATR(closes, 14);
+            if (currentAtr !== null) {
+              distance = currentAtr * chandelierAtr;
+            }
+          } catch { /* parse失敗時は固定距離を使用 */ }
+        }
+      }
       const isBuy = pos.direction === 'BUY';
       const profit = isBuy
         ? currentRate - pos.entry_rate
@@ -398,8 +444,7 @@ export async function openPosition(
     }
   }
 
-  // TP後クールダウン: 同銘柄の逆方向TPから60分以内は逆張りエントリー禁止
-  const TP_COOLDOWN_MIN = 60;
+  // TP後クールダウン: 同銘柄の逆方向TPからTP_COOLDOWN_MIN分以内は逆張りエントリー禁止
   const recentTP = await getRecentTPOpposite(db, pair, direction, TP_COOLDOWN_MIN);
   if (recentTP) {
     const minAgo = Math.round((Date.now() - new Date(recentTP.closed_at).getTime()) / 60000);
@@ -425,7 +470,7 @@ export async function openPosition(
     .bind(pair)
     .first<{ total: number; wins: number; avgWin: number; avgLoss: number }>();
   let lot = 1.0;
-  if (perfRow && perfRow.total >= 20) {
+  if (perfRow && perfRow.total >= MIN_TRADES_FOR_KELLY) {
     const winRate = perfRow.wins / perfRow.total;
     const avgRR = perfRow.avgLoss > 0 ? perfRow.avgWin / perfRow.avgLoss : 0;
     const kelly = kellyFraction(winRate, avgRR);
@@ -449,7 +494,7 @@ export async function openPosition(
     const multiplier = extra?.pnlMultiplier ?? 1;
     const riskPerLot = slPips * multiplier;
     const balance = await getCurrentBalance(db);
-    const maxRisk = balance * 0.01;
+    const maxRisk = balance * MAX_RISK_PER_TRADE_PCT;
     if (riskPerLot > 0) {
       const slBasedLot = maxRisk / riskPerLot;
       if (slBasedLot < lot) {

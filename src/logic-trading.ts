@@ -19,6 +19,7 @@ import type { MarketIndicators } from './indicators';
 import { getBroker, type BrokerEnv } from './broker';
 import { getActiveTempParams } from './news-trigger';
 import { isNakaneWindow, getCurrentSession, getSessionLotMultiplier, getSessionInstrumentMultiplier } from './session';
+import { MAX_OPEN_POSITIONS, CORRELATION_GROUP_COOLDOWN_MS, MARKET_START_HOUR_UTC, DAILY_SIGNAL_TARGET } from './constants';
 import { getWeekendStatus } from './weekend';
 import { fetchYahooCandles } from './candles';
 
@@ -198,7 +199,6 @@ export async function runLogicDecisions(
     .prepare(`SELECT pair FROM positions WHERE status = 'OPEN'`)
     .all<{ pair: string }>();
   const openPairs = new Set((openRaw.results ?? []).map(p => p.pair));
-  const OPEN_LIMIT = 10;
 
   // ── Weekend Phase ゲート: Phase 2/3/4 は新規エントリー完全禁止 ──
   const weekendStatus = getWeekendStatus(now);
@@ -266,7 +266,7 @@ export async function runLogicDecisions(
     }
 
     // OPEN上限チェック
-    if (openPairs.size + logicNewEntries >= OPEN_LIMIT) {
+    if (openPairs.size + logicNewEntries >= MAX_OPEN_POSITIONS) {
       summary.skipped++;
       continue;
     }
@@ -350,8 +350,7 @@ export async function runLogicDecisions(
         ).bind(...groupPairs).first<{pair: string; closed_at: string}>();
         if (groupLastSl) {
           const groupSlTime = new Date(groupLastSl.closed_at).getTime();
-          const groupCooldownMs = 30 * 60 * 1000; // 30分
-          if (now.getTime() - groupSlTime < groupCooldownMs) {
+          if (now.getTime() - groupSlTime < CORRELATION_GROUP_COOLDOWN_MS) {
             summary.skipped++;
             summary.signals.push({ pair, signal: 'SKIP', reason: `相関グループCD(${group}: ${groupLastSl.pair}がSL)` });
             continue;
@@ -724,13 +723,11 @@ export async function runLogicDecisions(
   const dailySignals = dailyRow?.cnt ?? 0;
 
   // UTC 03:00（市場開始想定）からの経過割合で動的目標を計算
-  const MARKET_START_HOUR = 3;
-  const DAILY_TARGET = 100;
   const utcHour = now.getUTCHours();
   const utcMin = now.getUTCMinutes();
-  const elapsedMinutes = Math.max(0, (utcHour - MARKET_START_HOUR) * 60 + utcMin);
+  const elapsedMinutes = Math.max(0, (utcHour - MARKET_START_HOUR_UTC) * 60 + utcMin);
   const elapsedRate = Math.min(1.0, elapsedMinutes / (21 * 60)); // 21h 営業想定
-  const dynamicTarget = Math.floor(DAILY_TARGET * elapsedRate * 1.1); // 10% バッファ
+  const dynamicTarget = Math.floor(DAILY_SIGNAL_TARGET * elapsedRate * 1.1); // 10% バッファ
 
   if (dynamicTarget >= 5 && dailySignals < dynamicTarget) {
     // 発火頻度制限: 15分に1回まで（market_cache で最終発火時刻を管理）

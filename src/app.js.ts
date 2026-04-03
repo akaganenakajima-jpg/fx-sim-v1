@@ -31,6 +31,13 @@ export const JS = `
 (function () {
   'use strict';
 
+  // ── Haptic Feedback ユーティリティ ──
+  var haptic = {
+    light: function() { if (navigator.vibrate) navigator.vibrate(10); },
+    success: function() { if (navigator.vibrate) navigator.vibrate([15, 30, 20]); },
+    warn: function() { if (navigator.vibrate) navigator.vibrate([30, 50, 30]); }
+  };
+
   var lastData = null;
   var lastRecentCloseIds = [];
   var sheetPos = null;
@@ -43,11 +50,13 @@ export const JS = `
   var openWhyItems  = {};   // { 'why-news-imp-0': true, ... }  Why×5チェーン
 
   function toggleJcParam(uid) {
+    haptic.light();
     openJcParams[uid] = !openJcParams[uid];
     var t = document.getElementById(uid);
     if (t) t.classList.toggle('open', !!openJcParams[uid]);
   }
   function toggleHcItem(idx) {
+    haptic.light();
     openHcItems[idx] = !openHcItems[idx];
     var items = document.querySelectorAll('.hc');
     if (items[idx]) {
@@ -56,6 +65,7 @@ export const JS = `
     }
   }
   function toggleWhyTree(uid) {
+    haptic.light();
     openWhyItems[uid] = !openWhyItems[uid];
     var t = document.getElementById(uid);
     if (t) t.classList.toggle('open', !!openWhyItems[uid]);
@@ -68,6 +78,8 @@ export const JS = `
 
   // ── 銘柄入替え承認/拒否 ──
   function rotationDecide(id, action) {
+    if (action === 'approve') haptic.success();
+    else if (action === 'reject') haptic.warn();
     fetch('/api/rotation', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -309,6 +321,7 @@ export const JS = `
 
   window.switchTab = switchTab;
   function switchTab(tabId, scrollTo) {
+    haptic.light();
     var panels = document.querySelectorAll('.tab-panel');
     for (var i = 0; i < panels.length; i++) panels[i].classList.remove('active');
     var target = document.getElementById(tabId);
@@ -722,7 +735,7 @@ export const JS = `
       if (isNaN(score)) score = 0;
       var badgeCls = score >= NEWS_EMERGENCY ? 'nf-badge-emergency' : score >= NEWS_TREND ? 'nf-badge-trend' : 'nf-badge-info';
       var badgeText = score >= NEWS_EMERGENCY ? '緊急' : score >= NEWS_TREND ? 'トレンド' : '情報';
-      var borderCls = score >= NEWS_EMERGENCY ? 'nf-emergency' : score >= NEWS_TREND ? 'nf-trend' : '';
+      var borderCls = score >= NEWS_EMERGENCY ? 'nf-emergency urgent-pulse' : score >= NEWS_TREND ? 'nf-trend' : '';
       var headline = n.title_ja || n.title || '';
       var aiText = n.desc_ja || n.title_ja || n.title || '';
 
@@ -1083,7 +1096,7 @@ export const JS = `
       badgeScore = ' · ' + Number(n.score).toFixed(1);
     }
     var badgeText = badgeBase + badgeScore;
-    var borderCls = isEmergency ? 'nf-emergency' : isTrend ? 'nf-trend' : isAttention ? 'nf-attention' : 'nf-info';
+    var borderCls = isEmergency ? 'nf-emergency urgent-pulse' : isTrend ? 'nf-trend' : isAttention ? 'nf-attention' : 'nf-info';
     // impactフィールドはAI判断テキスト（数値スコアではない）
     var impactText = typeof n.impact === 'string' ? n.impact : '';
     var aiText = n.desc_ja || n.description || impactText || '';
@@ -1622,7 +1635,8 @@ export const JS = `
         '</div></div></div>';
       }
 
-      return '<div class="evo-card" id="evo-' + pairId + '">' +
+      var glowCls = verdictCls === 'worked' ? ' card-glow-success' : '';
+      return '<div class="evo-card' + glowCls + '" id="evo-' + pairId + '">' +
         '<div class="evo-header">' +
           '<span class="evo-pair">' + escHtml(instr.label) + '</span>' +
           '<span class="evo-verdict ' + verdictCls + '">' + verdictText + '</span>' +
@@ -2408,11 +2422,13 @@ export const JS = `
     var isWin = rr >= 1.0;
 
     if (isWin) {
+      haptic.success();
       banner.className = 'tp-banner';
       bIcon.textContent = rr >= 2.0 ? '\\ud83c\\udf1f' : '\\u2705';
       bTitle.textContent = (best.pair || '') + ' RR ' + rr.toFixed(1) + ' \\u2014 ' + (rr >= 2.0 ? '\\u5927\\u52dd\\u5229!' : '\\u52dd\\u5229!');
       bSub.textContent = fmtYenCompact(pnlVal) + ' ' + (isTP ? 'TP\\u5230\\u9054' : reason);
     } else {
+      haptic.warn();
       banner.className = 'tp-banner sl-banner';
       bIcon.textContent = '\\ud83d\\udee1\\ufe0f';
       bTitle.textContent = (best.pair || '') + ' SL\\u767a\\u52d5 \\u2014 \\u30ea\\u30b9\\u30af\\u7ba1\\u7406\\u6210\\u529f';
@@ -2632,7 +2648,7 @@ export const JS = `
   var overlayEl = el('sheet-overlay');
   if (overlayEl) overlayEl.addEventListener('click', function(e) { e.stopPropagation(); closeSheet(); });
 
-  // シートスワイプで閉じる
+  // シートスワイプで閉じる（ラバーバンド効果付き）
   (function() {
     var sheet = el('bottom-sheet');
     if (!sheet) return;
@@ -2641,14 +2657,19 @@ export const JS = `
     sheet.addEventListener('touchmove', function(e) {
       if (!dragging) return;
       var dy = e.touches[0].clientY - startY;
-      if (dy < 0) { currentY = 0; return; }
+      if (dy < 0) {
+        // 上方向（限界超え）→ ラバーバンド減衰
+        currentY = -Math.pow(Math.abs(dy), 0.7);
+        sheet.style.transform = 'translateY(' + currentY + 'px)';
+        return;
+      }
       currentY = dy;
       sheet.style.transform = 'translateY(' + dy + 'px)';
     }, { passive: true });
     sheet.addEventListener('touchend', function() {
       if (!dragging) return;
       dragging = false;
-      sheet.style.transition = '';
+      sheet.style.transition = 'transform 0.35s cubic-bezier(0.34, 1.56, 0.64, 1)';
       if (currentY > 100) closeSheet();
       else sheet.style.transform = '';
       currentY = 0;
@@ -2712,9 +2733,19 @@ export const JS = `
       if (!dragging) return;
       e.preventDefault();
       var dy = e.touches[0].clientY - startY;
-      var newY = startTranslate + dy;
+      var rawY = startTranslate + dy;
       var maxY = drawer.offsetHeight - PEEK_H;
-      newY = Math.max(0, Math.min(newY, maxY));
+      var newY;
+      if (rawY < 0) {
+        // 上限超え（展開状態でさらに上へ引く）→ ラバーバンド減衰
+        newY = -Math.pow(Math.abs(rawY), 0.7);
+      } else if (rawY > maxY) {
+        // 下限超え（閉じ状態でさらに下へ引く）→ ラバーバンド減衰
+        var overflow = rawY - maxY;
+        newY = maxY + Math.pow(overflow, 0.7);
+      } else {
+        newY = rawY;
+      }
       drawer.style.transform = 'translateY(' + newY + 'px)';
     }, { passive: false });
 
@@ -2722,8 +2753,8 @@ export const JS = `
       if (!dragging) return;
       dragging = false;
       var dy = e.changedTouches[0].clientY - startY;
-      if (Math.abs(dy) < 8) { drawer.style.transition = ''; drawer.style.transform = ''; return; }
-      drawer.style.transition = '';
+      if (Math.abs(dy) < 8) { drawer.style.transition = 'transform 0.35s cubic-bezier(0.34, 1.56, 0.64, 1)'; drawer.style.transform = ''; return; }
+      drawer.style.transition = 'transform 0.35s cubic-bezier(0.34, 1.56, 0.64, 1)';
       if (dy < -60) expand();
       else if (dy > 60) collapse();
       else if (isExpanded) expand(); else collapse();

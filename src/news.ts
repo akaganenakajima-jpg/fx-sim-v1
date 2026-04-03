@@ -5,6 +5,7 @@
 
 import { insertSystemLog, insertTokenUsage } from './db';
 import { CRYPTO_PAIRS } from './weekend';
+import { NEWS_WEIGHTS_DEFAULT, NEWS_WEIGHTS_STOCK } from './constants';
 
 export interface NewsItem {
   title: string;
@@ -638,13 +639,8 @@ function computeComposite(
   s: number, b: number, n: number,
   isStockSpecific = false
 ): number {
-  if (isStockSpecific) {
-    // 個別株ニュース: breadthは無関係（そのニュースが自銘柄に関係あるかが全て）
-    return t * 0.20 + u * 0.15 + r * 0.35 + c * 0.15 + s * 0.10 + n * 0.05;
-  }
-  return (
-    t * 0.20 + u * 0.15 + r * 0.30 + c * 0.15 + s * 0.10 + b * 0.05 + n * 0.05
-  );
+  const w = isStockSpecific ? NEWS_WEIGHTS_STOCK : NEWS_WEIGHTS_DEFAULT;
+  return t * w.t + u * w.u + r * w.r + c * w.c + s * w.s + b * w.b + n * w.n;
 }
 
 /** ソース名から信憑性スコアを算出 */

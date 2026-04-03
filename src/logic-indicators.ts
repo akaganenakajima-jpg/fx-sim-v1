@@ -11,6 +11,8 @@
 //     ER = |close[N] - close[0]| / Σ|close[t] - close[t-1]|
 //     ER=1.0: 完全トレンド / ER=0.0: 完全レンジ（ADX>25相当はER>0.40）
 
+import { REGIME_VOLATILE_VIX, REGIME_VOLATILE_ATR_MULT, SR_LOOKBACK_PERIOD, PA_LOOKBACK_PERIOD } from './constants';
+
 export interface TechnicalSignal {
   pair: string;
   rsi: number | null;
@@ -86,6 +88,10 @@ export interface InstrumentParamsRow {
   sma_long_period:        number;  // 長期SMA期間（MTF整合判定用）
   volatility_ratio_min:   number;  // BBブレイクアウト発火最低ボラティリティ比（ATR/historicalAtrMean）
   sma_angle_min:          number;  // 短期SMAの傾き最小値（0=方向だけ確認）
+  // Ph.10b: エグジット強化 + モメンタムフィルター
+  time_based_exit_minutes: number; // 建値撤退タイムリミット（分）
+  trailing_step_atr:       number; // シャンデリア・エグジット幅（ATR倍）
+  macd_histogram_trend:    number; // MACDヒストグラム拡大判定（1=有効）
 }
 
 // ─── RSI計算 ─────────────────────────────────────────────────────────────────
@@ -170,6 +176,80 @@ export function calcSMA(closes: number[], period: number): number | null {
   return slice.reduce((a, b) => a + b, 0) / period;
 }
 
+// ─── EMA計算 ─────────────────────────────────────────────────────────────────
+// 指数移動平均（Exponential Moving Average）: α = 2/(period+1)
+// 初期値は最初のperiod本の単純平均
+
+export function calcEMA(closes: number[], period: number): number | null {
+  if (closes.length < period) return null;
+  const alpha = 2 / (period + 1);
+  let ema = closes.slice(0, period).reduce((a, b) => a + b, 0) / period;
+  for (let i = period; i < closes.length; i++) {
+    ema = closes[i] * alpha + ema * (1 - alpha);
+  }
+  return ema;
+}
+
+// ─── EMA系列（直近N本分のEMA値を配列で返す）────────────────────────────────
+// calcMACD が MACD線→シグナル線の二段EMAを必要とするため
+// 入力: 終値配列、EMA期間
+// 出力: EMA値の配列（closes と同じ長さ、先頭のperiod-1本は null → 除外して返す）
+
+function calcEMASeries(closes: number[], period: number): number[] {
+  if (closes.length < period) return [];
+  const alpha = 2 / (period + 1);
+  const result: number[] = [];
+  let ema = closes.slice(0, period).reduce((a, b) => a + b, 0) / period;
+  result.push(ema);
+  for (let i = period; i < closes.length; i++) {
+    ema = closes[i] * alpha + ema * (1 - alpha);
+    result.push(ema);
+  }
+  return result;
+}
+
+// ─── MACD計算 ────────────────────────────────────────────────────────────────
+// MACD Line = EMA(short) - EMA(long)
+// Signal Line = EMA(MACD Line, signalPeriod)
+// Histogram = MACD Line - Signal Line
+// 返値: 直近2本のヒストグラム値（モメンタム判定用）
+
+export function calcMACD(
+  closes: number[],
+  shortPeriod = 12,
+  longPeriod = 26,
+  signalPeriod = 9,
+): { histogram: number; prevHistogram: number } | null {
+  // EMA(long)が計算できる最低データ数 + シグナル線用の追加期間
+  if (closes.length < longPeriod + signalPeriod) return null;
+
+  const shortEmas = calcEMASeries(closes, shortPeriod);
+  const longEmas = calcEMASeries(closes, longPeriod);
+
+  // MACD Line: shortEmaとlongEmaの差（longEmaの開始位置に合わせる）
+  const offset = longPeriod - shortPeriod;
+  const macdLine: number[] = [];
+  for (let i = 0; i < longEmas.length; i++) {
+    macdLine.push(shortEmas[i + offset] - longEmas[i]);
+  }
+
+  if (macdLine.length < signalPeriod) return null;
+
+  // Signal Line: MACD LineのEMA
+  const signalAlpha = 2 / (signalPeriod + 1);
+  let signal = macdLine.slice(0, signalPeriod).reduce((a, b) => a + b, 0) / signalPeriod;
+  let prevHistogram = macdLine[signalPeriod - 1] - signal;
+  let histogram = prevHistogram;
+
+  for (let i = signalPeriod; i < macdLine.length; i++) {
+    signal = macdLine[i] * signalAlpha + signal * (1 - signalAlpha);
+    prevHistogram = histogram;
+    histogram = macdLine[i] - signal;
+  }
+
+  return { histogram, prevHistogram };
+}
+
 // ─── ボリンジャーバンド計算 ──────────────────────────────────────────────────
 // 直近period本の平均±2σを算出。スクイーズ判定用の width/avgWidth に加え
 // ブレイクアウトトリガー用の upperBand / lowerBand も返す。
@@ -239,8 +319,8 @@ export function detectRegime(
   if (er === null) return 'unknown';
 
   // VIXまたはATRが異常に高い場合は volatile
-  if (vix !== null && vix > 30) return 'volatile';
-  if (atr !== null && historicalAtrMean !== null && atr > historicalAtrMean * 2.5) return 'volatile';
+  if (vix !== null && vix > REGIME_VOLATILE_VIX) return 'volatile';
+  if (atr !== null && historicalAtrMean !== null && atr > historicalAtrMean * REGIME_VOLATILE_ATR_MULT) return 'volatile';
 
   if (er >= 0.40) return 'trending';
   if (er < 0.25) return 'ranging';
@@ -327,8 +407,8 @@ export function calcTechnicalSignal(
     }
 
     // 4. サポレジ近接度スコア（0〜1）
-    const recentHigh = Math.max(...closes.slice(-20));
-    const recentLow = Math.min(...closes.slice(-20));
+    const recentHigh = Math.max(...closes.slice(-SR_LOOKBACK_PERIOD));
+    const recentLow = Math.min(...closes.slice(-SR_LOOKBACK_PERIOD));
     const range = recentHigh - recentLow;
     const srScore = range > 0
       ? (direction === 'BUY'
@@ -337,8 +417,8 @@ export function calcTechnicalSignal(
       : 0.5;
 
     // 5. プライスアクション スコア（0〜1）: 直近3本の反転パターン
-    const last3 = closes.slice(-3);
-    const paScore = last3.length >= 3
+    const last3 = closes.slice(-PA_LOOKBACK_PERIOD);
+    const paScore = last3.length >= PA_LOOKBACK_PERIOD
       ? (direction === 'BUY'
           ? (last3[2] > last3[1] && last3[1] < last3[0]) ? 1.0 : 0.0
           : (last3[2] < last3[1] && last3[1] > last3[0]) ? 1.0 : 0.0)
@@ -385,49 +465,72 @@ export function calcTechnicalSignal(
   //   2. BBバンド幅がbb_squeeze_threshold未満（スクイーズ状態）
   //   3. 現在レートがupper/lowerBandを突破している（ブレイクアウト確認）
   // TP/SLは順張り方向（逆張りRSIと逆: BUYはTP上・SL下）
+  // ── Ph.10b: MACDモメンタムフィルター ─────────────────────────────────────
+  // BB/RSI両方で使うので一度だけ計算
+  const macdData = params.macd_histogram_trend === 1 ? calcMACD(closes) : null;
+
   const bbBreak = calcBollingerBands(closes, params.bb_period);
   if (bbBreak !== null && historicalAtrMean !== null && historicalAtrMean > 0) {
     const volatilityRatio = atr / historicalAtrMean;
     const widthRatio = bbBreak.avgWidth > 0 ? bbBreak.width / bbBreak.avgWidth : 1;
     if (volatilityRatio >= params.volatility_ratio_min && widthRatio < params.bb_squeeze_threshold) {
       if (currentRate > bbBreak.upperBand) {
-        // BUYブレイクアウト: +2σ上抜け（順張り: TP上・SL下）
-        const tp = parseFloat((currentRate + atr * atr_tp_multiplier).toFixed(5));
-        const sl = parseFloat((currentRate - atr * atr_sl_multiplier).toFixed(5));
-        const scores = calcScores('BUY');
-        return { pair, rsi, atr, er, regime, signal: 'BUY',
-                 reason: `BBスクイーズ・ブレイクアウト(+2σ上抜け) VR=${volatilityRatio.toFixed(2)} 幅比=${widthRatio.toFixed(2)} upper=${bbBreak.upperBand.toFixed(4)}`,
-                 tp_rate: tp, sl_rate: sl, scores };
+        // MACDフィルター: BUYブレイクアウトでもヒストグラム拡大を要求
+        if (macdData && macdData.histogram < macdData.prevHistogram) {
+          // キャンセルせずフォールスルー（RSI判定に委ねる）
+        } else {
+          const tp = parseFloat((currentRate + atr * atr_tp_multiplier).toFixed(5));
+          const sl = parseFloat((currentRate - atr * atr_sl_multiplier).toFixed(5));
+          const scores = calcScores('BUY');
+          return { pair, rsi, atr, er, regime, signal: 'BUY',
+                   reason: `BBスクイーズ・ブレイクアウト(+2σ上抜け) VR=${volatilityRatio.toFixed(2)} 幅比=${widthRatio.toFixed(2)} upper=${bbBreak.upperBand.toFixed(4)}${macdData ? ` MACD↑(H=${macdData.histogram.toFixed(4)})` : ''}`,
+                   tp_rate: tp, sl_rate: sl, scores };
+        }
       }
       if (currentRate < bbBreak.lowerBand) {
-        // SELLブレイクアウト: -2σ下抜け（順張り: TP下・SL上）
-        const tp = parseFloat((currentRate - atr * atr_tp_multiplier).toFixed(5));
-        const sl = parseFloat((currentRate + atr * atr_sl_multiplier).toFixed(5));
-        const scores = calcScores('SELL');
-        return { pair, rsi, atr, er, regime, signal: 'SELL',
-                 reason: `BBスクイーズ・ブレイクアウト(-2σ下抜け) VR=${volatilityRatio.toFixed(2)} 幅比=${widthRatio.toFixed(2)} lower=${bbBreak.lowerBand.toFixed(4)}`,
-                 tp_rate: tp, sl_rate: sl, scores };
+        if (macdData && macdData.histogram > macdData.prevHistogram) {
+          // キャンセルせずフォールスルー（RSI判定に委ねる）
+        } else {
+          const tp = parseFloat((currentRate - atr * atr_tp_multiplier).toFixed(5));
+          const sl = parseFloat((currentRate + atr * atr_sl_multiplier).toFixed(5));
+          const scores = calcScores('SELL');
+          return { pair, rsi, atr, er, regime, signal: 'SELL',
+                   reason: `BBスクイーズ・ブレイクアウト(-2σ下抜け) VR=${volatilityRatio.toFixed(2)} 幅比=${widthRatio.toFixed(2)} lower=${bbBreak.lowerBand.toFixed(4)}${macdData ? ` MACD↓(H=${macdData.histogram.toFixed(4)})` : ''}`,
+                   tp_rate: tp, sl_rate: sl, scores };
+        }
       }
     }
   }
 
   // BUYシグナル: RSI が oversold 以下（売られすぎ）
   if (rsi < rsi_oversold) {
+    // MACDフィルター: ヒストグラムが正方向に拡大していないならキャンセル
+    if (macdData && macdData.histogram < macdData.prevHistogram) {
+      return { pair, rsi, atr, er, regime, signal: 'NEUTRAL',
+               reason: `RSI=${rsi.toFixed(1)}<${rsi_oversold} だがMACD↓(H=${macdData.histogram.toFixed(4)}<prev=${macdData.prevHistogram.toFixed(4)})`,
+               tp_rate: null, sl_rate: null };
+    }
     const tp = parseFloat((currentRate + atr * atr_tp_multiplier).toFixed(5));
     const sl = parseFloat((currentRate - atr * atr_sl_multiplier).toFixed(5));
     const scores = calcScores('BUY');
     return { pair, rsi, atr, er, regime, signal: 'BUY',
-             reason: `RSI=${rsi.toFixed(1)}<${rsi_oversold}(売られすぎ) ER=${er.toFixed(3)} ATR=${atr.toFixed(4)}`,
+             reason: `RSI=${rsi.toFixed(1)}<${rsi_oversold}(売られすぎ) ER=${er.toFixed(3)} ATR=${atr.toFixed(4)}${macdData ? ` MACD↑(H=${macdData.histogram.toFixed(4)})` : ''}`,
              tp_rate: tp, sl_rate: sl, scores };
   }
 
   // SELLシグナル: RSI が overbought 以上（買われすぎ）
   if (rsi > rsi_overbought) {
+    // MACDフィルター: ヒストグラムが負方向に拡大していないならキャンセル
+    if (macdData && macdData.histogram > macdData.prevHistogram) {
+      return { pair, rsi, atr, er, regime, signal: 'NEUTRAL',
+               reason: `RSI=${rsi.toFixed(1)}>${rsi_overbought} だがMACD↑(H=${macdData.histogram.toFixed(4)}>prev=${macdData.prevHistogram.toFixed(4)})`,
+               tp_rate: null, sl_rate: null };
+    }
     const tp = parseFloat((currentRate - atr * atr_tp_multiplier).toFixed(5));
     const sl = parseFloat((currentRate + atr * atr_sl_multiplier).toFixed(5));
     const scores = calcScores('SELL');
     return { pair, rsi, atr, er, regime, signal: 'SELL',
-             reason: `RSI=${rsi.toFixed(1)}>${rsi_overbought}(買われすぎ) ER=${er.toFixed(3)} ATR=${atr.toFixed(4)}`,
+             reason: `RSI=${rsi.toFixed(1)}>${rsi_overbought}(買われすぎ) ER=${er.toFixed(3)} ATR=${atr.toFixed(4)}${macdData ? ` MACD↓(H=${macdData.histogram.toFixed(4)})` : ''}`,
              tp_rate: tp, sl_rate: sl, scores };
   }
 

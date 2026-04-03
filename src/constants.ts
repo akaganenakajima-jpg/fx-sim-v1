@@ -137,6 +137,40 @@ export const RELIABILITY_TRUSTED = 200;
 /** 戦略信頼度 'tentative'（参考サンプル数）の最低取引件数 */
 export const RELIABILITY_TENTATIVE = 50;
 
+// ─── ポジション・リスク管理ハードコード排除 ─────────────────────────────────
+/** 全体の最大オープンポジション数 */
+export const MAX_OPEN_POSITIONS = 10;
+/** TP後の逆張り禁止期間（分） */
+export const TP_COOLDOWN_MIN = 60;
+/** 相関グループのSL後クールダウン（ミリ秒） */
+export const CORRELATION_GROUP_COOLDOWN_MS = 30 * 60 * 1000;
+/** 1トレードあたりの最大リスク（残高に対する割合） */
+export const MAX_RISK_PER_TRADE_PCT = 0.01;
+/** Kelly基準を適用する最低取引回数 */
+export const MIN_TRADES_FOR_KELLY = 20;
+
+// ─── ロジック・インジケーター判定ハードコード排除 ─────────────────────────────
+/** Volatileレジーム判定: VIX閾値 */
+export const REGIME_VOLATILE_VIX = 30;
+/** Volatileレジーム判定: ATRが平均の何倍を超えたか */
+export const REGIME_VOLATILE_ATR_MULT = 2.5;
+/** サポレジ近接度スコアのルックバック期間（ローソク足本数） */
+export const SR_LOOKBACK_PERIOD = 20;
+/** プライスアクション判定のルックバック期間（ローソク足本数） */
+export const PA_LOOKBACK_PERIOD = 3;
+
+// ─── システム監視ハードコード排除 ──────────────────────────────────────────
+/** 市場開始想定時刻（UTC時） */
+export const MARKET_START_HOUR_UTC = 3;
+/** 日次シグナル発火目標件数 */
+export const DAILY_SIGNAL_TARGET = 100;
+
+// ─── ニュース評価重み ───────────────────────────────────────────────────
+/** ニュース7軸スコア重み（通常）[t, u, r, c, s, b, n] */
+export const NEWS_WEIGHTS_DEFAULT = { t: 0.20, u: 0.15, r: 0.30, c: 0.15, s: 0.10, b: 0.05, n: 0.05 };
+/** ニュース7軸スコア重み（個別株用: breadthをrに再配分） */
+export const NEWS_WEIGHTS_STOCK   = { t: 0.20, u: 0.15, r: 0.35, c: 0.15, s: 0.10, b: 0.00, n: 0.05 };
+
 // ─── CSS バージョン ───────────────────────────────────────────────────────────
 /**
  * style.css のキャッシュバスティングバージョン番号
