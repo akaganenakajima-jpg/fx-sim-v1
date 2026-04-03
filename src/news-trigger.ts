@@ -365,17 +365,17 @@ export async function runNewsTrigger(
         `INSERT INTO news_trigger_log (trigger_type, news_title, news_score, relevance, sentiment, affected_pairs, detail, created_at)
          VALUES ('EMERGENCY', ?, ?, ?, ?, NULL, 'PATH_B強制発火フラグセット', ?)`
       )
-      .bind(title, row.composite_score, parsedScores.relevance, parsedScores.sentiment, new Date().toISOString())
+      .bind(title, parsedScores.composite, parsedScores.relevance, parsedScores.sentiment, new Date().toISOString())
       .run();
 
     await insertSystemLog(db, 'INFO', 'NEWS_TRIGGER',
       `緊急ニュース検出 → PATH_B強制発火: ${title.slice(0, 60)}`,
-      `score=${row.composite_score} relevance=${parsedScores.relevance} sentiment=${parsedScores.sentiment}`);
+      `score=${parsedScores.composite} relevance=${parsedScores.relevance} sentiment=${parsedScores.sentiment}`);
 
     return {
       triggerType: 'EMERGENCY',
       newsTitle: title,
-      newsScore: row.composite_score ?? undefined,
+      newsScore: parsedScores.composite || undefined,
       emergencyForced: true,
     };
   }
@@ -388,7 +388,7 @@ export async function runNewsTrigger(
       return { triggerType: 'TREND_INFLUENCE', newsTitle: title, emergencyForced: false };
     }
 
-    const geminiResult = await callGeminiForTempParams(title, row.composite_score ?? 7.5, geminiApiKey);
+    const geminiResult = await callGeminiForTempParams(title, parsedScores.composite, geminiApiKey);
 
     if (!geminiResult) {
       // Gemini Flash呼び出し失敗（APIエラー・タイムアウト）
@@ -397,11 +397,11 @@ export async function runNewsTrigger(
           `INSERT INTO news_trigger_log (trigger_type, news_title, news_score, relevance, sentiment, affected_pairs, detail, created_at)
            VALUES ('TREND_INFLUENCE', ?, ?, ?, ?, NULL, 'Gemini Flash呼び出し失敗', ?)`
         )
-        .bind(title, row.composite_score, parsedScores.relevance, parsedScores.sentiment, new Date().toISOString())
+        .bind(title, parsedScores.composite, parsedScores.relevance, parsedScores.sentiment, new Date().toISOString())
         .run();
       await insertSystemLog(db, 'WARN', 'NEWS_TRIGGER',
         `Gemini Flash呼び出し失敗でTREND_INFLUENCEスキップ: ${title.slice(0, 60)}`,
-        `score=${row.composite_score}`);
+        `score=${parsedScores.composite}`);
       return { triggerType: 'TREND_INFLUENCE', newsTitle: title, emergencyForced: false, affectedPairs: [] };
     }
 
@@ -412,7 +412,7 @@ export async function runNewsTrigger(
           `INSERT INTO news_trigger_log (trigger_type, news_title, news_score, relevance, sentiment, affected_pairs, detail, created_at)
            VALUES ('TREND_INFLUENCE', ?, ?, ?, ?, NULL, '影響軽微・パラメーター変更なし', ?)`
         )
-        .bind(title, row.composite_score, parsedScores.relevance, parsedScores.sentiment, new Date().toISOString())
+        .bind(title, parsedScores.composite, parsedScores.relevance, parsedScores.sentiment, new Date().toISOString())
         .run();
       return { triggerType: 'TREND_INFLUENCE', newsTitle: title, emergencyForced: false, affectedPairs: [] };
     }
@@ -423,7 +423,7 @@ export async function runNewsTrigger(
       geminiResult.reason,
       geminiResult.expiresInHours,
       title,
-      row.composite_score ?? NEWS_SCORE_TREND,
+      parsedScores.composite,
     );
 
     await db
@@ -433,7 +433,7 @@ export async function runNewsTrigger(
       )
       .bind(
         title,
-        row.composite_score,
+        parsedScores.composite,
         parsedScores.relevance,
         parsedScores.sentiment,
         appliedPairs.join(','),
@@ -449,7 +449,7 @@ export async function runNewsTrigger(
     return {
       triggerType: 'TREND_INFLUENCE',
       newsTitle: title,
-      newsScore: row.composite_score ?? undefined,
+      newsScore: parsedScores.composite || undefined,
       affectedPairs: appliedPairs,
       emergencyForced: false,
     };
