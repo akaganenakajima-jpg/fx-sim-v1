@@ -92,6 +92,8 @@ export interface InstrumentParamsRow {
   time_based_exit_minutes: number; // 建値撤退タイムリミット（分）
   trailing_step_atr:       number; // シャンデリア・エグジット幅（ATR倍）
   macd_histogram_trend:    number; // MACDヒストグラム拡大判定（1=有効）
+  // Ph.11: ピラミッディング（増し玉）
+  max_pyramiding_entries:  number; // 追加エントリー最大回数（0=ピラミッディング無効）
 }
 
 // ─── RSI計算 ─────────────────────────────────────────────────────────────────

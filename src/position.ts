@@ -1,7 +1,7 @@
 // ポジション管理（TP/SL チェック + ブローカー統合）
 // 同時オープンポジションは銘柄ごとに最大1件
 
-import { getOpenPositions, getOpenPositionByPair, closePosition, insertSystemLog, updateDecisionOutcome, getRecentTPOpposite } from './db';
+import { getOpenPositions, closePosition, insertSystemLog, updateDecisionOutcome, getRecentTPOpposite } from './db';
 import type { Position } from './db';
 import { INSTRUMENTS, type InstrumentConfig } from './instruments';
 import { getBroker, withFallback, type BrokerEnv } from './broker';
@@ -432,10 +432,47 @@ export async function openPosition(
     trigger?: string | null;  // 'RATE'=レート変動, 'SCHED'=定期30m, 'NEWS'=ニュース
   },
 ): Promise<void> {
-  const existing = await getOpenPositionByPair(db, pair);
-  if (existing) {
-    console.log(`[position] Already has open position for ${pair}, skipping`);
-    return;
+  // ── ピラミッディング対応ガード（二重チェック） ──
+  const existingAll = await db.prepare(
+    "SELECT * FROM positions WHERE status = 'OPEN' AND pair = ?"
+  ).bind(pair).all<Position>();
+  const existingPositions = existingAll.results ?? [];
+
+  if (existingPositions.length > 0) {
+    // instrument_params から max_pyramiding_entries を取得
+    const paramRow = await db.prepare(
+      'SELECT max_pyramiding_entries FROM instrument_params WHERE pair = ?'
+    ).bind(pair).first<{ max_pyramiding_entries: number }>();
+    const maxPyramid = paramRow?.max_pyramiding_entries ?? 0;
+
+    // ピラミッディング無効 → 従来通りブロック
+    if (maxPyramid <= 0) {
+      console.log(`[position] Already has open position for ${pair}, skipping`);
+      return;
+    }
+    // 上限チェック
+    if (existingPositions.length >= 1 + maxPyramid) {
+      console.log(`[position] ピラミッディング上限: ${pair} ${existingPositions.length}件/${1 + maxPyramid}件 — スキップ`);
+      return;
+    }
+    // 同方向チェック（両建て禁止）
+    if (!existingPositions.every(p => p.direction === direction)) {
+      console.log(`[position] ピラミッディング不可: ${pair} 既存ポジションと逆方向 — スキップ`);
+      return;
+    }
+    // リスクフリーチェック
+    const allRiskFree = existingPositions.every(p => {
+      if (p.tp1_hit === 1) return true;
+      if (p.sl_rate == null) return false;
+      return p.direction === 'BUY'
+        ? p.sl_rate >= p.entry_rate
+        : p.sl_rate <= p.entry_rate;
+    });
+    if (!allRiskFree) {
+      console.log(`[position] ピラミッディング不可: ${pair} 既存ポジション未リスクフリー — スキップ`);
+      return;
+    }
+    console.log(`[position] ピラミッディング(増し玉)エントリー許可: ${pair} ${direction} 既存${existingPositions.length}件`);
   }
 
   // T11: セッション時間ガード（取引時間外のエントリーを拒否）
@@ -556,5 +593,6 @@ export async function openPosition(
       extra?.trigger ?? null)
     .run();
 
-  console.log(`[position] Opened ${pair} ${direction} @ ${entryRate} TP=${tpRate} SL=${slRate} [${source}${oandaTradeId ? ` trade=${oandaTradeId}` : ''}]`);
+  const pyramidLabel = existingPositions.length > 0 ? ` [ピラミッディング#${existingPositions.length + 1}]` : '';
+  console.log(`[position] Opened ${pair} ${direction} @ ${entryRate} TP=${tpRate} SL=${slRate} [${source}${oandaTradeId ? ` trade=${oandaTradeId}` : ''}]${pyramidLabel}`);
 }

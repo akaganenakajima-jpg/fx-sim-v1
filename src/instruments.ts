@@ -1023,6 +1023,8 @@ export function getDefaultParams(inst: InstrumentConfig): Record<string, number 
     time_based_exit_minutes:  isStock ? 180 : 120,
     trailing_step_atr:        0.5,
     macd_histogram_trend:     1,
+    // Ph.11: ピラミッディング（増し玉）— トレンド銘柄で1回許可、株は0
+    max_pyramiding_entries:   isStock ? 0 : 1,
   };
 }
 
