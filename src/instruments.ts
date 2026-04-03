@@ -1045,32 +1045,86 @@ export function getYahooSymbol(inst: InstrumentConfig): string | null {
 /**
  * 日本株の追跡リストをD1から取得する。
  * D1が空またはエラーの場合はINSTRUMENTS配列のハードコード日本株をフォールバック。
- * FX・コモディティ・株式指数・米株は常にINSTRUMENTS配列を使用。
  */
 export async function getActiveJpStocks(db: D1Database): Promise<InstrumentConfig[]> {
   try {
     const rows = await db.prepare(
-      "SELECT config_json FROM active_instruments ORDER BY added_at DESC"
+      "SELECT config_json FROM active_instruments WHERE source IN ('auto','manual','screener_jp') ORDER BY added_at DESC"
     ).all<{ config_json: string }>();
 
     if (rows.results && rows.results.length > 0) {
-      return rows.results.map(r => JSON.parse(r.config_json) as InstrumentConfig);
+      return rows.results
+        .map(r => JSON.parse(r.config_json) as InstrumentConfig)
+        .filter(c => c.stockSymbol?.endsWith('.T'));
     }
   } catch (e) {
     console.warn('[instruments] getActiveJpStocks D1 error, using fallback:', e);
   }
 
-  // フォールバック: instruments.tsのハードコード日本株
   return INSTRUMENTS.filter(
     (i: InstrumentConfig) => i.assetClass === 'stock' && i.stockSymbol?.endsWith('.T')
   );
 }
 
-/** 全銘柄（FX+指数+商品+米株+アクティブ日本株）を取得 */
+/**
+ * 米国株の追跡リストをD1から取得する。
+ * D1が空またはエラーの場合はINSTRUMENTS配列のハードコード米国株をフォールバック。
+ */
+export async function getActiveUsStocks(db: D1Database): Promise<InstrumentConfig[]> {
+  try {
+    const rows = await db.prepare(
+      "SELECT config_json FROM active_instruments WHERE source IN ('auto','manual','screener_us') ORDER BY added_at DESC"
+    ).all<{ config_json: string }>();
+
+    if (rows.results && rows.results.length > 0) {
+      const usStocks = rows.results
+        .map(r => JSON.parse(r.config_json) as InstrumentConfig)
+        .filter(c => c.assetClass === 'stock' && c.stockSymbol && !c.stockSymbol.endsWith('.T'));
+      if (usStocks.length > 0) return usStocks;
+    }
+  } catch (e) {
+    console.warn('[instruments] getActiveUsStocks D1 error, using fallback:', e);
+  }
+
+  return INSTRUMENTS.filter(
+    (i: InstrumentConfig) => i.assetClass === 'stock' && i.stockSymbol && !i.stockSymbol.endsWith('.T')
+  );
+}
+
+/**
+ * 全銘柄（FX+指数+商品+暗号通貨+アクティブ日本株+アクティブ米国株）を取得
+ * 株式はすべてDB動的ロード（フォールバックあり）。非株式はINSTRUMENTS配列から静的ロード。
+ */
 export async function getAllActiveInstruments(db: D1Database): Promise<InstrumentConfig[]> {
-  const nonJpStocks = INSTRUMENTS.filter(
-    (i: InstrumentConfig) => !(i.assetClass === 'stock' && i.stockSymbol?.endsWith('.T'))
+  const nonStocks = INSTRUMENTS.filter(
+    (i: InstrumentConfig) => i.assetClass !== 'stock'
   );
   const jpStocks = await getActiveJpStocks(db);
-  return [...nonJpStocks, ...jpStocks];
+  const usStocks = await getActiveUsStocks(db);
+  return [...nonStocks, ...jpStocks, ...usStocks];
+}
+
+/** 米国株のデフォルトInstrumentConfig構築 */
+export function buildDefaultUsStockConfig(ticker: string): InstrumentConfig {
+  return {
+    pair: ticker,
+    broker: 'paper',
+    oandaSymbol: null,
+    rateChangeTh: 1.0,
+    tpSlHint: 'SLは$2〜$15（ATRの0.4〜2倍）、TPはSLの最大5倍まで（RR2.0以上推奨）',
+    tpSlMin: 2.0,
+    tpSlMax: 15.0,
+    rrMax: 5,
+    pnlUnit: '$',
+    pnlMultiplier: 1,
+    trailingActivation: 3.0,
+    trailingDistance: 1.8,
+    correlationGroup: 'us_high_beta',
+    tier: 'C',
+    tierLotMultiplier: 0.5,
+    assetClass: 'stock',
+    stockSymbol: ticker,
+    minUnit: 1,
+    tradingHoursET: { open: 9.5, close: 16 },
+  };
 }

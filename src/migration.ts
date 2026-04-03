@@ -288,6 +288,17 @@ const MIGRATIONS: Array<{ version: number; description: string; sql: string }> =
     description: 'instrument_params に macd_histogram_trend カラム追加（MACDヒストグラム拡大判定）',
     sql: 'ALTER TABLE instrument_params ADD COLUMN macd_histogram_trend INTEGER NOT NULL DEFAULT 1',
   },
+  // v238-239: AIモメンタム・スクリーナー対応
+  {
+    version: 238,
+    description: 'stock_scores に market カラム追加（米国株スコアも同テーブルで管理）',
+    sql: "ALTER TABLE stock_scores ADD COLUMN market TEXT NOT NULL DEFAULT 'jp'",
+  },
+  {
+    version: 239,
+    description: 'rotation_log に market カラム追加（JP/US入替え記録の区別）',
+    sql: "ALTER TABLE rotation_log ADD COLUMN market TEXT NOT NULL DEFAULT 'jp'",
+  },
 ];
 
 export async function runMigrations(db: D1Database): Promise<void> {

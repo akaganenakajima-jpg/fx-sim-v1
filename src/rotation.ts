@@ -3,7 +3,8 @@
 // 2層構造: 追跡リスト（最大15銘柄、7日ロック）+ 候補リスト（最大50銘柄）
 
 import type { D1Database } from '@cloudflare/workers-types';
-import { INSTRUMENTS, type InstrumentConfig } from './instruments';
+import { INSTRUMENTS, type InstrumentConfig, getDefaultParams, buildDefaultUsStockConfig } from './instruments';
+import type { ScreenResult } from './screener';
 
 const TRACKING_MAX = 15;
 const LOCK_DAYS = 7;
@@ -352,6 +353,243 @@ export async function getPendingRotations(db: D1Database): Promise<Array<{
     "SELECT id, proposed_at, in_symbol, in_score, out_symbol, out_score, status FROM rotation_log WHERE status = 'PENDING' ORDER BY proposed_at DESC"
   ).all<{ id: number; proposed_at: string; in_symbol: string; in_score: number; out_symbol: string; out_score: number; status: string }>();
   return rows.results ?? [];
+}
+
+// ─── AIモメンタム・スクリーナー: AI選定 + ブートストラップ + 新陳代謝 ─────
+
+const GEMINI_FLASH_ENDPOINT =
+  'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent';
+const AI_SELECT_TIMEOUT_MS = 15_000;
+
+export interface AIPick {
+  ticker: string;
+  reason: string;
+}
+
+/**
+ * Step 3a: Gemini AIによる銘柄選定
+ * スクリーナー上位候補からデイトレ/スイング向き銘柄を3〜5件選出
+ * 失敗時はスクリーニングスコア上位5件にフォールバック
+ */
+export async function aiSelectStocks(
+  candidates: ScreenResult[],
+  market: 'us' | 'jp',
+  apiKey: string,
+): Promise<AIPick[]> {
+  if (candidates.length === 0) return [];
+
+  // 上位20件のサマリーを構築
+  const top20 = candidates.slice(0, 20);
+  const summary = top20.map((c, i) =>
+    `${i + 1}. ${c.ticker} | 価格=${market === 'us' ? '$' : '¥'}${c.price.toFixed(1)} | ATRスコア=${c.atrScore} | 出来高加速=${c.volumeScore} | 総合=${c.totalScore} | 日中値幅=${c.dayRange.toFixed(2)} | 出来高=${(c.volume1d / 1e6).toFixed(1)}M`
+  ).join('\n');
+
+  const marketLabel = market === 'us' ? '米国株' : '日本株';
+  const prompt = `あなたはプロのデイトレーダーです。以下の${marketLabel}スクリーニング結果から、
+今週のデイトレード・スイングトレードで最もエッジ（優位性）が出そうな銘柄を3〜5件選出してください。
+
+## 選定基準
+1. ボラティリティの持続性（一時的な急騰ではなく、継続的な高ボラ）
+2. 出来高トレンド（増加傾向が望ましい）
+3. テーマ性・材料の有無（AI、半導体、防衛、決算等）
+4. セクター分散（同一セクターに偏らない）
+
+## ${marketLabel}候補リスト
+${summary}
+
+## 出力形式（JSON）
+{ "picks": [{ "ticker": "ティッカー", "reason": "選定理由（日本語30文字以内）" }] }
+
+注意:
+- 必ず3〜5件選出すること
+- 候補リストに存在するティッカーのみ選出すること
+- JSON以外の文字列は含めないこと`;
+
+  try {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), AI_SELECT_TIMEOUT_MS);
+    const res = await fetch(`${GEMINI_FLASH_ENDPOINT}?key=${apiKey}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        contents: [{ parts: [{ text: prompt }] }],
+        generationConfig: { responseMimeType: 'application/json', temperature: 0.3 },
+      }),
+      signal: controller.signal,
+    }).finally(() => clearTimeout(timeout));
+
+    if (!res.ok) {
+      console.warn(`[screener] AI select failed (${res.status})`);
+      return fallbackPicks(candidates);
+    }
+
+    const data = await res.json() as {
+      candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }>;
+    };
+    const text = data?.candidates?.[0]?.content?.parts?.[0]?.text;
+    if (!text) return fallbackPicks(candidates);
+
+    const parsed = JSON.parse(text) as { picks?: AIPick[] };
+    if (!parsed.picks?.length) return fallbackPicks(candidates);
+
+    // 候補リストに存在するティッカーのみ
+    const validTickers = new Set(top20.map(c => c.ticker));
+    const valid = parsed.picks.filter(p => validTickers.has(p.ticker)).slice(0, 5);
+    if (valid.length < 3) return fallbackPicks(candidates);
+
+    console.log(`[screener] AI selected ${market}: ${valid.map(p => p.ticker).join(', ')}`);
+    return valid;
+  } catch (e) {
+    console.warn(`[screener] AI select error: ${String(e).slice(0, 80)}`);
+    return fallbackPicks(candidates);
+  }
+}
+
+/** AI失敗時のフォールバック: スコア上位5件 */
+function fallbackPicks(candidates: ScreenResult[]): AIPick[] {
+  return candidates.slice(0, 5).map(c => ({
+    ticker: c.ticker,
+    reason: `スコア上位(${c.totalScore})`,
+  }));
+}
+
+/**
+ * Step 3b: 選出銘柄をactive_instruments + instrument_paramsにブートストラップ
+ * 既存銘柄はスキップ（上書きしない）
+ */
+export async function bootstrapSelectedStocks(
+  db: D1Database,
+  picks: AIPick[],
+  market: 'us' | 'jp',
+): Promise<{ added: string[]; skipped: string[] }> {
+  const added: string[] = [];
+  const skipped: string[] = [];
+  const source = market === 'us' ? 'screener_us' : 'screener_jp';
+  const now = new Date().toISOString();
+
+  for (const pick of picks) {
+    const ticker = pick.ticker;
+
+    // 既にactive_instrumentsに存在するならスキップ
+    const existing = await db.prepare(
+      "SELECT pair FROM active_instruments WHERE pair = ? OR config_json LIKE ?"
+    ).bind(ticker, `%"stockSymbol":"${ticker}"%`).first();
+    if (existing) {
+      skipped.push(ticker);
+      continue;
+    }
+
+    // InstrumentConfig構築
+    const config: InstrumentConfig = market === 'us'
+      ? buildDefaultUsStockConfig(ticker)
+      : buildDefaultJpStockConfig(ticker);
+
+    // active_instrumentsに追加
+    await db.prepare(`
+      INSERT OR REPLACE INTO active_instruments (pair, config_json, added_at, source, updated_at)
+      VALUES (?, ?, ?, ?, ?)
+    `).bind(config.pair, JSON.stringify(config), now, source, now).run();
+
+    // instrument_paramsにデフォルトパラメーターを追加（既存があればスキップ）
+    const paramExists = await db.prepare(
+      "SELECT pair FROM instrument_params WHERE pair = ?"
+    ).bind(config.pair).first();
+
+    if (!paramExists) {
+      const defaults = getDefaultParams(config);
+      const keys = Object.keys(defaults);
+      const placeholders = keys.map(() => '?').join(',');
+      await db.prepare(
+        `INSERT INTO instrument_params (${keys.join(',')}) VALUES (${placeholders})`
+      ).bind(...keys.map(k => defaults[k])).run();
+    }
+
+    added.push(ticker);
+  }
+
+  console.log(`[screener] Bootstrap ${market}: added=${added.join(',')||'none'} skipped=${skipped.join(',')||'none'}`);
+  return { added, skipped };
+}
+
+/**
+ * Step 3c: パフォーマンス不良銘柄の新陳代謝
+ * 除外条件:
+ *   1. 追加から14日以上 かつ 取引0件
+ *   2. 直近20取引で勝率 < 25%（RR≥1.0基準）
+ *   3. 直近7日のstock_scoresのtotal_scoreが全日30未満
+ */
+export async function pruneUnderperformers(db: D1Database): Promise<string[]> {
+  const pruned: string[] = [];
+  const fourteenDaysAgo = new Date(Date.now() - 14 * 24 * 3600 * 1000).toISOString();
+  const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 3600 * 1000).toISOString();
+
+  // スクリーナーが追加した動的銘柄のみ対象（手動・ハードコード銘柄は除外）
+  const dynamicRows = await db.prepare(
+    "SELECT pair, config_json, added_at FROM active_instruments WHERE source LIKE 'screener_%'"
+  ).all<{ pair: string; config_json: string; added_at: string }>();
+
+  for (const row of (dynamicRows.results ?? [])) {
+    const pair = row.pair;
+    let reason = '';
+
+    // 条件1: 追加から14日以上 かつ 取引0件
+    if (row.added_at < fourteenDaysAgo) {
+      const trades = await db.prepare(
+        "SELECT COUNT(*) as cnt FROM positions WHERE pair = ?"
+      ).bind(pair).first<{ cnt: number }>();
+      if ((trades?.cnt ?? 0) === 0) {
+        reason = '14日間取引なし';
+      }
+    }
+
+    // 条件2: 直近20取引で勝率 < 25%
+    if (!reason) {
+      const recentTrades = await db.prepare(
+        "SELECT realized_rr FROM positions WHERE pair = ? AND status = 'CLOSED' ORDER BY closed_at DESC LIMIT 20"
+      ).all<{ realized_rr: number | null }>();
+      const closed = recentTrades.results ?? [];
+      if (closed.length >= 10) { // 最低10取引でないと判定しない
+        const wins = closed.filter(t => (t.realized_rr ?? 0) >= 1.0).length;
+        const winRate = wins / closed.length;
+        if (winRate < 0.25) {
+          reason = `勝率${(winRate * 100).toFixed(0)}%(${wins}/${closed.length})`;
+        }
+      }
+    }
+
+    // 条件3: 直近7日のtotal_scoreが全日30未満
+    if (!reason) {
+      try {
+        const config = JSON.parse(row.config_json) as InstrumentConfig;
+        const symbol = config.stockSymbol ?? pair;
+        const scores = await db.prepare(
+          "SELECT total_score FROM stock_scores WHERE symbol = ? AND scored_at >= ? ORDER BY scored_at DESC"
+        ).bind(symbol, sevenDaysAgo.split('T')[0]).all<{ total_score: number }>();
+        const scoreList = scores.results ?? [];
+        if (scoreList.length >= 5 && scoreList.every(s => s.total_score < 30)) {
+          reason = `7日間スコア低迷(max=${Math.max(...scoreList.map(s => s.total_score)).toFixed(1)})`;
+        }
+      } catch { /* parse失敗はスキップ */ }
+    }
+
+    if (reason) {
+      // active_instrumentsから削除（instrument_paramsは残す）
+      await db.prepare("DELETE FROM active_instruments WHERE pair = ?").bind(pair).run();
+
+      // rotation_logに記録
+      await db.prepare(`
+        INSERT INTO rotation_log (proposed_at, in_symbol, in_score, out_symbol, out_score, status, decided_at, decided_by)
+        VALUES (?, '', 0, ?, 0, 'PRUNED', ?, 'screener')
+      `).bind(new Date().toISOString(), pair, new Date().toISOString()).run();
+
+      pruned.push(`${pair}(${reason})`);
+    }
+  }
+
+  if (pruned.length > 0) {
+    console.log(`[screener] Pruned: ${pruned.join(', ')}`);
+  }
+  return pruned;
 }
 
 // TRACKING_MAX は将来の拡張用にエクスポートしておく

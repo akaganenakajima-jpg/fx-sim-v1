@@ -40,7 +40,8 @@ import { runNewsTrigger, consumeEmergencyForceFlag } from './news-trigger';
 // AI銘柄マネージャー
 import { fetchFundamentals, saveFundamentals, fetchAllListedStocks, cleanupOldFundamentals } from './jquants';
 import { calcStockScore, saveScores, countNewsForSymbol, getSectorAvgPer, type StockScoreInput } from './scoring';
-import { getTrackingList, getCandidateList, detectPromotionCandidates, detectDemotionCandidates, proposeRotation, processAutoApproval as autoApprove, recordResultPnl, decideRotation, getPendingRotations } from './rotation';
+import { getTrackingList, getCandidateList, detectPromotionCandidates, detectDemotionCandidates, proposeRotation, processAutoApproval as autoApprove, recordResultPnl, decideRotation, getPendingRotations, aiSelectStocks, bootstrapSelectedStocks, pruneUnderperformers } from './rotation';
+import { screenCandidates, SP500_SCREEN_LIST, NIKKEI_SCREEN_LIST } from './screener';
 import { INITIAL_CAPITAL } from './constants';
 
 interface Env {
@@ -2262,6 +2263,52 @@ async function runWeeklyScreening(env: Env): Promise<void> {
   await saveFundamentals(env.DB, fundaData);
 
   console.log(`[weekly-screening] Finalize: ${fundaData.length} candidates — Done`);
+
+  // ── AIモメンタム・スクリーナー ──────────────────────────────────────────────
+  // 米国株・日本株をスクリーニング → AI選定 → ブートストラップ → 新陳代謝
+  try {
+    console.log('[weekly-screening] AI Momentum Screener start');
+
+    // 1. スクリーニング（米国株・日本株を並列実行）
+    const [usCandidates, jpCandidates] = await Promise.all([
+      screenCandidates(SP500_SCREEN_LIST, 'us'),
+      screenCandidates(NIKKEI_SCREEN_LIST, 'jp'),
+    ]);
+
+    // スクリーニング結果をキャッシュ（ダッシュボード表示用）
+    if (usCandidates.length > 0 || jpCandidates.length > 0) {
+      await env.DB.prepare(
+        "INSERT OR REPLACE INTO market_cache (key, value, updated_at) VALUES (?, ?, ?)"
+      ).bind('screener_results', JSON.stringify({ us: usCandidates.slice(0, 10), jp: jpCandidates.slice(0, 10) }), new Date().toISOString()).run();
+    }
+
+    // 2. AI銘柄選定（米国株・日本株を順次実行 — Geminiレート制限対策）
+    const apiKey = getApiKey(env);
+    const usPicks = await aiSelectStocks(usCandidates, 'us', apiKey);
+    const jpPicks = await aiSelectStocks(jpCandidates, 'jp', apiKey);
+
+    // 3. ブートストラップ（active_instruments + instrument_params）
+    const usResult = await bootstrapSelectedStocks(env.DB, usPicks, 'us');
+    const jpResult = await bootstrapSelectedStocks(env.DB, jpPicks, 'jp');
+
+    // 4. パフォーマンス不良銘柄の新陳代謝
+    const pruned = await pruneUnderperformers(env.DB);
+
+    // 5. system_logsに記録
+    await insertSystemLog(env.DB, 'INFO', 'SCREENER',
+      `AI Screener完了: US=${usPicks.map(p => p.ticker).join(',')} JP=${jpPicks.map(p => p.ticker).join(',')} pruned=${pruned.length}件`,
+      JSON.stringify({
+        us: { candidates: usCandidates.length, picks: usPicks, added: usResult.added, skipped: usResult.skipped },
+        jp: { candidates: jpCandidates.length, picks: jpPicks, added: jpResult.added, skipped: jpResult.skipped },
+        pruned,
+      })
+    ).catch(() => {});
+
+    console.log(`[weekly-screening] AI Screener done: US +${usResult.added.length} JP +${jpResult.added.length} pruned ${pruned.length}`);
+  } catch (e) {
+    console.warn(`[weekly-screening] AI Screener error: ${String(e).slice(0, 120)}`);
+    await insertSystemLog(env.DB, 'WARN', 'SCREENER', 'AIスクリーナー失敗', String(e).slice(0, 200)).catch(() => {});
+  }
 }
 
 /** 日次統合タスク: ResultPnl + DailyTasks（UTC15:00 = JST0:00） */
