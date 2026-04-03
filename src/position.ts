@@ -10,6 +10,7 @@ import { sendNotification, buildTpSlMessage } from './notify';
 import { updateThompsonParams } from './thompson';
 import { logTradeJournal } from './trade-journal';
 import { getCurrentBalance } from './risk-manager';
+import { TP_COOLDOWN_MIN, MAX_RISK_PER_TRADE_PCT, MIN_TRADES_FOR_KELLY } from './constants';
 
 function calcPnl(
   direction: 'BUY' | 'SELL',
@@ -398,8 +399,7 @@ export async function openPosition(
     }
   }
 
-  // TP後クールダウン: 同銘柄の逆方向TPから60分以内は逆張りエントリー禁止
-  const TP_COOLDOWN_MIN = 60;
+  // TP後クールダウン: 同銘柄の逆方向TPからTP_COOLDOWN_MIN分以内は逆張りエントリー禁止
   const recentTP = await getRecentTPOpposite(db, pair, direction, TP_COOLDOWN_MIN);
   if (recentTP) {
     const minAgo = Math.round((Date.now() - new Date(recentTP.closed_at).getTime()) / 60000);
@@ -425,7 +425,7 @@ export async function openPosition(
     .bind(pair)
     .first<{ total: number; wins: number; avgWin: number; avgLoss: number }>();
   let lot = 1.0;
-  if (perfRow && perfRow.total >= 20) {
+  if (perfRow && perfRow.total >= MIN_TRADES_FOR_KELLY) {
     const winRate = perfRow.wins / perfRow.total;
     const avgRR = perfRow.avgLoss > 0 ? perfRow.avgWin / perfRow.avgLoss : 0;
     const kelly = kellyFraction(winRate, avgRR);
@@ -449,7 +449,7 @@ export async function openPosition(
     const multiplier = extra?.pnlMultiplier ?? 1;
     const riskPerLot = slPips * multiplier;
     const balance = await getCurrentBalance(db);
-    const maxRisk = balance * 0.01;
+    const maxRisk = balance * MAX_RISK_PER_TRADE_PCT;
     if (riskPerLot > 0) {
       const slBasedLot = maxRisk / riskPerLot;
       if (slBasedLot < lot) {

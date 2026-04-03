@@ -11,6 +11,8 @@
 //     ER = |close[N] - close[0]| / Σ|close[t] - close[t-1]|
 //     ER=1.0: 完全トレンド / ER=0.0: 完全レンジ（ADX>25相当はER>0.40）
 
+import { REGIME_VOLATILE_VIX, REGIME_VOLATILE_ATR_MULT, SR_LOOKBACK_PERIOD, PA_LOOKBACK_PERIOD } from './constants';
+
 export interface TechnicalSignal {
   pair: string;
   rsi: number | null;
@@ -239,8 +241,8 @@ export function detectRegime(
   if (er === null) return 'unknown';
 
   // VIXまたはATRが異常に高い場合は volatile
-  if (vix !== null && vix > 30) return 'volatile';
-  if (atr !== null && historicalAtrMean !== null && atr > historicalAtrMean * 2.5) return 'volatile';
+  if (vix !== null && vix > REGIME_VOLATILE_VIX) return 'volatile';
+  if (atr !== null && historicalAtrMean !== null && atr > historicalAtrMean * REGIME_VOLATILE_ATR_MULT) return 'volatile';
 
   if (er >= 0.40) return 'trending';
   if (er < 0.25) return 'ranging';
@@ -327,8 +329,8 @@ export function calcTechnicalSignal(
     }
 
     // 4. サポレジ近接度スコア（0〜1）
-    const recentHigh = Math.max(...closes.slice(-20));
-    const recentLow = Math.min(...closes.slice(-20));
+    const recentHigh = Math.max(...closes.slice(-SR_LOOKBACK_PERIOD));
+    const recentLow = Math.min(...closes.slice(-SR_LOOKBACK_PERIOD));
     const range = recentHigh - recentLow;
     const srScore = range > 0
       ? (direction === 'BUY'
@@ -337,8 +339,8 @@ export function calcTechnicalSignal(
       : 0.5;
 
     // 5. プライスアクション スコア（0〜1）: 直近3本の反転パターン
-    const last3 = closes.slice(-3);
-    const paScore = last3.length >= 3
+    const last3 = closes.slice(-PA_LOOKBACK_PERIOD);
+    const paScore = last3.length >= PA_LOOKBACK_PERIOD
       ? (direction === 'BUY'
           ? (last3[2] > last3[1] && last3[1] < last3[0]) ? 1.0 : 0.0
           : (last3[2] < last3[1] && last3[1] > last3[0]) ? 1.0 : 0.0)
