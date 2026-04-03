@@ -105,7 +105,7 @@ export const RR_DEFINITION_PROMPT =
 const GEMINI_FLASH_ENDPOINT =
   'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent';
 
-const AI_TIMEOUT_MS = 12_000; // AI API呼び出し12秒タイムアウト
+const AI_TIMEOUT_MS = 15_000; // AI API呼び出し15秒タイムアウト（Paid Worker: CPU 30s余裕あり）
 // const NEWS_ANALYSIS_TIMEOUT_MS = 12_000; // DEPRECATED_v2: analyzeNews系で使用していたが削除
 /* --- DELETED Path A helpers (HEDGE_DELAY_MS / buildSystemInstruction / buildUserMessage)
    これらは getDecision/getDecisionWithHedge 専用。Ph.6 Path A廃止で不使用。 */
@@ -595,11 +595,11 @@ export async function fetchOgDescription(url: string, sourceName?: string): Prom
 
 // ── Path B: newsStage1 ──
 
-const STAGE1_TIMEOUT_MS = 10_000;
+const STAGE1_TIMEOUT_MS = 15_000; // B1: Paid Workerのため15秒に緩和（3プロバイダー直列で最大45s）
 
 /**
  * B1: ニュースタイトル即断 → trade_signals 収集
- * タイムアウト10秒。失敗時は例外を投げる（呼び出し元でcatch→Path Bスキップ）
+ * タイムアウト15秒。失敗時は例外を投げる（呼び出し元でcatch→Path Bスキップ）
  */
 export async function newsStage1(params: {
   news: NewsItem[];
@@ -745,12 +745,12 @@ export async function newsStage1(params: {
 
 // ── Path B: newsStage2 ──
 
-const STAGE2_TIMEOUT_MS = 8_000;
+const STAGE2_TIMEOUT_MS = 12_000; // B2: Paid Workerのため12秒に緩和
 
 /**
  * T013: B2 の適応的タイムアウトを計算する
  *
- * 直近 10 回の B2 応答時間の P90 + 2000ms を使用（5000〜15000ms の範囲でクランプ）
+ * 直近 10 回の B2 応答時間の P90 + 2000ms を使用（8000〜20000ms の範囲でクランプ）
  * DB に応答時間が記録されていない場合はデフォルト 8000ms を返す
  *
  * 仕組み: market_cache の 'b2_response_times' キーに JSON 配列として最新 10 件を保存
@@ -767,7 +767,7 @@ export async function getAdaptiveB2Timeout(db?: D1Database): Promise<number> {
     const sorted = [...times].sort((a, b) => a - b);
     const p90Index = Math.floor(sorted.length * 0.9);
     const p90 = sorted[Math.min(p90Index, sorted.length - 1)];
-    return Math.min(15_000, Math.max(5_000, p90 + 2_000));
+    return Math.min(20_000, Math.max(8_000, p90 + 2_000));
   } catch {
     return STAGE2_TIMEOUT_MS;
   }
@@ -793,7 +793,7 @@ async function recordB2ResponseTime(db: D1Database, responseMs: number): Promise
 
 /**
  * B2: og:description付きで補正 → CONFIRM/REVISE/REVERSE
- * タイムアウト8秒（適応的: getAdaptiveB2Timeout() で取得可能）
+ * タイムアウト12秒（適応的: getAdaptiveB2Timeout() で取得可能、8〜20秒範囲）
  * 失敗時は例外を投げる（呼び出し元でcatch→B1シグナルをそのまま採用）
  */
 export async function newsStage2(params: {
@@ -886,12 +886,20 @@ export async function newsStage2(params: {
 
 // ── B1/B2 ヘッジ: Gemini → GPT → Claude フォールバック ──
 
-/** newsStage1 + GPT/Claude フォールバック */
+/**
+ * newsStage1 + 複数Geminiキーリトライ + GPT/Claude フォールバック
+ *
+ * フォールバック順序:
+ *   Geminiキー1 → Geminiキー2 → ... → Geminiキー5 → GPT → Claude
+ * AbortError(タイムアウト)は別キーでも再発しやすいため最大2本に制限。
+ * 429(レート制限)は別キーで成功する可能性が高いため全キーを試行。
+ */
 export async function newsStage1WithHedge(params: {
   news: NewsItem[];
   indicators: MarketIndicators;
   instruments: Array<{ pair: string; hasOpenPosition: boolean; tpSlHint?: string; correlationGroup?: string; currentRate?: number; directionBias?: { buyAvgRR: number; sellAvgRR: number }; fundaContext?: FundaContext }>;
   apiKey: string;
+  geminiApiKeys?: string[];
   openaiApiKey?: string;
   anthropicApiKey?: string;
   db?: D1Database;
@@ -901,37 +909,59 @@ export async function newsStage1WithHedge(params: {
   // T10: 実績フィードバック
   performanceSummary?: { winRate: number; avgRR: number; recentStreak: number; worstPairs: string[] };
 }): Promise<NewsStage1Result & { provider: string }> {
-  const { openaiApiKey, anthropicApiKey, db, ...geminiParams } = params;
+  const { openaiApiKey, anthropicApiKey, db, geminiApiKeys, ...geminiParams } = params;
 
-  // 1. Gemini を試行
-  try {
-    const result = await newsStage1({ ...geminiParams, db });
-    return { ...result, provider: 'gemini' };
-  } catch (geminiErr) {
-    console.warn(`[fx-sim] B1 Gemini failed: ${String(geminiErr).split('\n')[0].slice(0, 80)}`);
+  // Geminiキー一覧（geminiApiKeys優先、なければapiKey単体）
+  const keys = geminiApiKeys?.length ? geminiApiKeys : [params.apiKey];
+  const MAX_ABORT_RETRIES = 2; // AbortError(タイムアウト)は2本まで
+  let abortCount = 0;
+  let lastGeminiErr: unknown;
 
-    // 2. GPT フォールバック
-    if (openaiApiKey) {
-      try {
-        const result = await newsStage1GPT({ ...params, apiKey: openaiApiKey, db } as any);
-        return { ...result, provider: 'gpt' };
-      } catch (gptErr) {
-        console.warn(`[fx-sim] B1 GPT failed: ${String(gptErr).split('\n')[0].slice(0, 80)}`);
+  // 1. Gemini キーを順に試行
+  for (let i = 0; i < keys.length; i++) {
+    try {
+      const result = await newsStage1({ ...geminiParams, apiKey: keys[i], db });
+      return { ...result, provider: i === 0 ? 'gemini' : `gemini[${i}]` };
+    } catch (err) {
+      lastGeminiErr = err;
+      const isAbort = (err as Error)?.name === 'AbortError';
+      const is429 = err instanceof RateLimitError;
+      console.warn(`[fx-sim] B1 Gemini[${i}] failed (${isAbort ? 'timeout' : is429 ? '429' : 'other'}): ${String(err).split('\n')[0].slice(0, 60)}`);
+
+      if (isAbort) {
+        abortCount++;
+        if (abortCount >= MAX_ABORT_RETRIES) {
+          console.warn(`[fx-sim] B1 Gemini: ${abortCount}回タイムアウト → Geminiリトライ打ち切り`);
+          break;
+        }
       }
+      // 429以外かつAbortでもない（パース失敗等）→ 別キーで同じ結果になる可能性高いので打ち切り
+      if (!is429 && !isAbort) break;
     }
-
-    // 3. Claude フォールバック
-    if (anthropicApiKey) {
-      try {
-        const result = await newsStage1Claude({ ...params, apiKey: anthropicApiKey, db });
-        return { ...result, provider: 'claude' };
-      } catch (claudeErr) {
-        console.warn(`[fx-sim] B1 Claude failed: ${String(claudeErr).split('\n')[0].slice(0, 80)}`);
-      }
-    }
-
-    throw geminiErr; // 全プロバイダー失敗
   }
+
+  // 2. GPT フォールバック（タイムアウト短縮: Worker全体の時間予算を圧迫しないよう10秒に制限）
+  const FALLBACK_TIMEOUT_MS = 10_000;
+  if (openaiApiKey) {
+    try {
+      const result = await newsStage1GPT({ ...params, apiKey: openaiApiKey, db, _timeoutOverride: FALLBACK_TIMEOUT_MS } as any);
+      return { ...result, provider: 'gpt' };
+    } catch (gptErr) {
+      console.warn(`[fx-sim] B1 GPT failed: ${String(gptErr).split('\n')[0].slice(0, 80)}`);
+    }
+  }
+
+  // 3. Claude フォールバック（同様に10秒制限）
+  if (anthropicApiKey) {
+    try {
+      const result = await newsStage1Claude({ ...params, apiKey: anthropicApiKey, db, _timeoutOverride: FALLBACK_TIMEOUT_MS } as any);
+      return { ...result, provider: 'claude' };
+    } catch (claudeErr) {
+      console.warn(`[fx-sim] B1 Claude failed: ${String(claudeErr).split('\n')[0].slice(0, 80)}`);
+    }
+  }
+
+  throw lastGeminiErr; // 全プロバイダー失敗
 }
 
 /** B1 GPT版: newsStage1 と同じプロンプトを GPT に送る */
@@ -943,6 +973,7 @@ async function newsStage1GPT(params: {
   regimeText?: string;
   regimeProhibitions?: string;
   performanceSummary?: { winRate: number; avgRR: number; recentStreak: number; worstPairs: string[] };
+  _timeoutOverride?: number;
 }): Promise<NewsStage1Result> {
   const { news, indicators, instruments, apiKey, regimeText, regimeProhibitions, performanceSummary } = params;
 
@@ -1041,7 +1072,7 @@ async function newsStage1GPT(params: {
       response_format: { type: 'json_object' },
       temperature: 0.3,
     }),
-  }, STAGE1_TIMEOUT_MS);
+  }, params._timeoutOverride ?? STAGE1_TIMEOUT_MS);
 
   if (!res.ok) {
     const body = await res.text();
@@ -1079,6 +1110,7 @@ async function newsStage1Claude(params: {
   regimeText?: string;
   regimeProhibitions?: string;
   performanceSummary?: { winRate: number; avgRR: number; recentStreak: number; worstPairs: string[] };
+  _timeoutOverride?: number;
 }): Promise<NewsStage1Result> {
   const { news, indicators, instruments, apiKey, regimeText, regimeProhibitions, performanceSummary } = params;
 
@@ -1167,7 +1199,7 @@ async function newsStage1Claude(params: {
       messages: [{ role: 'user', content: userMessage }],
       temperature: 0.3,
     }),
-  }, STAGE1_TIMEOUT_MS);
+  }, params._timeoutOverride ?? STAGE1_TIMEOUT_MS);
 
   if (!res.ok) {
     const body = await res.text();

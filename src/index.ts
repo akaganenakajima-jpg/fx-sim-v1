@@ -106,6 +106,17 @@ function getApiKey(env: Env): string {
   return earliest;
 }
 
+/** 全Geminiキーを優先順（クールダウン外→使用回数少ない順）で返す */
+function getAllApiKeys(env: Env): string[] {
+  const keys = [env.GEMINI_API_KEY, env.GEMINI_API_KEY_2, env.GEMINI_API_KEY_3, env.GEMINI_API_KEY_4, env.GEMINI_API_KEY_5].filter(Boolean) as string[];
+  const now = Date.now();
+  const available = keys.filter(k => (keyCooldowns.get(k) ?? 0) <= now);
+  const cooldown = keys.filter(k => (keyCooldowns.get(k) ?? 0) > now);
+  available.sort((a, b) => (keyUsageCount.get(a) ?? 0) - (keyUsageCount.get(b) ?? 0));
+  cooldown.sort((a, b) => (keyCooldowns.get(a) ?? 0) - (keyCooldowns.get(b) ?? 0));
+  return [...available, ...cooldown];
+}
+
 /** 429受信時にキーをクールダウン登録 */
 function markKeyCooldown(apiKey: string, retryAfterSec: number): void {
   const cooldownUntil = Date.now() + retryAfterSec * 1000;
@@ -596,11 +607,12 @@ async function runPathB(
   sharedNewsStore: SharedNewsStore,
   indicators: Awaited<ReturnType<typeof getMarketIndicators>>,
   openPairs: Set<string>,
-  apiKey: string,
+  apiKeys: string[],
   hedgeKeys?: { openaiApiKey?: string; anthropicApiKey?: string },
   regimeContext?: { text: string; prohibitions: string },
   prices?: Map<string, number | null>,
 ): Promise<PathBResult> {
+  const apiKey = apiKeys[0]; // B2やその他で使うデフォルトキー
   const news = sharedNewsStore.items;
   if (news.length === 0) return { decisions: [], reversals: [], newsAnalysis: [] };
 
@@ -716,7 +728,9 @@ async function runPathB(
     try {
       const tB1 = Date.now();
       const b1Result = await newsStage1WithHedge({
-        news, indicators, instruments: instrumentList, apiKey,
+        news, indicators, instruments: instrumentList,
+        apiKey, // 1本目（既存互換）
+        geminiApiKeys: apiKeys, // 全Geminiキー（複数本リトライ用）
         openaiApiKey: hedgeKeys?.openaiApiKey,
         anthropicApiKey: hedgeKeys?.anthropicApiKey,
         db: env.DB,
@@ -1628,7 +1642,7 @@ async function runAnalysis(env: Env): Promise<void> {
         }
 
         const tPathB = Date.now();
-        pathBResult = await runPathB(env, sharedNewsStore, indicators, openPairsForPathB, getApiKey(env), {
+        pathBResult = await runPathB(env, sharedNewsStore, indicators, openPairsForPathB, getAllApiKeys(env), {
           openaiApiKey: env.OPENAI_API_KEY,
           anthropicApiKey: env.ANTHROPIC_API_KEY,
         }, regimeContext, prices);
@@ -1651,7 +1665,14 @@ async function runAnalysis(env: Env): Promise<void> {
     }));
 
     // Path B 後処理（ポジション開設・decisions記録）
-    await applyPathBResults(pathBResult);
+    // AbortError等でPath Bが失敗してもpathBResultは空配列で安全に通過する。
+    // applyPathBResults自体の例外（DB書き込み失敗等）で後段処理が止まらないよう保護する。
+    try {
+      await applyPathBResults(pathBResult);
+    } catch (e) {
+      console.warn(`[fx-sim] applyPathBResults failed: ${String(e).split('\n')[0].slice(0, 80)}`);
+      await insertSystemLog(env.DB, 'WARN', 'PATH_B', 'Path B後処理失敗（DB書き込み等）', String(e).split('\n')[0].slice(0, 120)).catch(() => {});
+    }
 
     newsMs = Date.now() - t2;
 
