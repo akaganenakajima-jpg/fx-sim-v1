@@ -710,15 +710,16 @@ export async function filterAndTranslateNews(
         const ai = r.scores ?? { r: 6, c: credBase, s: 5, b: 5, n: 6 };
         const isStockSpecific = Boolean(item.source?.includes('.T'));
         const composite = computeComposite(t, u, ai.r, ai.c, ai.s, ai.b, ai.n, isStockSpecific);
-        const rounded = Math.round(composite * 10) / 10;
+        const rounded = Math.round(composite * 10) / 10;             // 0-10（閾値比較用）
+        const composite100 = Math.round(composite * 100) / 10;       // 0-100（DB保存・表示用）
         scoresMapCached.set(r.index, {
           timeliness: t, uniqueness: u,
           relevance: ai.r, credibility: ai.c,
           sentiment: ai.s, breadth: ai.b, novelty: ai.n,
-          composite: rounded,
+          composite: composite100,
         });
         if (composite < COMPOSITE_THRESHOLD_CACHE) {
-          rejectMapCached.set(r.index, `スコア不足(${rounded})`);
+          rejectMapCached.set(r.index, `スコア不足(${composite100})`);
         }
       }
 
@@ -913,17 +914,18 @@ JSON配列のみを返し、他の文字は一切含めないでください。`
 
       const isStockSpecific = Boolean(item.source?.includes('.T'));
       const composite = computeComposite(t, u, ai.r, ai.c, ai.s, ai.b, ai.n, isStockSpecific);
-      const rounded = Math.round(composite * 10) / 10;
+      const rounded = Math.round(composite * 10) / 10;               // 0-10（閾値比較用）
+      const composite100 = Math.round(composite * 100) / 10;         // 0-100（DB保存・表示用）
 
       scoresMap.set(r.index, {
         timeliness: t, uniqueness: u,
         relevance: ai.r, credibility: ai.c,
         sentiment: ai.s, breadth: ai.b, novelty: ai.n,
-        composite: rounded,
+        composite: composite100,
       });
 
       if (composite < COMPOSITE_THRESHOLD) {
-        rejectMap.set(r.index, `スコア不足(${rounded})`);
+        rejectMap.set(r.index, `スコア不足(${composite100})`);
       }
     }
     // ────────────────────────────────────────────────────────────

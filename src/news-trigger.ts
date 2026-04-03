@@ -9,6 +9,14 @@
 //   stats/ts.md §2: イベントスタディ — 突発ニュース後の価格インパクトは60〜120分で収束
 
 import { insertSystemLog, setCacheValue } from './db';
+import {
+  NEWS_SCORE_EMERGENCY,
+  NEWS_SCORE_TREND,
+  NEWS_TRIGGER_EMERGENCY_RELEVANCE,
+  NEWS_TRIGGER_EMERGENCY_SENTIMENT,
+  NEWS_TRIGGER_TREND_RELEVANCE,
+  NEWS_TRIGGER_TREND_SENTIMENT,
+} from './constants';
 
 // ─── 緊急判定キーワード ────────────────────────────────────────────────────
 // これらが含まれかつスコアが高い場合はEMERGENCYとして扱う
@@ -44,13 +52,22 @@ function isEmergency(title: string, scores: { relevance: number; sentiment: numb
   const hasKeyword = EMERGENCY_KEYWORDS.some(kw =>
     title.toLowerCase().includes(kw.toLowerCase())
   );
-  // スコア条件: relevance≥9 かつ sentiment≥8（高確信度）
-  // キーワード条件: キーワード一致 かつ composite≥8.5（低スコアの誤検知を防止）
-  return (scores.relevance >= 9 && scores.sentiment >= 8) || (hasKeyword && scores.composite >= 8.5);
+  // スコア条件: relevance≥NEWS_TRIGGER_EMERGENCY_RELEVANCE(0-10) かつ sentiment≥NEWS_TRIGGER_EMERGENCY_SENTIMENT(0-10)
+  // キーワード条件: キーワード一致 かつ composite≥NEWS_SCORE_EMERGENCY(0-100)
+  return (
+    (scores.relevance >= NEWS_TRIGGER_EMERGENCY_RELEVANCE && scores.sentiment >= NEWS_TRIGGER_EMERGENCY_SENTIMENT)
+    || (hasKeyword && scores.composite >= NEWS_SCORE_EMERGENCY)
+  );
 }
 
 function isTrendInfluence(scores: { relevance: number; sentiment: number; composite: number }): boolean {
-  return scores.relevance >= 7 && scores.sentiment >= 7 && scores.composite >= 7.5;
+  // relevance/sentiment は AI が 0-10 で返す個別軸スコア
+  // composite は 0-100 スケール（news.ts で *10 変換済み）
+  return (
+    scores.relevance >= NEWS_TRIGGER_TREND_RELEVANCE
+    && scores.sentiment >= NEWS_TRIGGER_TREND_SENTIMENT
+    && scores.composite >= NEWS_SCORE_TREND
+  );
 }
 
 // ─── 直近未処理ニュースの取得 ─────────────────────────────────────────────
@@ -81,14 +98,14 @@ async function fetchLatestTriggerCandidate(
     .first<{ value: string }>();
   const lastId = lastIdRaw ? parseInt(lastIdRaw.value) : 0;
 
-  // 前回処理以降の採用記事（composite_score >= 7.0 以上を対象）
+  // 前回処理以降の採用記事（composite_score >= NEWS_SCORE_TREND = 70 以上を対象）
   const rows = await db
     .prepare(
       `SELECT id, hash, title_ja, title, composite_score, scores, fetched_at
        FROM news_raw
        WHERE filter_accepted = 1
          AND id > ?
-         AND composite_score >= 7.0
+         AND composite_score >= ${NEWS_SCORE_TREND}
        ORDER BY composite_score DESC
        LIMIT 1`
     )
@@ -406,7 +423,7 @@ export async function runNewsTrigger(
       geminiResult.reason,
       geminiResult.expiresInHours,
       title,
-      row.composite_score ?? 7.5,
+      row.composite_score ?? NEWS_SCORE_TREND,
     );
 
     await db
