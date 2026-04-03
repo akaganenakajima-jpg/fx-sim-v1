@@ -13,7 +13,8 @@ import {
   setCacheValue,
   closePosition,
   getOpenPositions,
-  setRunId,
+  withRunId,
+  getRunId,
 } from './db';
 import { slPatternAnalysis, logReturn } from './stats';
 import { getDashboardHtml } from './dashboard';
@@ -362,25 +363,29 @@ export default {
     env: Env,
     ctx: ExecutionContext
   ): Promise<void> {
+    // runId をここで発行し withRunId でスコープ化する。
+    // AsyncLocalStorage により、以降の非同期チェーン全体に runId が伝播する。
+    // HTTP リクエストとは独立したコンテキストになるため汚染が発生しない。
+    const runId = crypto.randomUUID().slice(0, 8);
     const cron = event.cron;
     switch (cron) {
       case '* * * * *':
-        ctx.waitUntil(runCore(env));
+        ctx.waitUntil(withRunId(runId, () => runCore(env)));
         break;
       case '*/5 * * * *':
-        ctx.waitUntil(runAnalysis(env));
+        ctx.waitUntil(withRunId(runId, () => runAnalysis(env)));
         break;
       case '0 15 * * *':
-        ctx.waitUntil(runDailyAll(env));
+        ctx.waitUntil(withRunId(runId, () => runDailyAll(env)));
         break;
       case '0 21 * * *':
-        ctx.waitUntil(runDailyScoring(env));
+        ctx.waitUntil(withRunId(runId, () => runDailyScoring(env)));
         break;
       case '0 18 * * 6':
-        ctx.waitUntil(runWeeklyScreening(env));
+        ctx.waitUntil(withRunId(runId, () => runWeeklyScreening(env)));
         break;
       default:
-        ctx.waitUntil(runCore(env));
+        ctx.waitUntil(withRunId(runId, () => runCore(env)));
     }
   },
 };
@@ -985,8 +990,8 @@ async function runPathB(
 async function runCore(env: Env): Promise<void> {
   const now = new Date();
   const cronStart = Date.now();
-  const runId = crypto.randomUUID().slice(0, 8);
-  setRunId(runId);
+  // runId は scheduled ハンドラーで withRunId() により注入済み
+  const runId = getRunId() ?? '?';
   console.log(`[fx-sim] core start ${now.toISOString()} runId=${runId}`);
 
   try {
@@ -1276,8 +1281,8 @@ async function runCore(env: Env): Promise<void> {
 async function runAnalysis(env: Env): Promise<void> {
   const now = new Date();
   const cronStart = Date.now();
-  const runId = crypto.randomUUID().slice(0, 8);
-  setRunId(runId);
+  // runId は scheduled ハンドラーで withRunId() により注入済み
+  const runId = getRunId() ?? '?';
   console.log(`[fx-sim] analysis start ${now.toISOString()} runId=${runId}`);
 
   try {
