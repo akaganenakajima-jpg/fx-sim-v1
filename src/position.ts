@@ -6,7 +6,7 @@ import type { Position } from './db';
 import { INSTRUMENTS, type InstrumentConfig } from './instruments';
 import { getBroker, withFallback, type BrokerEnv } from './broker';
 import { kellyFraction, logReturn } from './stats';
-import { sendNotification, buildTpSlMessage } from './notify';
+import { sendNotification, buildTpSlMessage, buildTpSlEmbed } from './notify';
 import { updateThompsonParams } from './thompson';
 import { logTradeJournal } from './trade-journal';
 import { getCurrentBalance } from './risk-manager';
@@ -112,6 +112,19 @@ export async function checkAndCloseAllPositions(
 
         console.log(`[position] TIME_STOP: ${pos.pair} id=${pos.id} held=${Math.round(holdMinutes)}min > ${maxHold}min pnl=${pnl.toFixed(2)}`);
         await closePosition(db, pos.id, currentRate, 'TIME_STOP', pnl, lr, timeRealizedRR);
+        // TIME_STOP 通知
+        const tsNotifyParams = {
+          pair: pos.pair, direction: pos.direction as 'BUY' | 'SELL',
+          reason: 'TIME_STOP' as const, pnl, pnlUnit: instr?.pnlUnit ?? 'pip',
+          entryRate: pos.entry_rate, closeRate: currentRate,
+          strategy: pos.strategy ?? undefined, regime: pos.regime ?? undefined,
+          confidence: pos.confidence ?? null, realizedRR: timeRealizedRR, holdMinutes,
+        };
+        const isDiscordTs = webhookUrl?.includes('discord.com');
+        await sendNotification(webhookUrl,
+          buildTpSlMessage(tsNotifyParams),
+          isDiscordTs ? [buildTpSlEmbed(tsNotifyParams)] : undefined,
+        );
         await updateDecisionOutcome(db, pos.pair, pos.direction, pos.entry_at, timeRealizedRR >= 1.0 ? 'WIN' : 'LOSE');
         await insertSystemLog(db, 'INFO', 'POSITION',
           `時間切れ決済: ${pos.pair} ${pos.direction} ${Math.round(holdMinutes)}分保有 PnL ${pnl >= 0 ? '+' : ''}${pnl.toFixed(2)}`,
@@ -134,6 +147,19 @@ export async function checkAndCloseAllPositions(
           const lr = logReturn(pos.entry_rate, currentRate);
           console.log(`[position] TIME_LIMIT: ${pos.pair} id=${pos.id} held=${Math.round(holdMin)}min > ${timeLimitMin}min RR=${rr.toFixed(2)} pnl=${pnl.toFixed(2)}`);
           await closePosition(db, pos.id, currentRate, 'TIME_LIMIT', pnl, lr, rr);
+          // TIME_LIMIT 通知
+          const tlNotifyParams = {
+            pair: pos.pair, direction: pos.direction as 'BUY' | 'SELL',
+            reason: 'TIME_LIMIT' as const, pnl, pnlUnit: instr?.pnlUnit ?? 'pip',
+            entryRate: pos.entry_rate, closeRate: currentRate,
+            strategy: pos.strategy ?? undefined, regime: pos.regime ?? undefined,
+            confidence: pos.confidence ?? null, realizedRR: rr, holdMinutes: holdMin,
+          };
+          const isDiscordTl = webhookUrl?.includes('discord.com');
+          await sendNotification(webhookUrl,
+            buildTpSlMessage(tlNotifyParams),
+            isDiscordTl ? [buildTpSlEmbed(tlNotifyParams)] : undefined,
+          );
           await updateDecisionOutcome(db, pos.pair, pos.direction, pos.entry_at, rr >= 1.0 ? 'WIN' : 'LOSE');
           await insertSystemLog(db, 'INFO', 'POSITION',
             `建値撤退: ${pos.pair} ${pos.direction} ${Math.round(holdMin)}分保有 RR=${rr.toFixed(2)} PnL ${pnl >= 0 ? '+' : ''}${pnl.toFixed(2)}`,
@@ -267,20 +293,27 @@ export async function checkAndCloseAllPositions(
         ? calcRealizedRR(pos.direction, pos.entry_rate, currentRate, pos.sl_rate)
         : 1.0; // sl_rate未設定（日本株等）のTP → 勝ちとして扱う
       await closePosition(db, pos.id, currentRate, 'TP', pnl, lr, tpRealizedRR);
-      // TP 通知（currentRate はこの時点で number に絞り込まれている）
-      await sendNotification(webhookUrl, buildTpSlMessage({
+      // TP 通知（Discord Embed + Slackフォールバック）
+      const tpHoldMin = (Date.now() - new Date(pos.entry_at).getTime()) / 60000;
+      const tpNotifyParams = {
         pair: pos.pair,
         direction: pos.direction as 'BUY' | 'SELL',
-        reason: 'TP',
+        reason: 'TP' as const,
         pnl,
+        pnlUnit: instr?.pnlUnit ?? 'pip',
         entryRate: pos.entry_rate,
         closeRate: currentRate,
-        // 施策22: 手法・レジーム・確信度・実現RRを通知に追加
         strategy: pos.strategy ?? undefined,
         regime: pos.regime ?? undefined,
         confidence: pos.confidence ?? null,
         realizedRR: tpRealizedRR,
-      }));
+        holdMinutes: tpHoldMin,
+      };
+      const isDiscordTp = webhookUrl?.includes('discord.com');
+      await sendNotification(webhookUrl,
+        buildTpSlMessage(tpNotifyParams),
+        isDiscordTp ? [buildTpSlEmbed(tpNotifyParams)] : undefined,
+      );
       await updateDecisionOutcome(db, pos.pair, pos.direction, pos.entry_at, tpRealizedRR >= 1.0 ? 'WIN' : 'LOSE');
       // トンプソン・サンプリングパラメータ更新
       await updateThompsonParams(db, pos.pair, tpRealizedRR >= 1.0).catch(() => {});
@@ -312,20 +345,27 @@ export async function checkAndCloseAllPositions(
         ? calcRealizedRR(pos.direction, pos.entry_rate, currentRate, pos.sl_rate)
         : 0; // sl_rate未設定のSL → 負けとして扱う
       await closePosition(db, pos.id, currentRate, 'SL', pnl, lr, slRealizedRR);
-      // SL 通知
-      await sendNotification(webhookUrl, buildTpSlMessage({
+      // SL 通知（Discord Embed + Slackフォールバック）
+      const slHoldMin = (Date.now() - new Date(pos.entry_at).getTime()) / 60000;
+      const slNotifyParams = {
         pair: pos.pair,
         direction: pos.direction as 'BUY' | 'SELL',
-        reason: 'SL',
+        reason: 'SL' as const,
         pnl,
+        pnlUnit: instr?.pnlUnit ?? 'pip',
         entryRate: pos.entry_rate,
         closeRate: currentRate,
-        // 施策22: 手法・レジーム・確信度・実現RRを通知に追加
         strategy: pos.strategy ?? undefined,
         regime: pos.regime ?? undefined,
         confidence: pos.confidence ?? null,
         realizedRR: slRealizedRR,
-      }));
+        holdMinutes: slHoldMin,
+      };
+      const isDiscordSl = webhookUrl?.includes('discord.com');
+      await sendNotification(webhookUrl,
+        buildTpSlMessage(slNotifyParams),
+        isDiscordSl ? [buildTpSlEmbed(slNotifyParams)] : undefined,
+      );
       await updateDecisionOutcome(db, pos.pair, pos.direction, pos.entry_at, slRealizedRR >= 1.0 ? 'WIN' : 'LOSE');
       // トンプソン・サンプリングパラメータ更新
       await updateThompsonParams(db, pos.pair, slRealizedRR >= 1.0).catch(() => {});

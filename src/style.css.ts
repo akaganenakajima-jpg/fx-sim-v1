@@ -692,4 +692,19 @@ button:focus-visible { outline: 2px solid var(--blue); outline-offset: 2px; }
 .feed-act-buy{color:#0A84FF}
 .feed-act-sell{color:#64D2FF}
 .feed-act-hold{color:var(--tertiary)}
+
+/* ═══ AI Screener Cards ═══ */
+.screener-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:8px;padding:0 16px 8px}
+.screener-card{background:var(--card);border-radius:12px;padding:12px;border:1px solid var(--separator)}
+.screener-card-header{display:flex;align-items:center;gap:6px;margin-bottom:6px}
+.screener-market{font-size:16px}
+.screener-ticker{font-size:14px;font-weight:700;color:var(--text);letter-spacing:0.02em}
+.screener-card-meta{display:flex;align-items:center;gap:6px}
+.screener-tag{font-size:10px;font-weight:600;padding:2px 6px;border-radius:4px;background:var(--blue);color:#fff;text-transform:uppercase}
+.screener-date{font-size:11px;color:var(--tertiary)}
+.screener-history-title{font-size:12px;font-weight:600;color:var(--secondary);padding:8px 16px 4px}
+.screener-history-row{display:flex;align-items:center;gap:8px;padding:4px 16px;font-size:12px;color:var(--secondary)}
+.screener-history-reason{flex:1;color:var(--tertiary);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.screener-history-date{color:var(--tertiary);font-size:11px;font-variant-numeric:tabular-nums}
+.screener-rotation{margin-bottom:8px}
 `;
