@@ -404,7 +404,7 @@ export async function getDecisionWithHedge(params: {
 export interface NewsAnalysisItem {
   index: number;
   attention: boolean;
-  /** 経済指標インパクト分類: S=50-300pip超, A=20-80pip, B=10-40pip, C=その他 */
+  /** 経済指標インパクト分類: S=50-300pip超/株価指数2%超/原油急騰落/軍事・関税要人発言, A=20-80pip/株価指数0.5-2%, B=10-40pip, C=その他 */
   impact_level?: 'S' | 'A' | 'B' | 'C';
   impact: string;
   title_ja: string;
@@ -670,8 +670,8 @@ export async function newsStage1(params: {
     '{"news_analysis":[{"index":0,"attention":true,"impact_level":"S","impact":"円安・株安要因（50文字以内）","affected_pairs":["USD/JPY","Nikkei225"]}],' +
     '"trade_signals":[{"pair":"USD/JPY","decision":"BUY","tp_rate":160.50,"sl_rate":158.00,"reasoning":"日本語100文字以内"}]}\n\n' +
     'impact_levelの定義（経済指標インパクト分類）:\n' +
-    '- S: FOMC金利決定・米雇用統計・米CPI・日銀会合・地政学リスク急変。50-300pip超の値動き\n' +
-    '- A: GDP・ISM・ECB/BOE金利決定・要人発言の方針転換・地政学リスク拡大。20-80pipの値動き\n' +
+    '- S: FOMC金利決定・米雇用統計・米CPI・日銀会合・地政学リスク急変・軍事衝突・戦争勃発・重大な関税措置。50-300pip超または株価指数2%超変動・原油/ゴールドの急騰落。軍事・戦争・重大な関税に関わる要人発言もSレベル\n' +
+    '- A: GDP・ISM・ECB/BOE金利決定・要人発言の方針転換・地政学リスク拡大。20-80pipまたは株価指数0.5〜2%変動・原油/ゴールドの中程度の変動\n' +
     '- B: ADP・PPI・小売売上高・PMI・企業決算。10-40pipの小〜中程度の値動き\n' +
     '- C: 一般ニュース・既知情報・直接インパクトが薄いもの\n' +
     '→ attention:trueはSまたはAのみ設定する\n' +
@@ -1024,8 +1024,8 @@ async function newsStage1GPT(params: {
     '{"news_analysis":[{"index":0,"attention":true,"impact_level":"S","impact":"円安・株安要因（50文字以内）","affected_pairs":["USD/JPY","Nikkei225"]}],' +
     '"trade_signals":[{"pair":"USD/JPY","decision":"BUY","tp_rate":160.50,"sl_rate":158.00,"reasoning":"日本語100文字以内"}]}\n\n' +
     'impact_levelの定義（経済指標インパクト分類）:\n' +
-    '- S: FOMC金利決定・米雇用統計・米CPI・日銀会合・地政学リスク急変。50-300pip超の値動き\n' +
-    '- A: GDP・ISM・ECB/BOE金利決定・要人発言の方針転換・地政学リスク拡大。20-80pipの値動き\n' +
+    '- S: FOMC金利決定・米雇用統計・米CPI・日銀会合・地政学リスク急変・軍事衝突・戦争勃発・重大な関税措置。50-300pip超または株価指数2%超変動・原油/ゴールドの急騰落。軍事・戦争・重大な関税に関わる要人発言もSレベル\n' +
+    '- A: GDP・ISM・ECB/BOE金利決定・要人発言の方針転換・地政学リスク拡大。20-80pipまたは株価指数0.5〜2%変動・原油/ゴールドの中程度の変動\n' +
     '- B: ADP・PPI・小売売上高・PMI・企業決算。10-40pipの小〜中程度の値動き\n' +
     '- C: 一般ニュース・既知情報・直接インパクトが薄いもの\n' +
     '→ attention:trueはSまたはAのみ設定する\n' +
@@ -1156,8 +1156,15 @@ async function newsStage1Claude(params: {
     'あなたはFX・株式指数・コモディティのマルチアセットトレーダーのAIアシスタントです。\n' +
     'ニュース一覧（日本語翻訳済み）と市場状況を分析し、news_analysisとtrade_signalsを返してください。\n' +
     '必ずJSON形式で返答:\n' +
-    '{"news_analysis":[{"index":0,"attention":true,"impact":"円安・株安要因（50文字以内）","affected_pairs":["USD/JPY","Nikkei225"]}],' +
+    '{"news_analysis":[{"index":0,"attention":true,"impact_level":"S","impact":"円安・株安要因（50文字以内）","affected_pairs":["USD/JPY","Nikkei225"]}],' +
     '"trade_signals":[{"pair":"USD/JPY","decision":"BUY","tp_rate":160.50,"sl_rate":158.00,"reasoning":"100文字以内"}]}\n\n' +
+    'impact_levelの定義（経済指標インパクト分類）:\n' +
+    '- S: FOMC金利決定・米雇用統計・米CPI・日銀会合・地政学リスク急変・軍事衝突・戦争勃発・重大な関税措置。50-300pip超または株価指数2%超変動・原油/ゴールドの急騰落。軍事・戦争・重大な関税に関わる要人発言もSレベル\n' +
+    '- A: GDP・ISM・ECB/BOE金利決定・要人発言の方針転換・地政学リスク拡大。20-80pipまたは株価指数0.5〜2%変動・原油/ゴールドの中程度の変動\n' +
+    '- B: ADP・PPI・小売売上高・PMI・企業決算。10-40pipの小〜中程度の値動き\n' +
+    '- C: 一般ニュース・既知情報・直接インパクトが薄いもの\n' +
+    '→ attention:trueはSまたはAのみ設定する\n' +
+    '→ trade_signalsに含めるのはimpact_levelがSまたはAのニュースのみ（BとCのニュースでのエントリーは禁止）\n\n' +
     'TP/SL方向の絶対ルール（違反はシステムが自動拒否）:\n' +
     '- BUY: tp_rate は現在レートより【高い】価格 / sl_rate は現在レートより【低い】価格\n' +
     '- SELL: tp_rate は現在レートより【低い】価格 / sl_rate は現在レートより【高い】価格\n' +
