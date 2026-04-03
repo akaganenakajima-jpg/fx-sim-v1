@@ -299,6 +299,11 @@ const MIGRATIONS: Array<{ version: number; description: string; sql: string }> =
     description: 'rotation_log に market カラム追加（JP/US入替え記録の区別）',
     sql: "ALTER TABLE rotation_log ADD COLUMN market TEXT NOT NULL DEFAULT 'jp'",
   },
+  {
+    version: 240,
+    description: 'instrument_params に max_pyramiding_entries 追加（ピラミッディング上限）',
+    sql: "ALTER TABLE instrument_params ADD COLUMN max_pyramiding_entries INTEGER DEFAULT 0",
+  },
 ];
 
 export async function runMigrations(db: D1Database): Promise<void> {

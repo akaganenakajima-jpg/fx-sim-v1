@@ -13,7 +13,7 @@ import {
 import { checkTpSlSanity } from './sanity';
 import { checkCorrelationGuard, getDrawdownLevel, updateHWM, getCurrentBalance, applyDrawdownControl, checkDailyLossCap, checkInstrumentDailyLoss } from './risk-manager';
 import { openPosition } from './position';
-import { insertDecision, insertSystemLog, insertIndicatorLog, getCacheValue, setCacheValue } from './db';
+import { insertDecision, insertSystemLog, insertIndicatorLog, getCacheValue, setCacheValue, type Position } from './db';
 import { INSTRUMENTS, getDefaultParams, getYahooSymbol } from './instruments';
 import type { MarketIndicators } from './indicators';
 import { getBroker, type BrokerEnv } from './broker';
@@ -194,11 +194,17 @@ export async function runLogicDecisions(
   const activePairs = INSTRUMENTS.map(i => i.pair).filter(p => paramsMap.has(p));
   const historyMap = await loadPriceHistory(db, activePairs);
 
-  // 現在のOPENポジション数・銘柄セット
+  // 現在のOPENポジション — 銘柄ごとにグループ化（ピラミッディング判定用）
   const openRaw = await db
-    .prepare(`SELECT pair FROM positions WHERE status = 'OPEN'`)
-    .all<{ pair: string }>();
-  const openPairs = new Set((openRaw.results ?? []).map(p => p.pair));
+    .prepare(`SELECT * FROM positions WHERE status = 'OPEN'`)
+    .all<Position>();
+  const openPositionsByPair = new Map<string, Position[]>();
+  for (const p of openRaw.results ?? []) {
+    const arr = openPositionsByPair.get(p.pair) ?? [];
+    arr.push(p);
+    openPositionsByPair.set(p.pair, arr);
+  }
+  const openPairs = new Set(openPositionsByPair.keys());
 
   // ── Weekend Phase ゲート: Phase 2/3/4 は新規エントリー完全禁止 ──
   const weekendStatus = getWeekendStatus(now);
@@ -259,10 +265,21 @@ export async function runLogicDecisions(
     if (currentRate == null || currentRate <= 0) continue; // レート0は取得失敗扱い
 
 
-    // すでにOPENポジションあり → スキップ
-    if (openPairs.has(pair)) {
-      summary.skipped++;
-      continue;
+    // すでにOPENポジションあり → ピラミッディング条件をチェック
+    const existingPositions = openPositionsByPair.get(pair);
+    if (existingPositions && existingPositions.length > 0) {
+      // ピラミッディング無効（デフォルト）→ 従来通りスキップ
+      const maxPyramid = params.max_pyramiding_entries ?? 0;
+      if (maxPyramid <= 0) {
+        summary.skipped++;
+        continue;
+      }
+      // ピラミッディング条件チェック（後でシグナル方向が確定してから最終判定）
+      // ここではポジション数上限のみ先にチェック
+      if (existingPositions.length >= 1 + maxPyramid) {
+        summary.skipped++;
+        continue;
+      }
     }
 
     // OPEN上限チェック
@@ -572,6 +589,33 @@ export async function runLogicDecisions(
     const finalTp = sanity.correctedTp ?? techSignal.tp_rate;
     const finalSl = sanity.correctedSl ?? techSignal.sl_rate;
 
+    // ── Ph.11: ピラミッディング最終チェック（シグナル方向確定後） ──
+    if (existingPositions && existingPositions.length > 0) {
+      const dir = techSignal.signal; // 'BUY' | 'SELL'
+      // 条件1: 全既存ポジションと同方向であること（両建て禁止）
+      const allSameDir = existingPositions.every(p => p.direction === dir);
+      if (!allSameDir) {
+        summary.skipped++;
+        summary.signals.push({ pair, signal: 'SKIP', reason: `ピラミッディング不可: 既存ポジションと逆方向` });
+        continue;
+      }
+      // 条件2: 全既存ポジションがリスクフリー状態であること
+      // リスクフリー = SLが建値以上（BUY: sl>=entry, SELL: sl<=entry）、または tp1_hit=1
+      const allRiskFree = existingPositions.every(p => {
+        if (p.tp1_hit === 1) return true; // 部分利確済み
+        if (p.sl_rate == null) return false; // SL未設定はリスクフリーではない
+        return p.direction === 'BUY'
+          ? p.sl_rate >= p.entry_rate
+          : p.sl_rate <= p.entry_rate;
+      });
+      if (!allRiskFree) {
+        summary.skipped++;
+        summary.signals.push({ pair, signal: 'SKIP', reason: `ピラミッディング不可: 既存ポジション未リスクフリー` });
+        continue;
+      }
+      console.log(`[logic] ピラミッディング条件OK: ${pair} ${dir} 既存${existingPositions.length}件 → 増し玉許可`);
+    }
+
     // 相関ガード
     const corrGuard = await checkCorrelationGuard(
       db, pair, techSignal.signal, INSTRUMENTS);
@@ -679,13 +723,23 @@ export async function runLogicDecisions(
 
       logicNewEntries++;
       summary.entered++;
-      openPairs.add(pair); // 同tick内の二重エントリー防止
+      // 同tick内の二重エントリー防止 + ピラミッディング追跡更新
+      openPairs.add(pair);
+      const pyramidCount = existingPositions?.length ?? 0;
+      if (pyramidCount > 0) {
+        // 仮Positionを追加して次回のピラミッディング判定に反映
+        const pseudoPos = { pair, direction: techSignal.signal, entry_rate: currentRate, sl_rate: finalSl } as Position;
+        const arr = openPositionsByPair.get(pair) ?? [];
+        arr.push(pseudoPos);
+        openPositionsByPair.set(pair, arr);
+      }
 
       // trades_since_review インクリメント（AIレビュートリガー用: kelly-rl.md §3）
       await incrementTradesSinceReview(db, pair);
 
+      const pyramidLabel = pyramidCount > 0 ? ` [ピラミッディング#${pyramidCount + 1}]` : '';
       await insertSystemLog(db, 'INFO', 'LOGIC',
-        `LOGIC エントリー: ${pair} ${techSignal.signal} @ ${currentRate}`,
+        `LOGIC エントリー: ${pair} ${techSignal.signal} @ ${currentRate}${pyramidLabel}`,
         `TP=${finalTp} SL=${finalSl} lot=${requestedLot.toFixed(2)} RSI=${techSignal.rsi?.toFixed(1)} ER=${techSignal.er?.toFixed(3)}`);
 
     } catch (e) {
