@@ -193,7 +193,7 @@ export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     const url = new URL(request.url);
     // GET専用ルートへの非GETメソッドを早期リジェクト（PUT/DELETE/PATCH → 405）
-    const GET_ONLY_ROUTES = ['/api/status', '/api/params', '/api/scores', '/api/screener', '/api/rotation/pending', '/api/rotation/history'];
+    const GET_ONLY_ROUTES = ['/api/status', '/api/params', '/api/scores', '/api/screener', '/api/ai-report', '/api/rotation/pending', '/api/rotation/history'];
     if (GET_ONLY_ROUTES.includes(url.pathname) && request.method !== 'GET' && request.method !== 'HEAD') {
       return withSec(new Response('Method Not Allowed', { status: 405 }));
     }
@@ -384,6 +384,18 @@ export default {
         } catch (e) {
           return new Response(JSON.stringify({ error: String(e) }), {
             status: 500, headers: { 'Content-Type': 'application/json' },
+          });
+        }
+      }
+      case '/api/ai-report': {
+        try {
+          const md = await generateAiReport(env.DB);
+          return new Response(md, {
+            headers: { 'Content-Type': 'text/markdown; charset=utf-8', 'Cache-Control': 'no-cache' },
+          });
+        } catch (e) {
+          return new Response(`# Error\n\n${String(e).slice(0, 200)}`, {
+            status: 500, headers: { 'Content-Type': 'text/markdown; charset=utf-8' },
           });
         }
       }
@@ -2378,4 +2390,133 @@ async function runDailyAll(env: Env): Promise<void> {
   await runDailyTasks(env, now);
 
   console.log('[daily-all] Done');
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// AI Monitoring Report — LLM巡回用Markdownレポート生成
+// ═══════════════════════════════════════════════════════════════════════
+
+async function generateAiReport(db: D1Database): Promise<string> {
+  const now = new Date();
+  const nowISO = now.toISOString();
+  const h24Ago = new Date(now.getTime() - 24 * 3600 * 1000).toISOString();
+
+  // ── 並列DBクエリ ──
+  const [openRows, closedRows, todayRows, activeRows] = await Promise.all([
+    // 1. OPENポジション全件
+    db.prepare(
+      `SELECT pair, direction, entry_rate, sl_rate, tp_rate, lot, entry_at, strategy
+       FROM positions WHERE status = 'OPEN' ORDER BY entry_at ASC`
+    ).all<{
+      pair: string; direction: string; entry_rate: number;
+      sl_rate: number | null; tp_rate: number | null; lot: number;
+      entry_at: string; strategy: string | null;
+    }>(),
+    // 2. 直近20件クローズ
+    db.prepare(
+      `SELECT pair, direction, entry_at, closed_at, pnl, close_reason, realized_rr
+       FROM positions WHERE status = 'CLOSED' ORDER BY closed_at DESC LIMIT 20`
+    ).all<{
+      pair: string; direction: string; entry_at: string; closed_at: string;
+      pnl: number; close_reason: string; realized_rr: number | null;
+    }>(),
+    // 3. 直近24hの集計
+    db.prepare(
+      `SELECT
+         COUNT(*) as cnt,
+         COALESCE(SUM(pnl), 0) as totalPnl,
+         COALESCE(SUM(CASE WHEN realized_rr >= 1.0 THEN 1 ELSE 0 END), 0) as wins
+       FROM positions WHERE status = 'CLOSED' AND closed_at >= ?`
+    ).bind(h24Ago).first<{ cnt: number; totalPnl: number; wins: number }>(),
+    // 4. アクティブ銘柄
+    db.prepare(
+      `SELECT pair, source, added_at FROM active_instruments ORDER BY pair ASC`
+    ).all<{ pair: string; source: string; added_at: string }>(),
+  ]);
+
+  const openPositions = openRows.results ?? [];
+  const closedPositions = closedRows.results ?? [];
+  const today = todayRows ?? { cnt: 0, totalPnl: 0, wins: 0 };
+  const activeInstruments = activeRows.results ?? [];
+
+  // ── Markdown組み立て ──
+  const lines: string[] = [];
+
+  lines.push('# FX Sim AI Monitoring Report');
+  lines.push(`生成時刻: ${nowISO}`);
+  lines.push('');
+
+  // § 1. 稼働ステータス & 本日の成績
+  const winRate = today.cnt > 0 ? ((today.wins / today.cnt) * 100).toFixed(1) : '-';
+  lines.push('## 1. 稼働ステータス & 本日の成績');
+  lines.push(`- 集計期間: 直近24時間 (${h24Ago} 〜 ${nowISO})`);
+  lines.push(`- 取引件数: ${today.cnt}件`);
+  lines.push(`- 勝率 (RR≥1.0): ${winRate}%`);
+  lines.push(`- トータルPnL: ${today.totalPnl >= 0 ? '+' : ''}${today.totalPnl.toFixed(2)}`);
+  lines.push(`- 勝ち: ${today.wins}件 / 負け: ${today.cnt - today.wins}件`);
+  lines.push('');
+
+  // § 2. オープンポジション
+  lines.push('## 2. 現在のオープンポジション');
+  if (openPositions.length === 0) {
+    lines.push('現在保有中のポジションはありません。');
+  } else {
+    lines.push(`保有数: ${openPositions.length}件`);
+    lines.push('');
+    lines.push('| Pair | Direction | Entry Rate | SL | TP | Lot | Entry Time | Strategy |');
+    lines.push('|---|---|---|---|---|---|---|---|');
+    for (const p of openPositions) {
+      const entryTime = p.entry_at.replace('T', ' ').slice(0, 19);
+      lines.push(
+        `| ${p.pair} | ${p.direction} | ${p.entry_rate} | ${p.sl_rate ?? '-'} | ${p.tp_rate ?? '-'} | ${p.lot.toFixed(2)} | ${entryTime} | ${p.strategy ?? '-'} |`
+      );
+    }
+  }
+  lines.push('');
+
+  // § 3. 直近の決済履歴
+  lines.push('## 3. 直近の決済履歴 (Top 20)');
+  if (closedPositions.length === 0) {
+    lines.push('決済履歴がありません。');
+  } else {
+    lines.push('| Pair | Direction | PnL | RR | Close Reason | Duration |');
+    lines.push('|---|---|---|---|---|---|');
+    for (const p of closedPositions) {
+      const durationMs = new Date(p.closed_at).getTime() - new Date(p.entry_at).getTime();
+      const durationMin = Math.round(durationMs / 60000);
+      const durationStr = durationMin >= 60
+        ? `${Math.floor(durationMin / 60)}h${durationMin % 60}m`
+        : `${durationMin}m`;
+      const pnlStr = p.pnl >= 0 ? `+${p.pnl.toFixed(2)}` : p.pnl.toFixed(2);
+      const rrStr = p.realized_rr != null ? p.realized_rr.toFixed(2) : '-';
+      lines.push(
+        `| ${p.pair} | ${p.direction} | ${pnlStr} | ${rrStr} | ${p.close_reason} | ${durationStr} |`
+      );
+    }
+  }
+  lines.push('');
+
+  // § 4. アクティブ銘柄
+  lines.push('## 4. 現在のアクティブ銘柄 (AI Universe)');
+  if (activeInstruments.length === 0) {
+    lines.push('アクティブ銘柄が登録されていません。');
+  } else {
+    const bySource = new Map<string, string[]>();
+    for (const a of activeInstruments) {
+      const src = a.source ?? 'static';
+      const arr = bySource.get(src) ?? [];
+      arr.push(a.pair);
+      bySource.set(src, arr);
+    }
+    for (const [source, pairs] of bySource) {
+      lines.push(`- **${source}** (${pairs.length}件): ${pairs.join(', ')}`);
+    }
+  }
+  lines.push('');
+
+  // § フッター
+  lines.push('---');
+  lines.push(`*このレポートは /api/ai-report エンドポイントで自動生成されています。勝率の定義: realized_rr ≥ 1.0*`);
+
+  return lines.join('\n');
 }
