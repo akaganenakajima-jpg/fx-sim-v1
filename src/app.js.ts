@@ -2544,10 +2544,11 @@ export const JS = `
 
       var lReasoning = logicDec.reasoning || '';
       // breakdown ブロック: [rsi=...] の形を抽出
-      var bdMatch = lReasoning.match(/\[rsi=[^\]]+\]/);
+      // template literal内ではバックスラッシュが消えるため \\[ → \[ に変換される
+      var bdMatch = lReasoning.match(/\\[rsi=[^\\]]+\\]/);
       if (!bdMatch) return;
       var bdStr = bdMatch[0].slice(1, -1);
-      var tokens = bdStr.match(/(\w+)=([0-9.]+)\*([0-9.]+)/g) || [];
+      var tokens = bdStr.match(/(\\w+)=([0-9.]+)\\*([0-9.]+)/g) || [];
       if (tokens.length === 0) return;
 
       // 総合スコア（score=X.XX または entry_score=X.XX）
@@ -2558,14 +2559,14 @@ export const JS = `
         : 'var(--tertiary)';
 
       var rowsHtml = tokens.map(function(token) {
-        var m = token.match(/(\w+)=([0-9.]+)\*([0-9.]+)/);
+        var m = token.match(/(\\w+)=([0-9.]+)\\*([0-9.]+)/);
         if (!m) return '';
         var key = m[1];
         var score = parseFloat(m[2]);
         var weight = parseFloat(m[3]);
         var pct = Math.min(100, Math.round(score * 100));
         var fillColor = score >= 0.8 ? 'var(--green)' : score >= 0.5 ? 'var(--orange)' : 'var(--tertiary)';
-        var label = (SCORE_LABELS as any)[key] || key.toUpperCase();
+        var label = SCORE_LABELS[key] || key.toUpperCase();
         return '<div class="score-row">' +
           '<span class="score-label" style="width:72px;flex-shrink:0">' + label + '</span>' +
           '<div class="score-bar"><div class="score-fill" style="width:' + pct + '%;background:' + fillColor + ';transition:width 0.4s ease"></div></div>' +
