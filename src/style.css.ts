@@ -292,6 +292,10 @@ body.drawer-open, body.sheet-open { overflow: hidden !important; touch-action: n
 @keyframes emergency-flash { 0%, 100% { background-color: var(--red); } 50% { background-color: #ff6b60; } }
 @keyframes pnl-flash { 0% { filter: brightness(1); } 30% { filter: brightness(2.2) saturate(1.5); } 100% { filter: brightness(1); } }
 
+/* Variable Reward アニメーションクラス */
+.card-glow-success{animation:upgraded-glow 2s ease-in-out;border-color:rgba(48,209,88,0.5)}
+.urgent-pulse{animation:urgent-pulse 2s infinite}
+
 /* ═══════════════════════════════════════════════════
    PRESERVED: Bottom Sheet
    ═══════════════════════════════════════════════════ */
