@@ -2998,6 +2998,76 @@ export const JS = `
   setInterval(loadRotationData, ROT_POLL_MS);
 
   // ══════════════════════════════════════════
+  // AIスクリーナー銘柄表示
+  // ══════════════════════════════════════════
+
+  function renderScreenerCard(item) {
+    var market = item.source === 'screener_us' ? '🇺🇸' : '🇯🇵';
+    var addedDate = new Date(item.added_at);
+    var daysAgo = Math.floor((Date.now() - addedDate.getTime()) / 86400000);
+    var dateLabel = daysAgo === 0 ? '今日' : daysAgo + '日前';
+    return '<div class="screener-card">' +
+      '<div class="screener-card-header">' +
+        '<span class="screener-market">' + market + '</span>' +
+        '<span class="screener-ticker">' + item.pair + '</span>' +
+      '</div>' +
+      '<div class="screener-card-meta">' +
+        '<span class="screener-tag">' + (item.source === 'screener_us' ? 'US' : 'JP') + '</span>' +
+        '<span class="screener-date">' + dateLabel + '</span>' +
+      '</div>' +
+    '</div>';
+  }
+
+  function renderScreenerRotation(rotations) {
+    if (!rotations || rotations.length === 0) return '';
+    var html = '<div class="screener-history-title">入替え履歴</div>';
+    var items = rotations.slice(0, 8);
+    for (var i = 0; i < items.length; i++) {
+      var r = items[i];
+      var icon = r.action === 'ADD' ? '🟢' : '🔴';
+      var market = r.market === 'us' ? '🇺🇸' : '🇯🇵';
+      var date = new Date(r.executed_at);
+      var dateStr = (date.getMonth() + 1) + '/' + date.getDate();
+      html += '<div class="screener-history-row">' +
+        '<span>' + icon + ' ' + market + ' <b>' + r.pair + '</b></span>' +
+        '<span class="screener-history-reason">' + (r.reason || r.action) + '</span>' +
+        '<span class="screener-history-date">' + dateStr + '</span>' +
+      '</div>';
+    }
+    return html;
+  }
+
+  function loadScreenerData() {
+    fetch('/api/screener')
+      .then(function(r) { return r.json(); })
+      .then(function(d) {
+        var gridEl = document.getElementById('screener-grid');
+        var rotEl = document.getElementById('screener-rotation');
+        var emptyEl = document.getElementById('screener-empty');
+        var active = d.active || [];
+        if (active.length === 0) {
+          if (gridEl) gridEl.innerHTML = '';
+          if (emptyEl) emptyEl.style.display = 'block';
+          return;
+        }
+        if (emptyEl) emptyEl.style.display = 'none';
+        if (gridEl) {
+          var html = '';
+          for (var i = 0; i < active.length; i++) {
+            html += renderScreenerCard(active[i]);
+          }
+          gridEl.innerHTML = html;
+        }
+        if (rotEl) {
+          rotEl.innerHTML = renderScreenerRotation(d.rotation || []);
+        }
+      })
+      .catch(function() {});
+  }
+
+  loadScreenerData();
+
+  // ══════════════════════════════════════════
   // パラメーター管理（戦略タブ遅延ロード）
   // ══════════════════════════════════════════
 

@@ -177,4 +177,4 @@ export const NEWS_WEIGHTS_STOCK   = { t: 0.20, u: 0.15, r: 0.35, c: 0.15, s: 0.1
  * デプロイ時に CSS を変更した場合はここをインクリメントする
  * @see src/dashboard.ts（このファイルを import して使用）
  */
-export const CSS_VERSION = 17;
+export const CSS_VERSION = 18;

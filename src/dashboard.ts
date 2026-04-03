@@ -179,6 +179,16 @@ export function getDashboardHtml(): string {
   <div class="sec">アクティビティ</div>
   <div id="ai-timeline"></div>
 
+  <!-- AIスクリーナー銘柄 -->
+  <div class="sec">今週のアクティブ銘柄（AI選定）</div>
+  <div id="screener-section">
+    <div class="screener-grid" id="screener-grid"></div>
+    <div class="screener-rotation" id="screener-rotation"></div>
+    <div class="screener-empty" id="screener-empty" style="display:none;text-align:center;padding:16px;color:var(--label-secondary)">
+      スクリーナーデータなし — 次回週次スクリーニングで更新されます
+    </div>
+  </div>
+
   <!-- クロスリンク -->
   <div style="padding:16px;text-align:center">
     <span class="cross-link" onclick="switchTab('tab-stats')">→ 学びタブで変更の効果を確認</span>
@@ -458,7 +468,7 @@ export function getDashboardHtml(): string {
   <div id="news-drawer-body" class="news-drawer-body"></div>
 </div>
 
-<script src="/app.js?v=28"></script>
+<script src="/app.js?v=29"></script>
 </body>
 </html>`;
 }

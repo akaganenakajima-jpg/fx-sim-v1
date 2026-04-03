@@ -25,7 +25,7 @@ import { INSTRUMENTS } from './instruments';
 import { type BrokerEnv } from './broker';
 import { checkTpSlSanity } from './sanity';
 import { runMigrations } from './migration';
-import { sendNotification, getWebhookUrl, buildDailySummaryMessage } from './notify';
+import { sendNotification, getWebhookUrl, buildDailySummaryMessage, buildScreenerReportEmbeds } from './notify';
 // テスタ施策 Phase 2-7
 import { updateAllCandles } from './candles';
 import { fetchEconomicCalendar, getUpcomingHighImpactEvents } from './calendar';
@@ -193,7 +193,7 @@ export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     const url = new URL(request.url);
     // GET専用ルートへの非GETメソッドを早期リジェクト（PUT/DELETE/PATCH → 405）
-    const GET_ONLY_ROUTES = ['/api/status', '/api/params', '/api/scores', '/api/rotation/pending', '/api/rotation/history'];
+    const GET_ONLY_ROUTES = ['/api/status', '/api/params', '/api/scores', '/api/screener', '/api/rotation/pending', '/api/rotation/history'];
     if (GET_ONLY_ROUTES.includes(url.pathname) && request.method !== 'GET' && request.method !== 'HEAD') {
       return withSec(new Response('Method Not Allowed', { status: 405 }));
     }
@@ -349,6 +349,41 @@ export default {
           return new Response(JSON.stringify({ error: String(e) }), {
             status: 500,
             headers: { 'Content-Type': 'application/json' },
+          });
+        }
+      }
+      case '/api/screener': {
+        try {
+          // AIスクリーナー選定済み銘柄（active_instruments の screener_us / screener_jp）
+          const activeRows = await env.DB.prepare(`
+            SELECT pair, source, added_at FROM active_instruments
+            WHERE source IN ('screener_us', 'screener_jp')
+            ORDER BY added_at DESC
+          `).all<{ pair: string; source: string; added_at: string }>();
+
+          // 直近のrotation_log（追加/除外履歴、最大20件）
+          const rotationRows = await env.DB.prepare(`
+            SELECT pair, action, reason, executed_at, market FROM rotation_log
+            WHERE action IN ('ADD', 'PRUNED')
+            ORDER BY executed_at DESC LIMIT 20
+          `).all<{ pair: string; action: string; reason: string; executed_at: string; market: string }>();
+
+          // スクリーニング結果キャッシュ（上位候補のスコア）
+          const cacheRow = await env.DB.prepare(
+            "SELECT value, updated_at FROM market_cache WHERE key = 'screener_results'"
+          ).first<{ value: string; updated_at: string }>();
+          const screenerCache = cacheRow ? { ...JSON.parse(cacheRow.value), updatedAt: cacheRow.updated_at } : null;
+
+          return new Response(JSON.stringify({
+            active: activeRows.results ?? [],
+            rotation: rotationRows.results ?? [],
+            screenerCache,
+          }), {
+            headers: { 'Content-Type': 'application/json' },
+          });
+        } catch (e) {
+          return new Response(JSON.stringify({ error: String(e) }), {
+            status: 500, headers: { 'Content-Type': 'application/json' },
           });
         }
       }
@@ -2303,6 +2338,22 @@ async function runWeeklyScreening(env: Env): Promise<void> {
         pruned,
       })
     ).catch(() => {});
+
+    // 6. Discord通知（AIスクリーナーレポート）
+    try {
+      const webhookUrl = getWebhookUrl(env);
+      if (webhookUrl) {
+        const embeds = buildScreenerReportEmbeds({
+          usPicks, jpPicks,
+          usAdded: usResult.added, jpAdded: jpResult.added,
+          pruned,
+          usCandidates: usCandidates.length, jpCandidates: jpCandidates.length,
+        });
+        await sendNotification(webhookUrl, '', embeds);
+      }
+    } catch (notifyErr) {
+      console.warn(`[weekly-screening] Discord notify failed: ${String(notifyErr).slice(0, 80)}`);
+    }
 
     console.log(`[weekly-screening] AI Screener done: US +${usResult.added.length} JP +${jpResult.added.length} pruned ${pruned.length}`);
   } catch (e) {
