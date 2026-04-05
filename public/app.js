@@ -20,6 +20,7 @@
 
   var lastData = null;
   var lastRecentCloseIds = [];
+  var activeTabId = 'tab-home'; // 現在アクティブなタブID（Race Condition防止用）
   // 遅延ロード済みデータキャッシュ（各タブ初回アクティブ時にフェッチ）
   var historyData = null;   // /api/history
   var logsData = null;      // /api/logs
@@ -329,6 +330,7 @@
 
   window.switchTab = switchTab;
   function switchTab(tabId, scrollTo) {
+    activeTabId = tabId;
     haptic.light();
     var panels = document.querySelectorAll('.tab-panel');
     for (var i = 0; i < panels.length; i++) {
@@ -383,21 +385,21 @@
       requestAnimationFrame(function() { renderEquityChart(lastData); });
     }
 
-    // 戦略タブ: paramsData 遅延ロード → 読み込み後に再描画
+    // 戦略タブ: paramsData 遅延ロード → 読み込み後に再描画（activeTabIdガード: 切替後の描画スキップ）
     if (tabId === 'tab-strategy' && !paramsData) {
-      loadParams().then(function() { if (lastData) renderStrategyTab(lastData); }).catch(function(){});
+      loadParams().then(function() { if (activeTabId === 'tab-strategy' && lastData) renderStrategyTab(lastData); }).catch(function(){});
     }
-    // 学びタブ: historyData 遅延ロード → 読み込み後に再描画
+    // 学びタブ: historyData 遅延ロード → 読み込み後に再描画（activeTabIdガード: 切替後の描画スキップ）
     if (tabId === 'tab-stats' && !historyData) {
-      loadHistory().then(function() { if (lastData) render(lastData); }).catch(function(){});
+      loadHistory().then(function() { if (activeTabId === 'tab-stats' && lastData) render(lastData); }).catch(function(){});
     }
-    // ニュース/AIタブ: newsData 遅延ロード → 読み込み後に再描画
+    // ニュース/AIタブ: newsData 遅延ロード → 読み込み後に再描画（activeTabIdガード: 切替後の描画スキップ）
     if ((tabId === 'tab-news' || tabId === 'tab-ai') && !newsData) {
-      loadNews().then(function() { if (lastData) render(lastData); }).catch(function(){});
+      loadNews().then(function() { if ((activeTabId === 'tab-news' || activeTabId === 'tab-ai') && lastData) render(lastData); }).catch(function(){});
     }
-    // ログタブ: logsData 遅延ロード → 読み込み後に再描画
+    // ログタブ: logsData 遅延ロード → 読み込み後に再描画（activeTabIdガード: 切替後の描画スキップ）
     if (tabId === 'tab-log' && !logsData) {
-      loadLogs().then(function() { if (lastData) render(lastData); }).catch(function(){});
+      loadLogs().then(function() { if (activeTabId === 'tab-log' && lastData) render(lastData); }).catch(function(){});
     }
 
     // ディープリンク
@@ -508,7 +510,7 @@
     var alerts = [];
 
     if (data.riskStatus && data.riskStatus.killSwitchActive) {
-      alerts.push({ cls: 'alert-red', text: '\u26A0\uFE0F DD STOP — 日次損失上限超過。新規エントリー停止中' });
+      alerts.push({ cls: 'alert-red', text: '\u26A0\uFE0F DD STOP — 日次損失上限超過。新規エントリー停止中', hasResume: true });
     } else if (data.riskStatus && data.riskStatus.maxDailyLoss > 0 &&
                data.riskStatus.todayLoss / data.riskStatus.maxDailyLoss > 0.8) {
       var pct = Math.round(data.riskStatus.todayLoss / data.riskStatus.maxDailyLoss * 100);
@@ -539,7 +541,10 @@
     if (alerts.length === 0) { container.style.display = 'none'; return; }
     container.style.display = '';
     container.innerHTML = alerts.map(function(a) {
-      return '<div class="' + a.cls + '" style="padding:8px 16px;font-size:12px;font-weight:600">' + escHtml(a.text) + '</div>';
+      var resumeBtn = a.hasResume
+        ? '<button onclick="resumeSystem()" style="margin-left:12px;padding:4px 12px;font-size:11px;font-weight:700;background:var(--orange);color:#000;border:none;border-radius:6px;cursor:pointer">システム再稼働</button>'
+        : '';
+      return '<div class="' + a.cls + '" style="padding:8px 16px;font-size:12px;font-weight:600;display:flex;align-items:center;gap:4px">' + escHtml(a.text) + resumeBtn + '</div>';
     }).join('');
   }
 
@@ -2941,6 +2946,14 @@
         render(data);
         // ニュースデータをバックグラウンドでリフレッシュ（HOMEタブのアラートバナー・ニュースフィード用）
         loadNews().then(function() { if (lastData) render(lastData); }).catch(function() {});
+        // アクティブタブのデータも更新（定期更新フリーズ防止: 非HOMEタブで古いデータが残るのを防ぐ）
+        if (activeTabId === 'tab-stats') {
+          loadHistory().then(function() { if (activeTabId === 'tab-stats' && lastData) render(lastData); }).catch(function() {});
+        } else if (activeTabId === 'tab-log') {
+          loadLogs().then(function() { if (activeTabId === 'tab-log' && lastData) render(lastData); }).catch(function() {});
+        } else if (activeTabId === 'tab-strategy') {
+          loadParams().then(function() { if (activeTabId === 'tab-strategy' && lastData) renderStrategyTab(lastData); }).catch(function() {});
+        }
       })
       .catch(function(err) {
         console.error('[FX Sim] refresh error:', err);
@@ -3178,6 +3191,18 @@
       .then(function(d) { newsData = d; return d; })
       .catch(function() {});
   }
+
+  // DD STOP 手動解除（システム再稼働）
+  window.resumeSystem = function() {
+    if (!confirm('DD STOPを解除してシステムを再稼働しますか？\n（ドローダウンが回復していない場合、すぐに再停止する可能性があります）')) return;
+    fetch('/api/resume', { method: 'POST' })
+      .then(function(r) { return r.json(); })
+      .then(function(d) {
+        alert(d.message || (d.success ? '再稼働しました' : '解除に失敗しました'));
+        if (d.success) refresh();
+      })
+      .catch(function(e) { alert('通信エラー: ' + String(e)); });
+  };
 
   document.addEventListener('click', function(e) {
     var btn = e.target && e.target.closest && e.target.closest('[data-tab="tab-strategy"]');

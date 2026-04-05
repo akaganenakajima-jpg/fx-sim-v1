@@ -190,6 +190,14 @@ export async function runDailyTasks(env: Env, _now: Date): Promise<void> {
     ).run();
     // news_temp_params の期限切れレコードをパージ（無限蓄積防止）
     await env.DB.prepare(`DELETE FROM news_temp_params WHERE expires_at < datetime('now')`).run();
+    // system_logs: 30日以上前の古いレコードを時刻ベースでパージ（IDベース上限と併用）
+    await env.DB.prepare(`DELETE FROM system_logs WHERE created_at < datetime('now', '-30 days')`).run();
+    // news_fetch_log: 30日以上前の古いレコードを時刻ベースでパージ
+    await env.DB.prepare(`DELETE FROM news_fetch_log WHERE created_at < datetime('now', '-30 days')`).run();
+    // market_cache: 7日以上前の不要なレコードをパージ（screener_results は週次更新のため除外）
+    await env.DB.prepare(
+      `DELETE FROM market_cache WHERE updated_at < datetime('now', '-7 days') AND key != 'screener_results'`
+    ).run();
   } catch {}
 
   // 日次サマリー記録

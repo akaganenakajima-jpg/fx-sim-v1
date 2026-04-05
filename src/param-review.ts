@@ -86,13 +86,13 @@ interface TradeStats {
 }
 
 async function calcTradeStats(db: D1Database, pair: string): Promise<TradeStats> {
-  // 直近50件の決済済みポジション
+  // 直近20件の決済済みポジション（CPU予算削減: Workers 15s制限対応）
   const trades = await db
     .prepare(
       `SELECT direction, pnl, close_reason, entry_rate, close_rate, realized_rr
        FROM positions
        WHERE pair = ? AND status = 'CLOSED' AND pnl IS NOT NULL
-       ORDER BY closed_at DESC LIMIT 50`
+       ORDER BY closed_at DESC LIMIT 20`
     )
     .bind(pair)
     .all<{ direction: string; pnl: number; close_reason: string; entry_rate: number; close_rate: number; realized_rr: number | null }>();
@@ -268,7 +268,7 @@ async function callGeminiForReview(
         contents: [{ parts: [{ text: prompt }] }],
         generationConfig: { responseMimeType: 'application/json' },
       }),
-      signal: AbortSignal.timeout(30000),
+      signal: AbortSignal.timeout(12000),
     });
     if (!res.ok) return { result: null, errorCode: res.status };
     const data = await res.json() as { candidates?: Array<{ content: { parts: Array<{ text: string }> } }> };
@@ -299,7 +299,7 @@ async function callGptForReview(
         response_format: { type: 'json_object' },
         temperature: 0.2,
       }),
-      signal: AbortSignal.timeout(20000),
+      signal: AbortSignal.timeout(10000),
     });
     if (!res.ok) return null;
     const data = await res.json() as { choices?: Array<{ message: { content: string } }> };
