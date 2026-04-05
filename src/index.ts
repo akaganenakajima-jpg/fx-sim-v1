@@ -363,12 +363,11 @@ export default {
             ORDER BY added_at DESC
           `).all<{ pair: string; source: string; added_at: string }>();
 
-          // 直近のrotation_log（追加/除外履歴、最大20件）
+          // 直近のrotation_log（入替え履歴、最大20件）
           const rotationRows = await env.DB.prepare(`
-            SELECT pair, action, reason, executed_at, market FROM rotation_log
-            WHERE action IN ('ADD', 'PRUNED')
-            ORDER BY executed_at DESC LIMIT 20
-          `).all<{ pair: string; action: string; reason: string; executed_at: string; market: string }>();
+            SELECT in_symbol, in_score, out_symbol, out_score, status, proposed_at, decided_at, market FROM rotation_log
+            ORDER BY proposed_at DESC LIMIT 20
+          `).all<{ in_symbol: string; in_score: number; out_symbol: string; out_score: number; status: string; proposed_at: string; decided_at: string | null; market: string }>();
 
           // スクリーニング結果キャッシュ（上位候補のスコア）
           const cacheRow = await env.DB.prepare(
