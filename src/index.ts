@@ -5,7 +5,7 @@
 import { type Env } from './env';
 import { withRunId } from './db';
 import { getDashboardHtml } from './dashboard';
-import { getApiStatus, getApiParams } from './api';
+import { getApiStatus, getApiParams, getApiHistory, getApiLogs, getApiNews } from './api';
 import { CSS } from './style.css';
 import { JS } from './app.js';
 import { decideRotation, getPendingRotations } from './rotation';
@@ -35,7 +35,7 @@ export default {
       return Response.redirect(url.toString(), 301);
     }
     // GET専用ルートへの非GETメソッドを早期リジェクト（PUT/DELETE/PATCH → 405）
-    const GET_ONLY_ROUTES = ['/api/status', '/api/params', '/api/scores', '/api/screener', '/api/ai-report', '/api/rotation/pending', '/api/rotation/history'];
+    const GET_ONLY_ROUTES = ['/api/status', '/api/params', '/api/scores', '/api/screener', '/api/ai-report', '/api/rotation/pending', '/api/rotation/history', '/api/history', '/api/logs', '/api/news'];
     if (GET_ONLY_ROUTES.includes(url.pathname) && request.method !== 'GET' && request.method !== 'HEAD') {
       return withSec(new Response('Method Not Allowed', { status: 405 }));
     }
@@ -100,6 +100,39 @@ export default {
           return new Response(JSON.stringify({ error: String(e) }), {
             status: 500,
             headers: { 'Content-Type': 'application/json' },
+          });
+        }
+      case '/api/history':
+        try {
+          const historyData = await getApiHistory(env.DB);
+          return new Response(JSON.stringify(historyData), {
+            headers: { 'Content-Type': 'application/json; charset=utf-8' },
+          });
+        } catch (e) {
+          return new Response(JSON.stringify({ error: String(e) }), {
+            status: 500, headers: { 'Content-Type': 'application/json' },
+          });
+        }
+      case '/api/logs':
+        try {
+          const logsData = await getApiLogs(env.DB);
+          return new Response(JSON.stringify(logsData), {
+            headers: { 'Content-Type': 'application/json; charset=utf-8' },
+          });
+        } catch (e) {
+          return new Response(JSON.stringify({ error: String(e) }), {
+            status: 500, headers: { 'Content-Type': 'application/json' },
+          });
+        }
+      case '/api/news':
+        try {
+          const newsData = await getApiNews(env.DB);
+          return new Response(JSON.stringify(newsData), {
+            headers: { 'Content-Type': 'application/json; charset=utf-8' },
+          });
+        } catch (e) {
+          return new Response(JSON.stringify({ error: String(e) }), {
+            status: 500, headers: { 'Content-Type': 'application/json' },
           });
         }
       case '/api/params':

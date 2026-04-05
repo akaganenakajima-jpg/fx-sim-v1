@@ -49,6 +49,10 @@ export const JS = `
 
   var lastData = null;
   var lastRecentCloseIds = [];
+  // 遅延ロード済みデータキャッシュ（各タブ初回アクティブ時にフェッチ）
+  var historyData = null;   // /api/history
+  var logsData = null;      // /api/logs
+  var newsData = null;      // /api/news
   var sheetPos = null;
   var lastPnlMap = {};
   var thSortMode = 'closed';  // 取引履歴ソート: 'closed' | 'entry'
@@ -412,6 +416,18 @@ export const JS = `
     if (tabId === 'tab-strategy' && !paramsData) {
       loadParams().then(function() { if (lastData) renderStrategyTab(lastData); }).catch(function(){});
     }
+    // 学びタブ: historyData 遅延ロード → 読み込み後に再描画
+    if (tabId === 'tab-stats' && !historyData) {
+      loadHistory().then(function() { if (lastData) render(lastData); }).catch(function(){});
+    }
+    // ニュース/AIタブ: newsData 遅延ロード → 読み込み後に再描画
+    if ((tabId === 'tab-news' || tabId === 'tab-ai') && !newsData) {
+      loadNews().then(function() { if (lastData) render(lastData); }).catch(function(){});
+    }
+    // ログタブ: logsData 遅延ロード → 読み込み後に再描画
+    if (tabId === 'tab-log' && !logsData) {
+      loadLogs().then(function() { if (lastData) render(lastData); }).catch(function(){});
+    }
 
     // ディープリンク
     if (scrollTo) {
@@ -440,6 +456,15 @@ export const JS = `
         return a.pair < b.pair ? -1 : a.pair > b.pair ? 1 : 0;
       });
     }
+    // 遅延ロードデータをマージ（タブ切替・バックグラウンドフェッチ済みの場合のみ適用）
+    if (historyData) { data.recentCloses = historyData.recentCloses; }
+    if (newsData) {
+      data.newsAnalysis = newsData.newsAnalysis;
+      data.latestNews = newsData.latestNews;
+      data.acceptedNews = newsData.acceptedNews;
+      data.newsTriggers = newsData.newsTriggers;
+    }
+    if (logsData) { data.systemLogs = logsData.systemLogs; }
     lastData = data;
     renderHeader(data);
     renderAlertBanner(data);
@@ -2916,6 +2941,8 @@ export const JS = `
       })
       .then(function(data) {
         render(data);
+        // ニュースデータをバックグラウンドでリフレッシュ（HOMEタブのアラートバナー・ニュースフィード用）
+        loadNews().then(function() { if (lastData) render(lastData); }).catch(function() {});
       })
       .catch(function(err) {
         console.error('[FX Sim] refresh error:', err);
@@ -3130,6 +3157,27 @@ export const JS = `
     return fetch('/api/params')
       .then(function(r) { return r.json(); })
       .then(function(d) { paramsData = d; return d; })
+      .catch(function() {});
+  }
+
+  function loadHistory() {
+    return fetch('/api/history')
+      .then(function(r) { return r.json(); })
+      .then(function(d) { historyData = d; return d; })
+      .catch(function() {});
+  }
+
+  function loadLogs() {
+    return fetch('/api/logs')
+      .then(function(r) { return r.json(); })
+      .then(function(d) { logsData = d; return d; })
+      .catch(function() {});
+  }
+
+  function loadNews() {
+    return fetch('/api/news')
+      .then(function(r) { return r.json(); })
+      .then(function(d) { newsData = d; return d; })
       .catch(function() {});
   }
 
