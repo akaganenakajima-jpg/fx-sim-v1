@@ -740,6 +740,7 @@ export async function getApiStatus(db: D1Database, tradingEnv?: { TRADING_ENABLE
       pub_date: r.pub_date ?? null,
       score: r.score ?? null,
       filter_accepted: r.filter_accepted,
+      scores: r.scores ?? null,
     })),
     newsAnalysis,
     newsTriggers,
