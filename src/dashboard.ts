@@ -146,7 +146,7 @@ export function getDashboardHtml(): string {
 
   <!-- 5メトリクスストリップ -->
   <div class="metrics" id="metrics-strip">
-    <div class="m"><div class="m-val" id="m-balance">--</div><div class="m-lbl">残高</div></div>
+    <div class="m"><div class="m-val" id="m-balance">--</div><div class="m-lbl">有効証拠金</div></div>
     <div class="m"><div class="m-val" id="m-roi">--</div><div class="m-lbl">ROI</div></div>
     <div class="m"><div class="m-val" id="m-avgrr" style="color:var(--green)">--</div><div class="m-lbl">平均RR</div></div>
     <div class="m"><div class="m-val" id="m-winrate">--</div><div class="m-lbl">勝率(RR≥1.0)</div></div>
