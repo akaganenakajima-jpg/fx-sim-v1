@@ -458,6 +458,222 @@ interface MarketData {
   prices: Map<string, number | null>;
 }
 
+/**
+ * インジケーター + フランクフルタレート + D1フォールバックから全銘柄の price Map を構築する。
+ * fetchMarketData / fetchAnalysisData の両方から呼ばれる共通ヘルパー。
+ * @param indicators - getMarketIndicators の戻り値
+ * @param frankfurterRate - getUSDJPY の戻り値（null 可）
+ * @param db - prev_rate_* フォールバック用 D1
+ * @returns prices Map と fallbackPairs（キャッシュを使った銘柄リスト）
+ */
+async function buildPricesMap(
+  indicators: Awaited<ReturnType<typeof getMarketIndicators>>,
+  frankfurterRate: number | null,
+  db: D1Database,
+): Promise<{ prices: Map<string, number | null>; fallbackPairs: string[] }> {
+  const usdJpyRate = indicators.usdjpy ?? frankfurterRate;
+
+  const livePrices: Array<[string, number | null]> = [
+    ['USD/JPY',   usdJpyRate],
+    ['Nikkei225', indicators.nikkei],
+    ['S&P500',    indicators.sp500],
+    ['US10Y',     indicators.us10y],
+    ['BTC/USD',   indicators.btcusd],
+    ['Gold',      indicators.gold],
+    ['EUR/USD',   indicators.eurusd],
+    ['ETH/USD',   indicators.ethusd],
+    ['CrudeOil',  indicators.crudeoil],
+    ['NatGas',    indicators.natgas],
+    ['Copper',    indicators.copper],
+    ['Silver',    indicators.silver],
+    ['GBP/USD',   indicators.gbpusd],
+    ['AUD/USD',   indicators.audusd],
+    ['SOL/USD',   indicators.solusd],
+    ['DAX',       indicators.dax],
+    ['NASDAQ',    indicators.nasdaq],
+    ['UK100',     indicators.uk100],
+    ['HK33',      indicators.hk33],
+    // 円クロス
+    ['EUR/JPY',   indicators.eurjpy],
+    ['GBP/JPY',   indicators.gbpjpy],
+    ['AUD/JPY',   indicators.audjpy],
+    // 日本個別株
+    ['川崎汽船',        indicators.kawasaki_kisen],
+    ['日本郵船',        indicators.nippon_yusen],
+    ['ソフトバンクG',    indicators.softbank_g],
+    ['レーザーテック',    indicators.lasertec],
+    ['東京エレクトロン',  indicators.tokyo_electron],
+    ['ディスコ',        indicators.disco],
+    ['アドバンテスト',    indicators.advantest],
+    ['ファーストリテイリング', indicators.fast_retailing],
+    ['日本製鉄',        indicators.nippon_steel],
+    ['三菱UFJ',        indicators.mufg],
+    ['商船三井',        indicators.mitsui_osk],
+    ['東京海上HD',      indicators.tokio_marine],
+    ['三菱商事',        indicators.mitsubishi_corp],
+    ['トヨタ',          indicators.toyota],
+    ['さくらインターネット', indicators.sakura_internet],
+    ['三菱重工',        indicators.mhi],
+    ['IHI',            indicators.ihi],
+    ['ANYCOLOR',       indicators.anycolor],
+    ['カバー',          indicators.cover_corp],
+    // 米国個別株
+    ['NVDA',      indicators.nvda],
+    ['TSLA',      indicators.tsla],
+    ['AAPL',      indicators.aapl],
+    ['AMZN',      indicators.amzn],
+    ['AMD',       indicators.amd],
+    ['META',      indicators.meta],
+    ['MSFT',      indicators.msft],
+    ['GOOGL',     indicators.googl],
+  ];
+
+  const fallbackPairs: string[] = [];
+  const prices = new Map<string, number | null>();
+  const needFallback: Array<[string]> = [];
+  for (const [pair, liveRate] of livePrices) {
+    if (liveRate != null) {
+      prices.set(pair, liveRate);
+    } else {
+      needFallback.push([pair]);
+    }
+  }
+  if (needFallback.length > 0) {
+    const keys = needFallback.map(([pair]) => `prev_rate_${pair}`);
+    const placeholders = keys.map(() => '?').join(',');
+    const rows = await db.prepare(
+      `SELECT key, value FROM market_cache WHERE key IN (${placeholders})`
+    ).bind(...keys).all<{ key: string; value: string }>();
+    const cacheMap = new Map((rows.results ?? []).map(r => [r.key, r.value]));
+    for (const [pair] of needFallback) {
+      const cached = cacheMap.get(`prev_rate_${pair}`);
+      if (cached) {
+        prices.set(pair, parseFloat(cached));
+        fallbackPairs.push(pair);
+      } else {
+        prices.set(pair, null);
+      }
+    }
+  }
+  return { prices, fallbackPairs };
+}
+
+/**
+ * 週末コンテキスト文字列を構築する（プレマーケット分析・ギャップ・ダイジェスト）。
+ * runCore / runAnalysis の両方から呼ばれる共通ヘルパー。
+ * Phase -2/-1 のときのみ実質的な文字列を返し、それ以外は空文字列。
+ */
+async function buildWeekendContext(
+  db: D1Database,
+  weekendStatus: ReturnType<typeof getWeekendStatus>,
+): Promise<string> {
+  if (weekendStatus.phase < -2 || weekendStatus.phase > -1) return '';
+
+  const parts: string[] = [];
+
+  // プレマーケット分析
+  const pmRaw = await getCacheValue(db, 'premarket_analysis');
+  if (pmRaw) {
+    try {
+      const pm = JSON.parse(pmRaw);
+      const highConf = (pm.predictions ?? [])
+        .filter((p: any) => p.confidence >= 70)
+        .map((p: any) => `${p.pair}: ${p.bias} (確信度${p.confidence}%) ${p.reasoning}`)
+        .join('\n');
+      if (highConf) {
+        parts.push(`【プレマーケット分析（日曜20:00生成）】\n${pm.market_summary}\n高確信シグナル:\n${highConf}`);
+      }
+    } catch { /* ignore */ }
+  }
+
+  // ギャップ情報
+  const gapRaw = await getCacheValue(db, 'gap_signals');
+  if (gapRaw) {
+    try {
+      const { gaps } = JSON.parse(gapRaw);
+      if (gaps && gaps.length > 0) {
+        const gapText = gaps.slice(0, 10)
+          .map((g: any) => `${g.pair}: ${g.gapDirection} ${g.gapPercent.toFixed(2)}% (${g.fridayClose}→${g.mondayOpen}) ${g.magnitude}`)
+          .join('\n');
+        parts.push(`【ギャップ検知（金曜終値 vs 月曜始値）】\n${gapText}\n※ ギャップフィルは発生確率60-70%だが、ファンダ要因の方向性ギャップは継続傾向`);
+      }
+    } catch { /* ignore */ }
+  }
+
+  // ダイジェスト
+  const digestRaw = await getCacheValue(db, 'weekend_news_digest');
+  if (digestRaw) {
+    try {
+      const { digest } = JSON.parse(digestRaw);
+      if (digest) parts.push(`【週末蓄積ニュース】\n${digest}`);
+    } catch { /* ignore */ }
+  }
+
+  return parts.join('\n\n');
+}
+
+/**
+ * runAnalysis 専用のリアルタイムデータ取得。
+ *
+ * ニュース系 API（Gemini 翻訳含む）は runCore が毎分呼ぶため再呼び出しはしない。
+ * - ニュース  : analysis_news キャッシュ（runCore が書いた最新記事、最大 ~1 分前）
+ * - 価格/指標 : getMarketIndicators（内部 DB キャッシュ → 追加 API コールなし）
+ *               + getUSDJPY（Frankfurter、無料・制限なし）
+ * - 週末文脈  : 個別キャッシュキーから buildWeekendContext で再構築
+ *
+ * ⚠️ core_shared_data への依存を完全に排除することで、
+ *    runCore との Race Condition（最大 4m59s のデータ遅延）を解消する。
+ */
+async function fetchAnalysisData(env: Env, now: Date): Promise<{
+  news: any[];
+  indicators: Awaited<ReturnType<typeof getMarketIndicators>>;
+  prices: Map<string, number | null>;
+  weekendContext: string;
+  cryptoOnlyMode: boolean;
+  fetchAnalysisMs: number;
+}> {
+  const t0 = Date.now();
+  const weekendStatus = getWeekendStatus(now);
+
+  // ① ニュース（analysis_news キャッシュから読出し — ニュース API 再呼び出しなし）
+  const analysisNewsRaw = await getCacheValue(env.DB, 'analysis_news');
+  const news: any[] = analysisNewsRaw
+    ? (() => { try { return JSON.parse(analysisNewsRaw); } catch { return []; } })()
+    : [];
+
+  // ② 価格 / 指標（Twelve Data は内部 DB キャッシュを持つ。runCore 直後なら API コールゼロ）
+  const [indicatorsResult, frankfurterResult] = await Promise.allSettled([
+    getMarketIndicators(env.TWELVE_DATA_API_KEY, env.DB),
+    getUSDJPY(),
+  ]);
+  const indicators = indicatorsResult.status === 'fulfilled'
+    ? indicatorsResult.value
+    : { vix: null, us10y: null, nikkei: null, sp500: null, usdjpy: null, btcusd: null, gold: null, eurusd: null, ethusd: null, crudeoil: null, natgas: null, copper: null, silver: null, gbpusd: null, audusd: null, solusd: null, dax: null, nasdaq: null, uk100: null, hk33: null, eurjpy: null, gbpjpy: null, audjpy: null, kawasaki_kisen: null, nippon_yusen: null, softbank_g: null, lasertec: null, tokyo_electron: null, disco: null, advantest: null, fast_retailing: null, nippon_steel: null, mufg: null, mitsui_osk: null, tokio_marine: null, mitsubishi_corp: null, toyota: null, sakura_internet: null, mhi: null, ihi: null, anycolor: null, cover_corp: null, nvda: null, tsla: null, aapl: null, amzn: null, amd: null, meta: null, msft: null, googl: null, fearGreed: null, fearGreedLabel: null, cftcJpyNetLong: null };
+  const frankfurterRate = frankfurterResult.status === 'fulfilled' ? frankfurterResult.value : null;
+
+  if (indicatorsResult.status === 'rejected') {
+    console.warn(`[fx-sim] fetchAnalysisData: indicators取得失敗 (DB キャッシュを使用): ${String(indicatorsResult.reason).slice(0, 80)}`);
+  }
+
+  // ③ 価格 Map 構築（prev_rate_* フォールバック込み）
+  const { prices, fallbackPairs } = await buildPricesMap(indicators, frankfurterRate, env.DB);
+  if (fallbackPairs.length >= 3) {
+    console.warn(`[fx-sim] fetchAnalysisData: ${fallbackPairs.length}銘柄フォールバック使用`);
+  }
+
+  // ④ 週末コンテキスト（個別キャッシュから再構築 — runCore 依存なし）
+  const weekendContext = await buildWeekendContext(env.DB, weekendStatus);
+
+  return {
+    news,
+    indicators,
+    prices,
+    weekendContext,
+    cryptoOnlyMode: weekendStatus.marketClosed,
+    fetchAnalysisMs: Date.now() - t0,
+  };
+}
+
 /** 市場データ一括取得（RSS/Reddit/Yahoo Finance/Frankfurter + キャッシュフォールバック） */
 async function fetchMarketData(env: Env, now: Date): Promise<MarketData | null> {
   const newsApiKeys: NewsApiKeys = {
@@ -536,90 +752,8 @@ async function fetchMarketData(env: Env, now: Date): Promise<MarketData | null> 
     return null;
   }
 
-  const livePrices: Array<[string, number | null]> = [
-    ['USD/JPY',   usdJpyRate],
-    ['Nikkei225', indicators.nikkei],
-    ['S&P500',    indicators.sp500],
-    ['US10Y',     indicators.us10y],
-    ['BTC/USD',   indicators.btcusd],
-    ['Gold',      indicators.gold],
-    ['EUR/USD',   indicators.eurusd],
-    ['ETH/USD',   indicators.ethusd],
-    ['CrudeOil',  indicators.crudeoil],
-    ['NatGas',    indicators.natgas],
-    ['Copper',    indicators.copper],
-    ['Silver',    indicators.silver],
-    ['GBP/USD',   indicators.gbpusd],
-    ['AUD/USD',   indicators.audusd],
-    ['SOL/USD',   indicators.solusd],
-    ['DAX',       indicators.dax],
-    ['NASDAQ',    indicators.nasdaq],
-    ['UK100',     indicators.uk100],
-    ['HK33',      indicators.hk33],
-    // 円クロス
-    ['EUR/JPY',   indicators.eurjpy],
-    ['GBP/JPY',   indicators.gbpjpy],
-    ['AUD/JPY',   indicators.audjpy],
-    // 日本個別株
-    ['川崎汽船',        indicators.kawasaki_kisen],
-    ['日本郵船',        indicators.nippon_yusen],
-    ['ソフトバンクG',    indicators.softbank_g],
-    ['レーザーテック',    indicators.lasertec],
-    ['東京エレクトロン',  indicators.tokyo_electron],
-    ['ディスコ',        indicators.disco],
-    ['アドバンテスト',    indicators.advantest],
-    ['ファーストリテイリング', indicators.fast_retailing],
-    ['日本製鉄',        indicators.nippon_steel],
-    ['三菱UFJ',        indicators.mufg],
-    ['商船三井',        indicators.mitsui_osk],
-    ['東京海上HD',      indicators.tokio_marine],
-    ['三菱商事',        indicators.mitsubishi_corp],
-    ['トヨタ',          indicators.toyota],
-    ['さくらインターネット', indicators.sakura_internet],
-    ['三菱重工',        indicators.mhi],
-    ['IHI',            indicators.ihi],
-    ['ANYCOLOR',       indicators.anycolor],
-    ['カバー',          indicators.cover_corp],
-    // 米国個別株
-    ['NVDA',      indicators.nvda],
-    ['TSLA',      indicators.tsla],
-    ['AAPL',      indicators.aapl],
-    ['AMZN',      indicators.amzn],
-    ['AMD',       indicators.amd],
-    ['META',      indicators.meta],
-    ['MSFT',      indicators.msft],
-    ['GOOGL',     indicators.googl],
-  ];
-
-  const fallbackPairs: string[] = [];
-  const prices = new Map<string, number | null>();
-  // フォールバック候補を一括収集してバッチ取得（直列→1クエリに最適化）
-  const needFallback: Array<[string, number]> = [];
-  for (let idx = 0; idx < livePrices.length; idx++) {
-    const [pair, liveRate] = livePrices[idx];
-    if (liveRate != null) {
-      prices.set(pair, liveRate);
-    } else {
-      needFallback.push([pair, idx]);
-    }
-  }
-  if (needFallback.length > 0) {
-    const keys = needFallback.map(([pair]) => `prev_rate_${pair}`);
-    const placeholders = keys.map(() => '?').join(',');
-    const rows = await env.DB.prepare(
-      `SELECT key, value FROM market_cache WHERE key IN (${placeholders})`
-    ).bind(...keys).all<{ key: string; value: string }>();
-    const cacheMap = new Map((rows.results ?? []).map(r => [r.key, r.value]));
-    for (const [pair] of needFallback) {
-      const cached = cacheMap.get(`prev_rate_${pair}`);
-      if (cached) {
-        prices.set(pair, parseFloat(cached));
-        fallbackPairs.push(pair);
-      } else {
-        prices.set(pair, null);
-      }
-    }
-  }
+  // 価格 Map 構築（buildPricesMap で livePrices 配列 + prev_rate_* フォールバックを一括処理）
+  const { prices, fallbackPairs } = await buildPricesMap(indicators, frankfurterRate, env.DB);
   if (fallbackPairs.length > 0) {
     console.warn(`[fx-sim] Yahoo失敗→キャッシュ使用: ${fallbackPairs.join(', ')}`);
     if (fallbackPairs.length >= 3) {
@@ -1121,7 +1255,6 @@ async function runCore(env: Env): Promise<void> {
     }
 
     // ── 施策A: 週末ニュースダイジェスト + 施策C: ギャップ検知（Phase -2 初回） ──
-    let weekendContext = '';
     if (weekendStatus.phase === -2) {
       // 施策A: ダイジェスト生成
       const digestDone = await getCacheValue(env.DB, 'weekend_digest_done');
@@ -1155,47 +1288,6 @@ async function runCore(env: Env): Promise<void> {
         }
         await setCacheValue(env.DB, 'gap_detection_done', 'true');
       }
-    }
-
-    // Phase -2/-1: プレマーケット分析 + ギャップ情報を weekendContext に構築
-    if (weekendStatus.phase >= -2 && weekendStatus.phase <= -1) {
-      const parts: string[] = [];
-      // プレマーケット分析
-      const pmRaw = await getCacheValue(env.DB, 'premarket_analysis');
-      if (pmRaw) {
-        try {
-          const pm = JSON.parse(pmRaw);
-          const highConf = (pm.predictions ?? [])
-            .filter((p: any) => p.confidence >= 70)
-            .map((p: any) => `${p.pair}: ${p.bias} (確信度${p.confidence}%) ${p.reasoning}`)
-            .join('\n');
-          if (highConf) {
-            parts.push(`【プレマーケット分析（日曜20:00生成）】\n${pm.market_summary}\n高確信シグナル:\n${highConf}`);
-          }
-        } catch { /* ignore */ }
-      }
-      // ギャップ情報
-      const gapRaw = await getCacheValue(env.DB, 'gap_signals');
-      if (gapRaw) {
-        try {
-          const { gaps } = JSON.parse(gapRaw);
-          if (gaps && gaps.length > 0) {
-            const gapText = gaps.slice(0, 10)
-              .map((g: any) => `${g.pair}: ${g.gapDirection} ${g.gapPercent.toFixed(2)}% (${g.fridayClose}→${g.mondayOpen}) ${g.magnitude}`)
-              .join('\n');
-            parts.push(`【ギャップ検知（金曜終値 vs 月曜始値）】\n${gapText}\n※ ギャップフィルは発生確率60-70%だが、ファンダ要因の方向性ギャップは継続傾向`);
-          }
-        } catch { /* ignore */ }
-      }
-      // ダイジェスト
-      const digestRaw = await getCacheValue(env.DB, 'weekend_news_digest');
-      if (digestRaw) {
-        try {
-          const { digest } = JSON.parse(digestRaw);
-          if (digest) parts.push(`【週末蓄積ニュース】\n${digest}`);
-        } catch { /* ignore */ }
-      }
-      weekendContext = parts.join('\n\n');
     }
 
     // Phase 0 移行時にフラグリセット（月曜03:00 UTC）
@@ -1302,19 +1394,17 @@ async function runCore(env: Env): Promise<void> {
       }
     }
 
-    // runCore 共通データをキャッシュ経由で runAnalysis に渡す
-    // news / indicators / prices を market_cache に保存（runAnalysis が読み出す）
-    const coreData = {
-      news: news.map(n => ({ title: n.title, title_ja: n.title_ja, description: n.description, desc_ja: n.desc_ja, pubDate: n.pubDate, source: (n as any).source, link: (n as any).link, composite_score: (n as any).composite_score })),
-      indicators,
-      prices: [...prices.entries()],
-      weekendContext,
-      cryptoOnlyMode,
-      activeNewsSources,
-      fetchMs,
-      tpSlMs,
-    };
-    await setCacheValue(env.DB, 'core_shared_data', JSON.stringify(coreData));
+    // analysis_news: runAnalysis が fetchAnalysisData() で読み出すニュースキャッシュ
+    // （core_shared_data を廃止し、ニュースのみを専用キーで管理する。
+    //  価格・指標は runAnalysis が getMarketIndicators/getUSDJPY を直接呼ぶ）
+    await setCacheValue(env.DB, 'analysis_news', JSON.stringify(
+      news.map(n => ({
+        title: n.title, title_ja: n.title_ja,
+        description: n.description, desc_ja: n.desc_ja,
+        pubDate: n.pubDate, source: (n as any).source,
+        link: (n as any).link, composite_score: (n as any).composite_score,
+      }))
+    ));
 
     // 毎cronパージ（system_logs ≤5000件維持）
     try {
@@ -1346,28 +1436,25 @@ async function runAnalysis(env: Env): Promise<void> {
   console.log(`[fx-sim] analysis start ${now.toISOString()} runId=${runId}`);
 
   try {
-    // runCore が保存した共通データを読み出す
-    const coreRaw = await getCacheValue(env.DB, 'core_shared_data');
-    if (!coreRaw) {
-      console.warn('[fx-sim] analysis: core_shared_data なし → スキップ');
-      return;
-    }
-    const coreData = JSON.parse(coreRaw) as {
-      news: any[];
-      indicators: Awaited<ReturnType<typeof getMarketIndicators>>;
-      prices: [string, number | null][];
-      weekendContext: string;
-      cryptoOnlyMode: boolean;
-      activeNewsSources: string;
-      fetchMs: number;
-      tpSlMs: number;
-    };
-    const news = coreData.news;
-    const indicators = coreData.indicators;
-    const prices = new Map<string, number | null>(coreData.prices);
-    const weekendContext = coreData.weekendContext;
-    const fetchMs = coreData.fetchMs;
-    const tpSlMs = coreData.tpSlMs;
+    // リアルタイムデータ取得（core_shared_data への依存を廃止）
+    // - ニュース : analysis_news キャッシュ（runCore が毎分更新、最大 ~1 分前のデータ）
+    // - 価格/指標: getMarketIndicators（内部 DB キャッシュ）+ getUSDJPY（Frankfurter）
+    //             → runCore 直後に呼ぶため追加 API コールはほぼゼロ
+    // - 週末文脈: 個別キャッシュキーから独立再構築（buildWeekendContext）
+    const tFetch = Date.now();
+    const {
+      news,
+      indicators,
+      prices,
+      weekendContext,
+      fetchAnalysisMs,
+    } = await fetchAnalysisData(env, now);
+    const fetchMs = fetchAnalysisMs; // タイミングログ用（旧 coreData.fetchMs に相当）
+    await insertSystemLog(env.DB, 'INFO', 'FLOW', 'ANALYSIS_FETCH完了', JSON.stringify({
+      ms: fetchMs, news: news.length,
+      prices: [...prices.values()].filter(v => v != null).length,
+      tFetch: Date.now() - tFetch,
+    }));
 
     // 2.8 ニューストリガー（緊急→PATH_B強制）
     try {
@@ -1783,7 +1870,8 @@ async function runAnalysis(env: Env): Promise<void> {
 
     // 実行時間計測
     const grandTotal = totalMs + paramReviewMs;
-    const timingsWithParam = { fetchMs, tpSlMs, newsMs, pathBMs, paramReviewMs, grandTotalMs: grandTotal };
+    // tpSlMs は runCore 側の処理のため runAnalysis では計測しない（除外）
+    const timingsWithParam = { fetchMs, newsMs, pathBMs, paramReviewMs, grandTotalMs: grandTotal };
     await setCacheValue(env.DB, 'cron_phase_timings', JSON.stringify(timingsWithParam));
     if (grandTotal > 60000) {
       await insertSystemLog(env.DB, 'WARN', 'CRON',
