@@ -20,6 +20,7 @@
 
   var lastData = null;
   var lastRecentCloseIds = [];
+  var activeTabId = 'tab-home'; // 現在アクティブなタブID（Race Condition防止用）
   // 遅延ロード済みデータキャッシュ（各タブ初回アクティブ時にフェッチ）
   var historyData = null;   // /api/history
   var logsData = null;      // /api/logs
@@ -329,6 +330,7 @@
 
   window.switchTab = switchTab;
   function switchTab(tabId, scrollTo) {
+    activeTabId = tabId;
     haptic.light();
     var panels = document.querySelectorAll('.tab-panel');
     for (var i = 0; i < panels.length; i++) {
@@ -383,21 +385,21 @@
       requestAnimationFrame(function() { renderEquityChart(lastData); });
     }
 
-    // 戦略タブ: paramsData 遅延ロード → 読み込み後に再描画
+    // 戦略タブ: paramsData 遅延ロード → 読み込み後に再描画（activeTabIdガード: 切替後の描画スキップ）
     if (tabId === 'tab-strategy' && !paramsData) {
-      loadParams().then(function() { if (lastData) renderStrategyTab(lastData); }).catch(function(){});
+      loadParams().then(function() { if (activeTabId === 'tab-strategy' && lastData) renderStrategyTab(lastData); }).catch(function(){});
     }
-    // 学びタブ: historyData 遅延ロード → 読み込み後に再描画
+    // 学びタブ: historyData 遅延ロード → 読み込み後に再描画（activeTabIdガード: 切替後の描画スキップ）
     if (tabId === 'tab-stats' && !historyData) {
-      loadHistory().then(function() { if (lastData) render(lastData); }).catch(function(){});
+      loadHistory().then(function() { if (activeTabId === 'tab-stats' && lastData) render(lastData); }).catch(function(){});
     }
-    // ニュース/AIタブ: newsData 遅延ロード → 読み込み後に再描画
+    // ニュース/AIタブ: newsData 遅延ロード → 読み込み後に再描画（activeTabIdガード: 切替後の描画スキップ）
     if ((tabId === 'tab-news' || tabId === 'tab-ai') && !newsData) {
-      loadNews().then(function() { if (lastData) render(lastData); }).catch(function(){});
+      loadNews().then(function() { if ((activeTabId === 'tab-news' || activeTabId === 'tab-ai') && lastData) render(lastData); }).catch(function(){});
     }
-    // ログタブ: logsData 遅延ロード → 読み込み後に再描画
+    // ログタブ: logsData 遅延ロード → 読み込み後に再描画（activeTabIdガード: 切替後の描画スキップ）
     if (tabId === 'tab-log' && !logsData) {
-      loadLogs().then(function() { if (lastData) render(lastData); }).catch(function(){});
+      loadLogs().then(function() { if (activeTabId === 'tab-log' && lastData) render(lastData); }).catch(function(){});
     }
 
     // ディープリンク
@@ -2944,6 +2946,14 @@
         render(data);
         // ニュースデータをバックグラウンドでリフレッシュ（HOMEタブのアラートバナー・ニュースフィード用）
         loadNews().then(function() { if (lastData) render(lastData); }).catch(function() {});
+        // アクティブタブのデータも更新（定期更新フリーズ防止: 非HOMEタブで古いデータが残るのを防ぐ）
+        if (activeTabId === 'tab-stats') {
+          loadHistory().then(function() { if (activeTabId === 'tab-stats' && lastData) render(lastData); }).catch(function() {});
+        } else if (activeTabId === 'tab-log') {
+          loadLogs().then(function() { if (activeTabId === 'tab-log' && lastData) render(lastData); }).catch(function() {});
+        } else if (activeTabId === 'tab-strategy') {
+          loadParams().then(function() { if (activeTabId === 'tab-strategy' && lastData) renderStrategyTab(lastData); }).catch(function() {});
+        }
       })
       .catch(function(err) {
         console.error('[FX Sim] refresh error:', err);
