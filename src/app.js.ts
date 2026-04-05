@@ -3029,13 +3029,12 @@ export const JS = `
     var items = rotations.slice(0, 8);
     for (var i = 0; i < items.length; i++) {
       var r = items[i];
-      var icon = r.action === 'ADD' ? '🟢' : '🔴';
-      var market = r.market === 'us' ? '🇺🇸' : '🇯🇵';
-      var date = new Date(r.executed_at);
+      var market = r.market === 'us' ? '\\ud83c\\uddfa\\ud83c\\uddf8' : '\\ud83c\\uddef\\ud83c\\uddf5';
+      var date = new Date(r.proposed_at || r.decided_at);
       var dateStr = (date.getMonth() + 1) + '/' + date.getDate();
       html += '<div class="screener-history-row">' +
-        '<span>' + icon + ' ' + market + ' <b>' + r.pair + '</b></span>' +
-        '<span class="screener-history-reason">' + (r.reason || r.action) + '</span>' +
+        '<span>' + market + ' <b>' + (r.in_symbol || '') + '</b> \\u2190 ' + (r.out_symbol || '') + '</span>' +
+        '<span class="screener-history-reason">' + (r.status || '') + '</span>' +
         '<span class="screener-history-date">' + dateStr + '</span>' +
       '</div>';
     }
