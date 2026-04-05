@@ -1969,15 +1969,14 @@ async function updateInstrumentScores(db: D1Database): Promise<void> {
     `SELECT pair,
        COUNT(*) AS total_trades,
        COALESCE(SUM(CASE WHEN realized_rr >= 1.0 THEN 1 ELSE 0 END), 0) AS wins,
-       COALESCE(SUM(CASE WHEN realized_rr >= 1.0 THEN pnl ELSE 0 END), 0) AS total_win_pnl,  -- RR≥1.0取引のPnL合計
-       COALESCE(SUM(CASE WHEN realized_rr IS NULL OR realized_rr < 1.0 THEN ABS(pnl) ELSE 0 END), 0) AS total_loss_pnl,  -- RR<1.0取引の|PnL|合計
+       COALESCE(AVG(CASE WHEN realized_rr IS NOT NULL THEN realized_rr END), 0) AS avg_rr_actual,
        COALESCE(AVG(pnl), 0) AS avg_pnl,
        COALESCE(SUM(pnl), 0) AS total_pnl
      FROM positions WHERE status = 'CLOSED'
      GROUP BY pair`
   ).all<{
     pair: string; total_trades: number; wins: number;
-    total_win_pnl: number; total_loss_pnl: number;
+    avg_rr_actual: number;
     avg_pnl: number; total_pnl: number;
   }>();
 
@@ -2010,10 +2009,7 @@ async function updateInstrumentScores(db: D1Database): Promise<void> {
   const batch = [];
   for (const r of rows.results) {
     const winRate = r.total_trades > 0 ? r.wins / r.total_trades : 0;
-    const avgWin = r.wins > 0 ? r.total_win_pnl / r.wins : 0;
-    const losses = r.total_trades - r.wins;
-    const avgLoss = losses > 0 ? r.total_loss_pnl / losses : 0;
-    const avgRR = avgLoss > 0 ? avgWin / avgLoss : 0;
+    const avgRR = r.avg_rr_actual ?? 0;
 
     // Sharpe = mean / stdev
     const pnls = pnlByPair[r.pair] || [];

@@ -65,6 +65,8 @@ export interface LogStats {
   errorCount: number;
   warnCount: number;
   lastRun: string | null;
+  runs24h: number;   // 直近24h cronコール数（uptime/errorRate計算の正確な分母）
+  errors24h: number; // 直近24h エラー件数
 }
 
 export interface SparkPoint {
@@ -328,12 +330,12 @@ export async function getApiStatus(db: D1Database, tradingEnv?: { TRADING_ENABLE
       db
         .prepare(
           `SELECT
-             COALESCE(SUM(pnl), 0)                                                                          AS totalPnl,
-             COALESCE(SUM(CASE WHEN date(closed_at) = date('now') THEN pnl ELSE 0 END), 0)                 AS todayPnl,
-             COUNT(*)                                                                                        AS totalClosed,
-             COALESCE(SUM(CASE WHEN realized_rr >= 1.0 THEN 1 ELSE 0 END), 0)                               AS wins,
-             COALESCE(SUM(CASE WHEN date(closed_at) = date('now') AND realized_rr >= 1.0 THEN 1 ELSE 0 END), 0)  AS todayWins,
-             COALESCE(SUM(CASE WHEN date(closed_at) = date('now') AND (realized_rr IS NULL OR realized_rr < 1.0) THEN 1 ELSE 0 END), 0) AS todayLosses
+             COALESCE(SUM(pnl), 0)                                                                                        AS totalPnl,
+             COALESCE(SUM(CASE WHEN date(closed_at, '+9 hours') = date('now', '+9 hours') THEN pnl ELSE 0 END), 0)        AS todayPnl,
+             COUNT(*)                                                                                                       AS totalClosed,
+             COALESCE(SUM(CASE WHEN realized_rr >= 1.0 THEN 1 ELSE 0 END), 0)                                             AS wins,
+             COALESCE(SUM(CASE WHEN date(closed_at, '+9 hours') = date('now', '+9 hours') AND realized_rr >= 1.0 THEN 1 ELSE 0 END), 0)  AS todayWins,
+             COALESCE(SUM(CASE WHEN date(closed_at, '+9 hours') = date('now', '+9 hours') AND (realized_rr IS NULL OR realized_rr < 1.0) THEN 1 ELSE 0 END), 0) AS todayLosses
            FROM positions WHERE status = 'CLOSED'`
         )
         .first<{ totalPnl: number; todayPnl: number; totalClosed: number; wins: number; todayWins: number; todayLosses: number }>(),
@@ -425,14 +427,14 @@ export async function getApiStatus(db: D1Database, tradingEnv?: { TRADING_ENABLE
 
       // ── IPA品質修正: 今日の判断数を専用COUNTクエリで取得（LIMIT 20 と独立） ──
       // recentDecisions は LIMIT 20 のため今日の全件数を正確に反映できない
-      // UTC基準（DB date('now') と合わせる）
+      // JST基準（+9h補正）
       db
         .prepare(
           `SELECT
              COUNT(*) AS total,
              COALESCE(SUM(CASE WHEN decision = 'BUY'  THEN 1 ELSE 0 END), 0) AS buyCount,
              COALESCE(SUM(CASE WHEN decision = 'SELL' THEN 1 ELSE 0 END), 0) AS sellCount
-           FROM decisions WHERE decision != 'HOLD' AND date(created_at) = date('now')`
+           FROM decisions WHERE decision != 'HOLD' AND date(created_at, '+9 hours') = date('now', '+9 hours')`
         )
         .first<{ total: number; buyCount: number; sellCount: number }>(),
 
@@ -702,6 +704,20 @@ export async function getApiStatus(db: D1Database, tradingEnv?: { TRADING_ENABLE
     newsTriggers = ntRaw.results ?? [];
   } catch { /* テーブル未存在 */ }
 
+  // 稼働率・エラー率の正確な分母・分子（直近24h）
+  let runs24h = 0;
+  let errors24h = 0;
+  try {
+    const [r24, e24] = await Promise.all([
+      db.prepare(`SELECT COUNT(*) AS cnt FROM decisions WHERE created_at > datetime('now', '-24 hours')`)
+        .first<{ cnt: number }>(),
+      db.prepare(`SELECT COUNT(*) AS cnt FROM system_logs WHERE level = 'ERROR' AND created_at > datetime('now', '-24 hours')`)
+        .first<{ cnt: number }>(),
+    ]);
+    runs24h = r24?.cnt ?? 0;
+    errors24h = e24?.cnt ?? 0;
+  } catch {}
+
   return {
     rate,
     tradingMode,
@@ -752,6 +768,8 @@ export async function getApiStatus(db: D1Database, tradingEnv?: { TRADING_ENABLE
       errorCount: sysLogs.filter(l => l.level === 'ERROR').length,
       warnCount: sysLogs.filter(l => l.level === 'WARN').length,
       lastRun: logStatsRaw?.lastRun ?? null,
+      runs24h,
+      errors24h,
     },
     statistics,
     slPatterns: (() => {
