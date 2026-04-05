@@ -6,7 +6,7 @@
 import { type Env } from './env';
 import { withRunId } from './db';
 import { getDashboardHtml } from './dashboard';
-import { getApiStatus, getApiParams, getApiHistory, getApiLogs, getApiNews } from './api';
+import { getApiStatus, getApiParams, getApiHistory, getApiLogs, getApiNews, resumeSystem } from './api';
 import { decideRotation, getPendingRotations } from './rotation';
 import { runCore } from './workflows/core-workflow';
 import { runAnalysis } from './workflows/analysis-workflow';
@@ -163,6 +163,21 @@ export default {
             status: 500,
           });
         }
+      case '/api/resume':
+        if (request.method === 'POST') {
+          try {
+            const result = await resumeSystem(env.DB);
+            return new Response(JSON.stringify(result), {
+              headers: { 'Content-Type': 'application/json' },
+              status: result.success ? 200 : 500,
+            });
+          } catch (e) {
+            return new Response(JSON.stringify({ success: false, message: String(e) }), {
+              headers: { 'Content-Type': 'application/json' }, status: 500,
+            });
+          }
+        }
+        return new Response('Method Not Allowed', { status: 405 });
       case '/api/rotation':
         if (request.method === 'POST') {
           // JSONパース失敗（空body含む）は 400 で返す

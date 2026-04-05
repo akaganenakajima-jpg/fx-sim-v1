@@ -1465,3 +1465,32 @@ export async function getApiNews(db: D1Database): Promise<NewsResponse> {
     newsTriggers,
   };
 }
+
+// ─── HALT解除（dd_stopped リセット） ─────────────────────────────────────────
+
+/** DD STOPを手動解除してシステムをACTIVEに戻す */
+export async function resumeSystem(db: D1Database): Promise<{ success: boolean; message: string }> {
+  try {
+    const now = new Date().toISOString();
+    // dd_stopped（グローバル）をリセット
+    await db.prepare(
+      `INSERT INTO risk_state (key, value, updated_at) VALUES ('dd_stopped', 'false', ?)
+       ON CONFLICT(key) DO UPDATE SET value = 'false', updated_at = excluded.updated_at`
+    ).bind(now).run();
+    // dd_paused_until をクリア
+    await db.prepare(
+      `INSERT INTO risk_state (key, value, updated_at) VALUES ('dd_paused_until', '', ?)
+       ON CONFLICT(key) DO UPDATE SET value = '', updated_at = excluded.updated_at`
+    ).bind(now).run();
+    // アセットクラス別 dd_stopped も一括クリア
+    for (const ac of ['FX', 'STOCK', 'INDEX', 'CRYPTO', 'COMMODITY']) {
+      await db.prepare(
+        `INSERT INTO risk_state (key, value, updated_at) VALUES (?, 'false', ?)
+         ON CONFLICT(key) DO UPDATE SET value = 'false', updated_at = excluded.updated_at`
+      ).bind(`dd_stopped:${ac}`, now).run();
+    }
+    return { success: true, message: 'システムを再稼働しました（DD STOP解除）' };
+  } catch (e) {
+    return { success: false, message: String(e) };
+  }
+}

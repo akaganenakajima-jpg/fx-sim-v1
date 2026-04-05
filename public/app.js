@@ -508,7 +508,7 @@
     var alerts = [];
 
     if (data.riskStatus && data.riskStatus.killSwitchActive) {
-      alerts.push({ cls: 'alert-red', text: '\u26A0\uFE0F DD STOP — 日次損失上限超過。新規エントリー停止中' });
+      alerts.push({ cls: 'alert-red', text: '\u26A0\uFE0F DD STOP — 日次損失上限超過。新規エントリー停止中', hasResume: true });
     } else if (data.riskStatus && data.riskStatus.maxDailyLoss > 0 &&
                data.riskStatus.todayLoss / data.riskStatus.maxDailyLoss > 0.8) {
       var pct = Math.round(data.riskStatus.todayLoss / data.riskStatus.maxDailyLoss * 100);
@@ -539,7 +539,10 @@
     if (alerts.length === 0) { container.style.display = 'none'; return; }
     container.style.display = '';
     container.innerHTML = alerts.map(function(a) {
-      return '<div class="' + a.cls + '" style="padding:8px 16px;font-size:12px;font-weight:600">' + escHtml(a.text) + '</div>';
+      var resumeBtn = a.hasResume
+        ? '<button onclick="resumeSystem()" style="margin-left:12px;padding:4px 12px;font-size:11px;font-weight:700;background:var(--orange);color:#000;border:none;border-radius:6px;cursor:pointer">システム再稼働</button>'
+        : '';
+      return '<div class="' + a.cls + '" style="padding:8px 16px;font-size:12px;font-weight:600;display:flex;align-items:center;gap:4px">' + escHtml(a.text) + resumeBtn + '</div>';
     }).join('');
   }
 
@@ -3178,6 +3181,18 @@
       .then(function(d) { newsData = d; return d; })
       .catch(function() {});
   }
+
+  // DD STOP 手動解除（システム再稼働）
+  window.resumeSystem = function() {
+    if (!confirm('DD STOPを解除してシステムを再稼働しますか？\n（ドローダウンが回復していない場合、すぐに再停止する可能性があります）')) return;
+    fetch('/api/resume', { method: 'POST' })
+      .then(function(r) { return r.json(); })
+      .then(function(d) {
+        alert(d.message || (d.success ? '再稼働しました' : '解除に失敗しました'));
+        if (d.success) refresh();
+      })
+      .catch(function(e) { alert('通信エラー: ' + String(e)); });
+  };
 
   document.addEventListener('click', function(e) {
     var btn = e.target && e.target.closest && e.target.closest('[data-tab="tab-strategy"]');
