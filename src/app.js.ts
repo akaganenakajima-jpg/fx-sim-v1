@@ -545,11 +545,26 @@ export const JS = `
 
     // メトリクスストリップ
     var totalPnl = perf.totalPnl || 0;
-    var capital = INITIAL_CAPITAL + totalPnl;
+    // 含み損益を計算して有効証拠金に反映
+    var unrealizedTotal = 0;
+    var opens = data.openPositions || [];
+    for (var oi = 0; oi < opens.length; oi++) {
+      var oinstr = findInstr(opens[oi].pair);
+      var ocr = getCurrentRate(opens[oi].pair);
+      if (oinstr && ocr != null) {
+        unrealizedTotal += opens[oi].direction === 'BUY'
+          ? (ocr - opens[oi].entry_rate) * oinstr.multiplier * (opens[oi].lot || 1)
+          : (opens[oi].entry_rate - ocr) * oinstr.multiplier * (opens[oi].lot || 1);
+      }
+    }
+    var equity = INITIAL_CAPITAL + totalPnl + unrealizedTotal;
     var roiPct = (totalPnl / INITIAL_CAPITAL) * 100;
 
     var balEl = el('m-balance');
-    if (balEl) balEl.textContent = fmtYen(capital);
+    if (balEl) {
+      balEl.textContent = fmtYen(equity);
+      balEl.style.color = unrealizedTotal >= 0 ? '' : 'var(--red)';
+    }
 
     var roiEl = el('m-roi');
     if (roiEl) {
@@ -590,7 +605,7 @@ export const JS = `
       var pct = Math.max(0, Math.min(Math.round(pa.progressPct), 100));
       sigFill.style.width = pct + '%';
       if (pa.isAdequate) sigFill.style.background = 'var(--green)';
-      if (sigLabel) sigLabel.textContent = '有意性 ' + pct + '%';
+      if (sigLabel) sigLabel.textContent = pa.isAdequate ? '統計的信頼性 確保' : 'データ蓄積度 ' + pct + '%';
     }
   }
 
@@ -1008,32 +1023,9 @@ export const JS = `
 
     var impacted = el('news-feed-impacted');
     if (impacted) {
-      var opens = data.openPositions || [];
-      var recentDecs = (data.recentDecisions || []).filter(function(d) { return d.decision === 'BUY' || d.decision === 'SELL'; });
-      var impactedItems = mergedAnalysis.filter(function(n) { return n.attention; }).map(function(n) {
-        var pairs = n.affected_pairs || [];
-        // recentDecisionsからaffected_pairsに一致する取引を取得（pairsが空の場合はマッチしない）
-        var matched = pairs.length > 0 ? recentDecs.filter(function(d) {
-          return pairs.indexOf(d.pair) >= 0;
-        }).slice(0, 3) : [];
-        if (matched.length > 0) {
-          return Object.assign({}, n, {
-            trade_decisions: matched.map(function(d) {
-              return { pair: d.pair, decision: d.decision, reasoning: d.reasoning, rate: d.rate, tp_rate: d.tp_rate, sl_rate: d.sl_rate, created_at: d.created_at };
-            })
-          });
-        }
-        // フォールバック: OPENポジションにリンク
-        if (!n.linked_trade && opens.length > 0) {
-          for (var pi = 0; pi < opens.length; pi++) {
-            if (pairs.length === 0 || pairs.indexOf(opens[pi].pair) >= 0) {
-              var op = opens[pi];
-              return Object.assign({}, n, { linked_trade: { direction: op.direction, entry_rate: op.entry_rate, tp_rate: op.tp_rate, sl_rate: op.sl_rate, pair: op.pair } });
-            }
-          }
-        }
-        return n;
-      });
+      // バックエンド（api.ts news_analysisキャッシュ）が付与済みのtrade_decisionsをそのまま使用
+      // フロントのrecentDecisions再マッチング（直近20件制限で古い紐付けが消える問題）を廃止
+      var impactedItems = mergedAnalysis.filter(function(n) { return n.attention; });
       impactedItems.sort(function(a, b) {
         return parseDate(b.pubDate) - parseDate(a.pubDate);
       });
@@ -1384,8 +1376,12 @@ export const JS = `
       svg.innerHTML = '<text x="160" y="35" text-anchor="middle" font-size="12" fill="var(--tertiary)">データ蓄積中...</text>';
       return;
     }
+    // チャート開始直前の残高を逆算: 全体totalPnl から描画分のPnLを引く
+    var chartPnl = closes.reduce(function(a, b) { return a + (b.pnl || 0); }, 0);
+    var totalPnlForChart = (data.performance && data.performance.totalPnl) || 0;
+    var basePnl = totalPnlForChart - chartPnl;
     var cumPnl = [];
-    var sum = INITIAL_CAPITAL;
+    var sum = INITIAL_CAPITAL + basePnl;
     for (var i = 0; i < closes.length; i++) {
       sum += (closes[i].pnl || 0);
       cumPnl.push(sum);
