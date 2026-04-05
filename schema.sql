@@ -76,7 +76,7 @@ CREATE TABLE IF NOT EXISTS news_raw (
   reject_reason    TEXT,                        -- 不採用時: 理由（「スポーツ」「重複」等）
   -- 多軸スコアリング（7軸評価）
   scores           TEXT,                        -- JSON: {timeliness,uniqueness,relevance,credibility,sentiment,breadth,novelty,composite}
-  composite_score  REAL                         -- 加重合計スコア（0〜10）。閾値6.0以上で採用
+  composite_score  REAL                         -- 加重合計スコア（0〜100）。AI返却値0〜10を*10して保存。閾値70以上でTREND_INFLUENCE
 );
 
 CREATE INDEX IF NOT EXISTS idx_news_raw_fetched ON news_raw(fetched_at);
