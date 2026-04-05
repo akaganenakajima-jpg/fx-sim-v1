@@ -479,7 +479,7 @@ export function getDashboardHtml(): string {
   <div id="news-drawer-body" class="news-drawer-body"></div>
 </div>
 
-<script src="/app.js?v=31"></script>
+<script src="/app.js?v=32"></script>
 </body>
 </html>`;
 }

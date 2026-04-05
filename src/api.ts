@@ -101,28 +101,7 @@ export interface StatusResponse {
   };
   sparklines: Record<string, SparkPoint[]>;
   performanceByPair: Record<string, PairPerf>;
-  recentCloses: Position[];
-  systemLogs: SystemLog[];
   logStats: LogStats;
-  latestNews: Array<{ title: string; pubDate: string; description: string; source?: string }>;
-  acceptedNews: Array<{ id: number; source: string; title_ja: string; desc_ja: string; url: string | null; fetched_at: string; pub_date: string | null }>;
-  newsAnalysis: Array<{
-    index: number;
-    attention: boolean;
-    impact: string | null;
-    title_ja: string | null;
-    title?: string | null;
-    pubDate?: string | null;
-    description?: string | null;
-    source?: string | null;
-    score?: number | null;
-    affected_pairs?: string[] | null;
-    verdict?: 'correct' | 'wrong' | 'pending' | null;
-    why_chain?: string[] | null;
-    trade_decisions?: Array<{ pair: string; decision: string; reasoning: string | null }> | null;
-    hold_reason?: string | null;
-    analyzed_at?: string | null;
-  }>;
   /** Ph.Why: 全ペアのパラメーター変更履歴（Tab3/4で使用） */
   paramHistory: Array<{
     pair: string;
@@ -295,15 +274,6 @@ export interface StatusResponse {
   sessionStats: SessionStats[];
   /** テスタ施策14: 銘柄別統計 */
   pairStats: PairStats[];
-  /** ニューストリガーログ（EMERGENCY/TREND_INFLUENCE判定結果） */
-  newsTriggers: Array<{
-    trigger_type: string;
-    news_title: string;
-    news_score: number;
-    relevance: number | null;
-    sentiment: number | null;
-    created_at: string;
-  }>;
   /** 全銘柄定義（instruments.tsから動的生成） */
   instruments: Array<{
     pair: string;
@@ -317,7 +287,7 @@ export interface StatusResponse {
 }
 
 export async function getApiStatus(db: D1Database, tradingEnv?: { TRADING_ENABLED?: string; OANDA_LIVE?: string; RISK_MAX_DAILY_LOSS?: string; RISK_MAX_LIVE_POSITIONS?: string; RISK_MAX_LOT_SIZE?: string; RISK_ANOMALY_THRESHOLD?: string }): Promise<StatusResponse> {
-  const [rateRow, openPositions, perf, latest, recent, sysRow, sparkRaw, perfByPairRaw, recentClosesRaw, acceptedNewsRaw, sysLogsRaw, logStatsRaw, instrScoresRaw, rrSummaryRow, slPatternsRow, cronTimingsRow, todayDecisionCountRow, paramReviewLogRaw, indicatorLogsRaw, eraBatchRaw] =
+  const [rateRow, openPositions, perf, latest, recent, sysRow, sparkRaw, perfByPairRaw, logStatsRaw, instrScoresRaw, rrSummaryRow, slPatternsRow, cronTimingsRow, todayDecisionCountRow, paramReviewLogRaw, indicatorLogsRaw, eraBatchRaw] =
     await Promise.all([
       db
         .prepare("SELECT value FROM market_cache WHERE key = 'prev_rate_USD/JPY'")
@@ -382,21 +352,6 @@ export async function getApiStatus(db: D1Database, tradingEnv?: { TRADING_ENABLE
            GROUP BY pair`
         )
         .all<{ pair: string; total: number; wins: number; totalPnl: number; avgRR: number | null }>(),
-
-      // 直近クローズ（TP祝福検出 + 銘柄別履歴用）
-      db
-        .prepare(`SELECT * FROM positions WHERE status = 'CLOSED' ORDER BY closed_at DESC LIMIT 30`)
-        .all<Position>(),
-
-      // news_raw から採用記事（最大30件、7日TTL+purgeで自動管理）
-      db
-        .prepare(`SELECT id, source, title_ja, desc_ja, url, fetched_at, pub_date, composite_score AS score, filter_accepted, scores FROM news_raw WHERE filter_accepted = 1 ORDER BY id DESC LIMIT 30`)
-        .all<{ id: number; source: string; title_ja: string; desc_ja: string; url: string | null; fetched_at: string; pub_date: string | null; score: number | null; filter_accepted: number; scores: string | null }>(),
-
-      // システムログ（直近30件）
-      db
-        .prepare(`SELECT id, level, category, message, detail, created_at FROM system_logs ORDER BY id DESC LIMIT 30`)
-        .all<SystemLog>(),
 
       // ログ統計
       db
@@ -521,28 +476,6 @@ export async function getApiStatus(db: D1Database, tradingEnv?: { TRADING_ENABLE
   for (const row of (perfByPairRaw.results ?? [])) {
     performanceByPair[row.pair] = { total: row.total, wins: row.wins, totalPnl: row.totalPnl, avgRR: row.avgRR ?? null };
   }
-
-  const sysLogs = sysLogsRaw.results ?? [];
-
-  // ニュース: cron側のfilterAndTranslateNewsで処理済みのlatest_newsキャッシュを使用
-  // RSS直接取得はcron側の責務。API側はキャッシュのみ参照（日本語翻訳済み）
-  let latestNews: Array<{ title: string; pubDate: string; description: string; source?: string }> = [];
-  const knownTitles = new Set<string>();
-  try {
-    const cachedRaw = await db.prepare("SELECT value FROM market_cache WHERE key = 'latest_news'").first<{ value: string }>();
-    if (cachedRaw?.value) {
-      const cached: Array<{ title: string; title_ja?: string | null; desc_ja?: string | null; pubDate: string; description: string; source?: string }> = JSON.parse(cachedRaw.value);
-      for (const item of cached) {
-        const title = item.title_ja || item.title;
-        const desc = item.desc_ja || item.description;
-        if (title) {
-          latestNews.push({ ...item, title, description: desc });
-          knownTitles.add(title);
-          if (item.title !== title) knownTitles.add(item.title); // 英語原題も記録（重複防止用）
-        }
-      }
-    }
-  } catch {}
 
   // トレーディングモード判定
   const tradingMode: 'paper' | 'demo' | 'live' =
@@ -673,37 +606,6 @@ export async function getApiStatus(db: D1Database, tradingEnv?: { TRADING_ENABLE
     } catch {}
   }
 
-  // 分析データ取得 → ニュースリストとマージ（分析のtitleがlatestNewsに存在しなければ先頭に挿入）
-  // knownTitlesには英語原題+日本語タイトル両方が入っているため、翻訳済み記事の重複挿入を防止
-  const { items: newsAnalysis, updatedAt: analysisUpdatedAt } = await getNewsAnalysis(db);
-  for (const a of newsAnalysis) {
-    const title = a.title_ja || a.title;
-    if (title && !knownTitles.has(a.title || '') && !knownTitles.has(title) && a.attention) {
-      const pubDate = a.pubDate || (a as any).pubDate || analysisUpdatedAt || '';
-      const desc = (a as any).description || a.impact || '';
-      const source = (a as any).source || undefined;
-      latestNews.unshift({ title, pubDate, description: desc, source });
-      knownTitles.add(title);
-      if (a.title) knownTitles.add(a.title);
-    }
-  }
-  // 新しい順にソートしてから30件に制限
-  latestNews.sort((a, b) => (new Date(b.pubDate).getTime() || 0) - (new Date(a.pubDate).getTime() || 0));
-  if (latestNews.length > 30) latestNews.length = 30;
-
-  // title_ja はcron側で翻訳済み（latest_newsキャッシュ内に含まれる）
-
-  // ニューストリガーログ（EMERGENCY/TREND_INFLUENCE判定結果）
-  let newsTriggers: StatusResponse['newsTriggers'] = [];
-  try {
-    const ntRaw = await db.prepare(
-      `SELECT trigger_type, news_title, news_score, relevance, sentiment, created_at FROM news_trigger_log
-       WHERE created_at > datetime('now', '-12 hours')
-       ORDER BY created_at DESC LIMIT 10`
-    ).all<{ trigger_type: string; news_title: string; news_score: number; relevance: number | null; sentiment: number | null; created_at: string }>();
-    newsTriggers = ntRaw.results ?? [];
-  } catch { /* テーブル未存在 */ }
-
   // 稼働率・エラー率の正確な分母・分子（直近24h）
   let runs24h = 0;
   let errors24h = 0;
@@ -739,34 +641,17 @@ export async function getApiStatus(db: D1Database, tradingEnv?: { TRADING_ENABLE
     },
     sparklines,
     performanceByPair,
-    recentCloses: recentClosesRaw.results ?? [],
     riskStatus,
     instrumentScores: instrScoresRaw.results ?? [],
     rrSummary: (() => {
       try { return rrSummaryRow ? JSON.parse(rrSummaryRow.value) : null; } catch { return null; }
     })(),
-    latestNews,
-    acceptedNews: (acceptedNewsRaw.results ?? []).map(r => ({
-      id: r.id,
-      source: r.source,
-      title_ja: r.title_ja,
-      desc_ja: r.desc_ja,
-      url: r.url ?? null,
-      fetched_at: r.fetched_at,
-      pub_date: r.pub_date ?? null,
-      score: r.score ?? null,
-      filter_accepted: r.filter_accepted,
-      scores: r.scores ?? null,
-    })),
-    newsAnalysis,
-    newsTriggers,
-    systemLogs: sysLogs,
     logStats: {
       totalRuns: logStatsRaw?.totalRuns ?? 0,
       geminiCalls: logStatsRaw?.geminiCalls ?? 0,
       holdCount: logStatsRaw?.holdCount ?? 0,
-      errorCount: sysLogs.filter(l => l.level === 'ERROR').length,
-      warnCount: sysLogs.filter(l => l.level === 'WARN').length,
+      errorCount: errors24h,   // 正確な値は /api/logs で取得、ここでは24h エラー数を使用
+      warnCount: 0,            // /api/logs でのみ提供
       lastRun: logStatsRaw?.lastRun ?? null,
       runs24h,
       errors24h,
@@ -1287,7 +1172,7 @@ function buildParamHistory(
 }
 
 async function getNewsAnalysis(db: D1Database): Promise<{
-  items: StatusResponse['newsAnalysis'];
+  items: NewsAnalysisItem[];
   updatedAt: string | null;
 }> {
   try {
@@ -1425,5 +1310,155 @@ export async function getApiParams(db: D1Database): Promise<ParamsResponse> {
     params:          paramsRaw.results  ?? [],
     history:         historyRaw.results ?? [],
     latestEmergency: emergencyRaw ?? null,
+  };
+}
+
+// ─── /api/history — 取引履歴（遅延ロード） ──────────────────────────────────
+
+export interface HistoryResponse {
+  recentCloses: Position[];
+}
+
+export async function getApiHistory(db: D1Database): Promise<HistoryResponse> {
+  const raw = await db.prepare(
+    `SELECT * FROM positions WHERE status = 'CLOSED' ORDER BY closed_at DESC LIMIT 30`
+  ).all<Position>();
+  return { recentCloses: raw.results ?? [] };
+}
+
+// ─── /api/logs — システムログ（遅延ロード） ─────────────────────────────────
+
+export interface LogsResponse {
+  systemLogs: SystemLog[];
+  logStats: LogStats;
+}
+
+export async function getApiLogs(db: D1Database): Promise<LogsResponse> {
+  const [sysLogsRaw, logStatsRaw, r24, e24] = await Promise.all([
+    db.prepare(`SELECT id, level, category, message, detail, created_at FROM system_logs ORDER BY id DESC LIMIT 30`)
+      .all<SystemLog>(),
+    db.prepare(`SELECT COUNT(*) AS totalRuns, SUM(CASE WHEN decision != 'HOLD' THEN 1 ELSE 0 END) AS geminiCalls, SUM(CASE WHEN decision = 'HOLD' THEN 1 ELSE 0 END) AS holdCount, MAX(created_at) AS lastRun FROM decisions`)
+      .first<{ totalRuns: number; geminiCalls: number; holdCount: number; lastRun: string }>(),
+    db.prepare(`SELECT COUNT(*) AS cnt FROM decisions WHERE created_at > datetime('now', '-24 hours')`)
+      .first<{ cnt: number }>(),
+    db.prepare(`SELECT COUNT(*) AS cnt FROM system_logs WHERE level = 'ERROR' AND created_at > datetime('now', '-24 hours')`)
+      .first<{ cnt: number }>(),
+  ]);
+  const sysLogs = sysLogsRaw.results ?? [];
+  return {
+    systemLogs: sysLogs,
+    logStats: {
+      totalRuns:   logStatsRaw?.totalRuns   ?? 0,
+      geminiCalls: logStatsRaw?.geminiCalls ?? 0,
+      holdCount:   logStatsRaw?.holdCount   ?? 0,
+      errorCount:  sysLogs.filter(l => l.level === 'ERROR').length,
+      warnCount:   sysLogs.filter(l => l.level === 'WARN').length,
+      lastRun:     logStatsRaw?.lastRun ?? null,
+      runs24h:     r24?.cnt ?? 0,
+      errors24h:   e24?.cnt ?? 0,
+    },
+  };
+}
+
+// ─── /api/news — ニュースデータ（遅延ロード） ───────────────────────────────
+
+export type NewsAnalysisItem = {
+  index: number;
+  attention: boolean;
+  impact: string | null;
+  title_ja: string | null;
+  title?: string | null;
+  pubDate?: string | null;
+  description?: string | null;
+  source?: string | null;
+  score?: number | null;
+  affected_pairs?: string[] | null;
+  verdict?: 'correct' | 'wrong' | 'pending' | null;
+  why_chain?: string[] | null;
+  trade_decisions?: Array<{ pair: string; decision: string; reasoning: string | null }> | null;
+  hold_reason?: string | null;
+  analyzed_at?: string | null;
+};
+
+export interface NewsResponse {
+  newsAnalysis: NewsAnalysisItem[];
+  latestNews: Array<{ title: string; pubDate: string; description: string; source?: string }>;
+  acceptedNews: Array<{
+    id: number; source: string; title_ja: string; desc_ja: string;
+    url: string | null; fetched_at: string; pub_date: string | null;
+    score: number | null; filter_accepted: number; scores: string | null;
+  }>;
+  newsTriggers: Array<{
+    trigger_type: string;
+    news_title: string;
+    news_score: number;
+    relevance: number | null;
+    sentiment: number | null;
+    created_at: string;
+  }>;
+}
+
+export async function getApiNews(db: D1Database): Promise<NewsResponse> {
+  // latestNews: cron側で翻訳済みのキャッシュを参照
+  let latestNews: NewsResponse['latestNews'] = [];
+  const knownTitles = new Set<string>();
+  try {
+    const cachedRaw = await db.prepare("SELECT value FROM market_cache WHERE key = 'latest_news'").first<{ value: string }>();
+    if (cachedRaw?.value) {
+      const cached: Array<{ title: string; title_ja?: string | null; desc_ja?: string | null; pubDate: string; description: string; source?: string }> = JSON.parse(cachedRaw.value);
+      for (const item of cached) {
+        const title = item.title_ja || item.title;
+        const desc = item.desc_ja || item.description;
+        if (title) {
+          latestNews.push({ ...item, title, description: desc });
+          knownTitles.add(title);
+          if (item.title !== title) knownTitles.add(item.title);
+        }
+      }
+    }
+  } catch {}
+
+  // acceptedNews: news_raw から採用記事
+  const acceptedNewsRaw = await db.prepare(
+    `SELECT id, source, title_ja, desc_ja, url, fetched_at, pub_date, composite_score AS score, filter_accepted, scores
+     FROM news_raw WHERE filter_accepted = 1 ORDER BY id DESC LIMIT 30`
+  ).all<{ id: number; source: string; title_ja: string; desc_ja: string; url: string | null; fetched_at: string; pub_date: string | null; score: number | null; filter_accepted: number; scores: string | null }>();
+
+  // newsAnalysis: market_cache の 'news_analysis' キーから
+  const { items: newsAnalysis, updatedAt: analysisUpdatedAt } = await getNewsAnalysis(db);
+  for (const a of newsAnalysis) {
+    const title = a.title_ja || a.title;
+    if (title && !knownTitles.has(a.title || '') && !knownTitles.has(title) && a.attention) {
+      const pubDate = a.pubDate || (a as any).pubDate || analysisUpdatedAt || '';
+      const desc = (a as any).description || a.impact || '';
+      const source = (a as any).source || undefined;
+      latestNews.unshift({ title, pubDate, description: desc, source });
+      knownTitles.add(title);
+      if (a.title) knownTitles.add(a.title);
+    }
+  }
+  latestNews.sort((a, b) => (new Date(b.pubDate).getTime() || 0) - (new Date(a.pubDate).getTime() || 0));
+  if (latestNews.length > 30) latestNews.length = 30;
+
+  // newsTriggers
+  let newsTriggers: NewsResponse['newsTriggers'] = [];
+  try {
+    const ntRaw = await db.prepare(
+      `SELECT trigger_type, news_title, news_score, relevance, sentiment, created_at FROM news_trigger_log
+       WHERE created_at > datetime('now', '-12 hours')
+       ORDER BY created_at DESC LIMIT 10`
+    ).all<{ trigger_type: string; news_title: string; news_score: number; relevance: number | null; sentiment: number | null; created_at: string }>();
+    newsTriggers = ntRaw.results ?? [];
+  } catch { /* テーブル未存在時はnullのまま */ }
+
+  return {
+    newsAnalysis,
+    latestNews,
+    acceptedNews: (acceptedNewsRaw.results ?? []).map(r => ({
+      id: r.id, source: r.source, title_ja: r.title_ja, desc_ja: r.desc_ja,
+      url: r.url ?? null, fetched_at: r.fetched_at, pub_date: r.pub_date ?? null,
+      score: r.score ?? null, filter_accepted: r.filter_accepted, scores: r.scores ?? null,
+    })),
+    newsTriggers,
   };
 }
