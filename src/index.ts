@@ -1,13 +1,12 @@
 // エントリーポイント
 // scheduled: 1分ごとにレート取得→指標取得→TP/SL確認→フィルタ→Gemini判定→記録
-// fetch:     GET / → ダッシュボード、GET /api/status → JSON、GET /style.css・/app.js → 静的ファイル
+// fetch:     GET / → ダッシュボード、GET /api/status → JSON
+//            /app.js・/style.css は Workers Assets（public/）から配信（Workerを経由しない）
 
 import { type Env } from './env';
 import { withRunId } from './db';
 import { getDashboardHtml } from './dashboard';
 import { getApiStatus, getApiParams, getApiHistory, getApiLogs, getApiNews } from './api';
-import { CSS } from './style.css';
-import { JS } from './app.js';
 import { decideRotation, getPendingRotations } from './rotation';
 import { runCore } from './workflows/core-workflow';
 import { runAnalysis } from './workflows/analysis-workflow';
@@ -44,14 +43,6 @@ export default {
       case '/':
         return new Response(getDashboardHtml(), {
           headers: { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-cache, no-store' },
-        });
-      case '/style.css':
-        return new Response(CSS, {
-          headers: { 'Content-Type': 'text/css; charset=utf-8', 'Cache-Control': 'no-cache' },
-        });
-      case '/app.js':
-        return new Response(JS, {
-          headers: { 'Content-Type': 'application/javascript; charset=utf-8', 'Cache-Control': 'no-cache' },
         });
       case '/manifest.json':
         return new Response(JSON.stringify({

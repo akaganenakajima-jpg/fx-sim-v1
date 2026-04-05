@@ -1,6 +1,6 @@
 // GET / — ダッシュボード HTML（v7 Liquid Glass 6タブ構造）
-
-import { CSS_VERSION } from './constants';
+// /app.js と /style.css は Workers Assets（public/）から配信
+// バージョン番号を変えるときは下記 ?v= を手動バンプすること
 
 export function getDashboardHtml(): string {
   return `<!DOCTYPE html>
@@ -24,7 +24,7 @@ export function getDashboardHtml(): string {
   <meta property="og:type" content="website">
   <meta property="og:url" content="https://fx-sim-v1.ai-battle-sim.workers.dev/">
   <meta property="og:image" content="https://fx-sim-v1.ai-battle-sim.workers.dev/icon-512.svg">
-  <link rel="stylesheet" href="/style.css?v=${CSS_VERSION}">
+  <link rel="stylesheet" href="/style.css?v=22">
 </head>
 <body>
 
