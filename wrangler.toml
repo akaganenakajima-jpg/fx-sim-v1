@@ -3,6 +3,11 @@ main = "src/index.ts"
 compatibility_date = "2024-01-01"
 compatibility_flags = ["nodejs_compat"]
 
+# 静的アセット配信（app.js / style.css / manifest.json / icon-*.svg 等）
+# Worker の fetch ハンドラーより先に Cloudflare CDN エッジで配信される
+[assets]
+directory = "./public"
+
 [triggers]
 crons = [
   "* * * * *",

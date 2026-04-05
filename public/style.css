@@ -1,7 +1,4 @@
-// iOS 26 Liquid Glass + Apple HIG CSS (v7 full rewrite)
-// 5-tab layout / SF Pro / 8pt grid / 44pt touch targets / Liquid Glass
 
-export const CSS = `
 *{margin:0;padding:0;box-sizing:border-box}
 :root{
   --bg:#000;--surface:#1C1C1E;--card:#2C2C2E;--elevated:#3A3A3C;
@@ -720,4 +717,3 @@ button:focus-visible { outline: 2px solid var(--blue); outline-offset: 2px; }
 .screener-history-reason{flex:1;color:var(--tertiary);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .screener-history-date{color:var(--tertiary);font-size:11px;font-variant-numeric:tabular-nums}
 .screener-rotation{margin-bottom:8px}
-`;

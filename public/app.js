@@ -1,33 +1,4 @@
-// ダッシュボード フロントエンド JS
-// v7 Liquid Glass 6タブ構造 — render関数群
 
-import {
-  INITIAL_CAPITAL,
-  WIN_RATE_GREEN_THRESHOLD,
-  WIN_RATE_MATRIX_HIGH,
-  WIN_RATE_MATRIX_LOW,
-  RR_BADGE_GREEN,
-  RR_BADGE_BLUE,
-  NEWS_SCORE_EMERGENCY,
-  NEWS_SCORE_TREND,
-  VIX_EFFECT_HIGH,
-  VIX_EFFECT_LOW,
-  UI_NEWS_PANEL_LIMIT,
-  UI_ERROR_CHECK_COUNT,
-  ANIMATION_DURATION_MS,
-  SCROLL_DELAY_MS,
-  ROTATION_POLL_MS,
-  PARAMS_POLL_MS,
-  EMERGENCY_BANNER_TTL_MS,
-  RELIABILITY_TRUSTED,
-  RELIABILITY_TENTATIVE,
-  DD_CAUTION,
-  DD_WARNING,
-  DD_HALT,
-  DD_STOP,
-} from './constants';
-
-export const JS = `
 (function () {
   'use strict';
 
@@ -119,29 +90,29 @@ export const JS = `
   var INSTRUMENTS = [];
 
   // ─── アプリ設定（src/constants.ts からビルド時に自動注入）──────────────────
-  var INITIAL_CAPITAL  = ${INITIAL_CAPITAL};
-  var WIN_RATE_GREEN   = ${WIN_RATE_GREEN_THRESHOLD};
-  var WIN_RATE_MH      = ${WIN_RATE_MATRIX_HIGH};
-  var WIN_RATE_ML      = ${WIN_RATE_MATRIX_LOW};
-  var RR_GREEN         = ${RR_BADGE_GREEN};
-  var RR_BLUE          = ${RR_BADGE_BLUE};
-  var NEWS_EMERGENCY   = ${NEWS_SCORE_EMERGENCY};
-  var NEWS_TREND       = ${NEWS_SCORE_TREND};
-  var VIX_HIGH         = ${VIX_EFFECT_HIGH};
-  var VIX_LOW          = ${VIX_EFFECT_LOW};
-  var NEWS_LIMIT       = ${UI_NEWS_PANEL_LIMIT};
-  var ERR_LIMIT        = ${UI_ERROR_CHECK_COUNT};
-  var ANIM_MS          = ${ANIMATION_DURATION_MS};
-  var SCROLL_MS        = ${SCROLL_DELAY_MS};
-  var ROT_POLL_MS      = ${ROTATION_POLL_MS};
-  var PARAM_POLL_MS    = ${PARAMS_POLL_MS};
-  var BANNER_TTL       = ${EMERGENCY_BANNER_TTL_MS};
-  var REL_TRUSTED      = ${RELIABILITY_TRUSTED};
-  var REL_TENTATIVE    = ${RELIABILITY_TENTATIVE};
-  var DD_CAUT          = ${DD_CAUTION};
-  var DD_WARN          = ${DD_WARNING};
-  var DD_HLT           = ${DD_HALT};
-  var DD_STP           = ${DD_STOP};
+  var INITIAL_CAPITAL  = 10000;
+  var WIN_RATE_GREEN   = 35;
+  var WIN_RATE_MH      = 0.4;
+  var WIN_RATE_ML      = 0.35;
+  var RR_GREEN         = 2;
+  var RR_BLUE          = 1;
+  var NEWS_EMERGENCY   = 90;
+  var NEWS_TREND       = 70;
+  var VIX_HIGH         = 0.65;
+  var VIX_LOW          = 0.4;
+  var NEWS_LIMIT       = 10;
+  var ERR_LIMIT        = 5;
+  var ANIM_MS          = 800;
+  var SCROLL_MS        = 150;
+  var ROT_POLL_MS      = 60000;
+  var PARAM_POLL_MS    = 60000;
+  var BANNER_TTL       = 600000;
+  var REL_TRUSTED      = 200;
+  var REL_TENTATIVE    = 50;
+  var DD_CAUT          = 7;
+  var DD_WARN          = 10;
+  var DD_HLT           = 15;
+  var DD_STP           = 20;
   // ─────────────────────────────────────────────────────────────────────────
 
   // ══════════════════════════════════════════
@@ -236,7 +207,7 @@ export const JS = `
     if (text.indexOf('スキップ:') === 0) {
       if (text.indexOf('変化なし') !== -1) return '待機中 — 変化なし';
       if (text.indexOf('スキップ時間帯') !== -1) return '待機中 — 重要指標時間帯';
-      return '待機中 — ' + text.replace(/^スキップ:\\s*/, '').split('(')[0].trim();
+      return '待機中 — ' + text.replace(/^スキップ:\s*/, '').split('(')[0].trim();
     }
     if (text.indexOf('Geminiエラー') === 0) return 'AI判断エラー — 次回再試行';
     return text;
@@ -537,11 +508,11 @@ export const JS = `
     var alerts = [];
 
     if (data.riskStatus && data.riskStatus.killSwitchActive) {
-      alerts.push({ cls: 'alert-red', text: '\\u26A0\\uFE0F DD STOP — 日次損失上限超過。新規エントリー停止中' });
+      alerts.push({ cls: 'alert-red', text: '\u26A0\uFE0F DD STOP — 日次損失上限超過。新規エントリー停止中' });
     } else if (data.riskStatus && data.riskStatus.maxDailyLoss > 0 &&
                data.riskStatus.todayLoss / data.riskStatus.maxDailyLoss > 0.8) {
       var pct = Math.round(data.riskStatus.todayLoss / data.riskStatus.maxDailyLoss * 100);
-      alerts.push({ cls: 'alert-orange', text: '\\u26A1 DD注意 — 日次損失が上限の' + pct + '%に到達' });
+      alerts.push({ cls: 'alert-orange', text: '\u26A1 DD注意 — 日次損失が上限の' + pct + '%に到達' });
     }
 
     if (data.newsAnalysis) {
@@ -552,7 +523,7 @@ export const JS = `
         if (n.attention && n.analyzed_at) {
           var diff = now - new Date(n.analyzed_at).getTime();
           if (diff < tenMin) {
-            alerts.push({ cls: 'alert-red', text: '\\uD83D\\uDD34 緊急ニュース: ' + (n.title_ja || n.title || '速報') });
+            alerts.push({ cls: 'alert-red', text: '\uD83D\uDD34 緊急ニュース: ' + (n.title_ja || n.title || '速報') });
           }
         }
       }
@@ -561,7 +532,7 @@ export const JS = `
     if (data.systemLogs) {
       var recentErrors = data.systemLogs.slice(0, ERR_LIMIT).filter(function(l) { return l.level === 'ERROR'; });
       if (recentErrors.length > 0) {
-        alerts.push({ cls: 'alert-orange', text: '\\uD83D\\uDD27 システムエラー検出: ' + (recentErrors[0].message || '') });
+        alerts.push({ cls: 'alert-orange', text: '\uD83D\uDD27 システムエラー検出: ' + (recentErrors[0].message || '') });
       }
     }
 
@@ -680,14 +651,14 @@ export const JS = `
       var html = '';
       if (cs.drivers.profitTop) {
         var p = cs.drivers.profitTop;
-        html += '<div class="drv" onclick="switchTab(\\'' + 'tab-stats\\', \\'evo-' + (p.pair || '').replace(/[\\/\\s]/g, '-').toLowerCase() + '\\')">' +
+        html += '<div class="drv" onclick="switchTab(\'' + 'tab-stats\', \'evo-' + (p.pair || '').replace(/[\/\s]/g, '-').toLowerCase() + '\')">' +
           '<div class="drv-tag profit">利益TOP</div><div class="drv-pair">' + escHtml(p.pair) + '</div>' +
           '<div class="drv-pnl" style="color:var(--green)">+' + Math.round(p.pnl) + '</div>' +
           '<div class="drv-reason">' + escHtml(p.reason || '') + '</div></div>';
       }
       if (cs.drivers.lossTop) {
         var l = cs.drivers.lossTop;
-        html += '<div class="drv" onclick="switchTab(\\'' + 'tab-stats\\', \\'evo-' + (l.pair || '').replace(/[\\/\\s]/g, '-').toLowerCase() + '\\')">' +
+        html += '<div class="drv" onclick="switchTab(\'' + 'tab-stats\', \'evo-' + (l.pair || '').replace(/[\/\s]/g, '-').toLowerCase() + '\')">' +
           '<div class="drv-tag loss">損失TOP</div><div class="drv-pair">' + escHtml(l.pair) + '</div>' +
           '<div class="drv-pnl" style="color:var(--red)">' + Math.round(l.pnl) + '</div>' +
           '<div class="drv-reason">' + escHtml(l.reason || '') + '</div></div>';
@@ -730,9 +701,9 @@ export const JS = `
         if (label.length > 12) label = label.slice(0, 12) + '…';
         var onclick = '';
         if (t === 'param_review') {
-          onclick = ' onclick="switchTab(\\\'tab-ai\\\');setTimeout(function(){var s=document.getElementById(\\\'ai-pr-section\\\');if(s)s.scrollIntoView({behavior:\\\'smooth\\\'})},100)"';
+          onclick = ' onclick="switchTab(\'tab-ai\');setTimeout(function(){var s=document.getElementById(\'ai-pr-section\');if(s)s.scrollIntoView({behavior:\'smooth\'})},100)"';
         } else if (t === 'news') {
-          onclick = ' onclick="switchTab(\\\'tab-news\\\')"';
+          onclick = ' onclick="switchTab(\'tab-news\')"';
         }
         return '<span class="chip ' + cls + '"' + onclick + '>' + escHtml(label) + '</span>';
       }).join('');
@@ -783,9 +754,9 @@ export const JS = `
   function hmLabel(val, key) {
     if (key === 'pnl_closed' && val !== 0) return (val > 0 ? '+' : '') + Math.round(val);
     if (key === 'vix_effect' && val > 0) return val.toFixed(1);
-    if (key === 'param_changed' && val > 0) return '\\u2713';
+    if (key === 'param_changed' && val > 0) return '\u2713';
     if (key === 'news_impact' && val > 0) return '<span style="display:inline-block;background:rgba(10,132,255,0.25);color:#0A84FF;border-radius:4px;padding:0 5px;font-size:11px;font-weight:700">' + Math.round(val) + '</span>';
-    return '\\u2014';
+    return '\u2014';
   }
 
   // ══════════════════════════════════════════
@@ -813,7 +784,7 @@ export const JS = `
       var headline = n.title_ja || n.title || '';
       var aiText = n.desc_ja || n.title_ja || n.title || '';
 
-      return '<div class="nf-item ' + borderCls + '" onclick="switchTab(\\'tab-news\\')">' +
+      return '<div class="nf-item ' + borderCls + '" onclick="switchTab(\'tab-news\')">' +
         '<div class="nf-header"><span class="nf-badge ' + badgeCls + '">' + badgeText + ' · score ' + score + '</span>' +
         '<span class="nf-time">' + fmtTimeAgo(n.analyzed_at || '') + '</span></div>' +
         '<div class="nf-headline">' + escHtml(headline) + '</div>' +
@@ -917,13 +888,13 @@ export const JS = `
         }
       }
 
-      return '<div class="pos ' + winLose + '" onclick="openSheet(\\'' + escHtml(pos.pair) + '\\')">' +
+      return '<div class="pos ' + winLose + '" onclick="openSheet(\'' + escHtml(pos.pair) + '\')">' +
         '<div class="pos-dir ' + dirCls + '">' + dirLetter + '</div>' +
         '<div class="pos-body">' +
           '<div class="pos-top"><span class="pos-pair">' + escHtml(instr ? instr.label : pos.pair) + '</span>' +
           '<span style="display:flex;align-items:center;gap:6px">' + rrBadge + '<span class="pos-pnl ' + pnlCls + '">' + pnlF.text + '</span></span></div>' +
           '<div class="pos-bot"><span class="pos-meta">' +
-            fmtPrice(pos.pair, pos.entry_rate) + '\\u2192' + fmtPrice(pos.pair, cr) +
+            fmtPrice(pos.pair, pos.entry_rate) + '\u2192' + fmtPrice(pos.pair, cr) +
             ' · <span class="' + timeWarnCls.trim() + '">' + holdTime + '</span>' +
             (currentRR ? ' · ' + currentRR : '') +
           '</span>' + sparkSvg + '</div>' +
@@ -945,22 +916,22 @@ export const JS = `
     if (ld) {
       if (ld.vix != null) {
         var vixD = (prev && prev.vix != null) ? ld.vix - prev.vix : null;
-        var vixDStr = vixD != null ? (vixD >= 0 ? '\\u2191' : '\\u2193') + Math.abs(vixD).toFixed(1) : '';
+        var vixDStr = vixD != null ? (vixD >= 0 ? '\u2191' : '\u2193') + Math.abs(vixD).toFixed(1) : '';
         items.push({ label: 'VIX', value: fmt(ld.vix, 1), color: ld.vix > 20 ? 'var(--orange)' : '', delta: vixDStr, dCls: vixD != null ? (vixD >= 0 ? 'up' : 'dn') : '' });
       }
       if (ld.us10y != null) {
         var us10yD = (prev && prev.us10y != null) ? ld.us10y - prev.us10y : null;
-        var us10yDStr = us10yD != null ? (us10yD >= 0 ? '\\u2191' : '\\u2193') + Math.abs(us10yD).toFixed(2) : '';
+        var us10yDStr = us10yD != null ? (us10yD >= 0 ? '\u2191' : '\u2193') + Math.abs(us10yD).toFixed(2) : '';
         items.push({ label: 'US10Y', value: fmt(ld.us10y, 2) + '%', color: '', delta: us10yDStr, dCls: us10yD != null ? (us10yD >= 0 ? 'up' : 'dn') : '' });
       }
       if (ld.nikkei != null) {
         var nkD = (prev && prev.nikkei != null && prev.nikkei > 0) ? (ld.nikkei - prev.nikkei) / prev.nikkei * 100 : null;
-        var nkDStr = nkD != null ? (nkD >= 0 ? '\\u2191' : '\\u2193') + Math.abs(nkD).toFixed(1) + '%' : '';
+        var nkDStr = nkD != null ? (nkD >= 0 ? '\u2191' : '\u2193') + Math.abs(nkD).toFixed(1) + '%' : '';
         items.push({ label: '日経', value: Number(ld.nikkei).toLocaleString('ja-JP', { maximumFractionDigits: 0 }), color: '', delta: nkDStr, dCls: nkD != null ? (nkD >= 0 ? 'up' : 'dn') : '' });
       }
       if (ld.sp500 != null) {
         var spD = (prev && prev.sp500 != null && prev.sp500 > 0) ? (ld.sp500 - prev.sp500) / prev.sp500 * 100 : null;
-        var spDStr = spD != null ? (spD >= 0 ? '\\u2191' : '\\u2193') + Math.abs(spD).toFixed(1) + '%' : '';
+        var spDStr = spD != null ? (spD >= 0 ? '\u2191' : '\u2193') + Math.abs(spD).toFixed(1) + '%' : '';
         items.push({ label: 'S&P', value: Number(ld.sp500).toLocaleString('en-US', { maximumFractionDigits: 0 }), color: '', delta: spDStr, dCls: spD != null ? (spD >= 0 ? 'up' : 'dn') : '' });
       }
     }
@@ -1178,19 +1149,19 @@ export const JS = `
     if (n.why_chain && n.why_chain.length > 0) {
       var whyNewsUid = 'why-news-' + (idx != null ? idx : 'n0');
       whyHtml = '<div style="margin-top:8px">' +
-        '<div class="why-toggle" onclick="toggleWhyTree(\\'' + whyNewsUid + '\\')">\\u25b6 Why\\u00d75 因果チェーン</div>' +
+        '<div class="why-toggle" onclick="toggleWhyTree(\'' + whyNewsUid + '\')">\u25b6 Why\u00d75 因果チェーン</div>' +
         '<div class="why-tree' + (openWhyItems[whyNewsUid] ? ' open' : '') + '" id="' + whyNewsUid + '">' + buildWhyTree(n.why_chain) + '</div>' +
         '</div>';
     }
     var pairsHtml = '';
     if (n.affected_pairs && n.affected_pairs.length > 0) {
-      pairsHtml = '<div class="nf-action"><span style="font-size:12px;color:var(--tertiary)">\\u2192</span>' +
+      pairsHtml = '<div class="nf-action"><span style="font-size:12px;color:var(--tertiary)">\u2192</span>' +
         '<span class="nf-action-text">影響銘柄: <b>' + n.affected_pairs.join(', ') + '</b></span></div>';
     }
     var crossHtml = '';
     if (isAttention) {
-      crossHtml = '<div style="margin-top:8px"><span class="cross-link" onclick="switchTab(\\\'tab-portfolio\\\')">\\u2192 今タブでポジション確認</span>' +
-        '<span class="cross-link" style="margin-left:16px" onclick="switchTab(\\\'tab-ai\\\')">\\u2192 AIタブで判定確認</span></div>';
+      crossHtml = '<div style="margin-top:8px"><span class="cross-link" onclick="switchTab(\'tab-portfolio\')">\u2192 今タブでポジション確認</span>' +
+        '<span class="cross-link" style="margin-left:16px" onclick="switchTab(\'tab-ai\')">\u2192 AIタブで判定確認</span></div>';
     }
     // 取引行動表示
     var tradeActionHtml = '';
@@ -1216,11 +1187,11 @@ export const JS = `
       var ltPair = n.linked_trade.pair || '';
       var dirColor = ltDir === 'BUY' ? 'var(--blue)' : 'var(--teal)';
       var ltLabel = ltPair ? ltPair + ' ' + ltDir : ltDir;
-      tradeActionHtml = '<div class="nf-action"><span style="font-size:12px;color:var(--tertiary)">\\u2192</span>' +
+      tradeActionHtml = '<div class="nf-action"><span style="font-size:12px;color:var(--tertiary)">\u2192</span>' +
         '<span class="nf-action-text"><b style="color:' + dirColor + '">' + escHtml(ltLabel) + '</b>' +
         (n.linked_trade.entry_rate ? ' @ ' + fmtPrice(ltPair, n.linked_trade.entry_rate) : '') +
-        (n.linked_trade.tp_rate ? ' \\u00b7 TP ' + fmtPrice(ltPair, n.linked_trade.tp_rate) : '') +
-        (n.linked_trade.sl_rate ? ' \\u00b7 SL ' + fmtPrice(ltPair, n.linked_trade.sl_rate) : '') +
+        (n.linked_trade.tp_rate ? ' \u00b7 TP ' + fmtPrice(ltPair, n.linked_trade.tp_rate) : '') +
+        (n.linked_trade.sl_rate ? ' \u00b7 SL ' + fmtPrice(ltPair, n.linked_trade.sl_rate) : '') +
         '</span></div>';
     } else if (isAttention) {
       // hold_reason があれば見送り理由を表示、なければ旧データ表示
@@ -1228,14 +1199,14 @@ export const JS = `
       var holdColor = n.hold_reason === '既存ポジションあり' ? 'var(--blue)' : 'var(--tertiary)';
       tradeActionHtml = '<div style="margin-top:6px;padding:6px 12px;font-size:11px;color:' + holdColor + ';background:rgba(255,255,255,0.03);border-radius:var(--rs)">' + holdMsg + '</div>';
     } else {
-      tradeActionHtml = '<div class="nf-action"><span style="font-size:12px;color:var(--tertiary)">\\u2192</span>' +
+      tradeActionHtml = '<div class="nf-action"><span style="font-size:12px;color:var(--tertiary)">\u2192</span>' +
         '<span class="nf-action-text" style="color:var(--tertiary)">影響なし · パラメーター変更なし</span></div>';
     }
     // Workers AIバッジ: scoresにs_source='workers_ai'があれば表示
     var parsedScores = null;
     try { parsedScores = n.scores ? JSON.parse(n.scores) : null; } catch(e) {}
     var waiIndicator = (parsedScores && parsedScores.s_source === 'workers_ai')
-      ? '<span class="nf-wai-badge">\\u26a1 Edge AI</span>' : '';
+      ? '<span class="nf-wai-badge">\u26a1 Edge AI</span>' : '';
     return '<div class="nf-item ' + borderCls + '">' +
       '<div class="nf-header"><span class="nf-badge ' + badgeCls + '">' + badgeText + '</span>' + waiIndicator + '<span class="nf-time">' + fmtTimeAgo(n.analyzed_at || n.pubDate || '') + '</span></div>' +
       '<div class="nf-headline">' + escHtml(n.title_ja || n.title || '') + '</div>' +
@@ -1409,7 +1380,7 @@ export const JS = `
         + '<span style="font-size:11px;color:var(--secondary)">PnL</span>'
         + '<span style="font-size:13px;font-weight:700;color:' + pnlColor + '">' + (e.pnl >= 0 ? '+' : '') + e.pnl.toLocaleString() + '円</span></div>'
         + '<div style="display:flex;justify-content:space-between;margin-bottom:4px">'
-        + '<span style="font-size:11px;color:var(--secondary)">勝率(RR\\u22651.0)</span>'
+        + '<span style="font-size:11px;color:var(--secondary)">勝率(RR\u22651.0)</span>'
         + '<span style="font-size:13px;font-weight:700;color:' + wrColor + '">' + e.win_rate.toFixed(1) + '%</span></div>'
         + '<div style="display:flex;justify-content:space-between;margin-bottom:4px">'
         + '<span style="font-size:11px;color:var(--secondary)">avgRR</span>'
@@ -1644,7 +1615,7 @@ export const JS = `
       var p = byPair[instr.pair];
       var wr = p.total > 0 ? (p.wins / p.total * 100).toFixed(0) : '—';
       var pairChanges = ph.filter(function(h) { return h.pair === instr.pair; });
-      var pairId = instr.pair.replace(/[\\/\\s]/g, '-').toLowerCase();
+      var pairId = instr.pair.replace(/[\/\s]/g, '-').toLowerCase();
 
       // verdict — RRベースで判定（平均RR≥1.0=改善中、<1.0=悪化）
       var verdictCls = 'unchanged';
@@ -1696,20 +1667,20 @@ export const JS = `
           var whyHtml = '';
           if (c.why_chain && c.why_chain.length > 0) {
             var uid = 'why-evo-' + pairId + '-' + ci;
-            whyHtml = '<div class="why-toggle" onclick="toggleWhyTree(\\'' + uid + '\\')">\\u25b6 ' + (dotCls === 'improved' ? 'なぜ効いた？' : dotCls === 'worsened' ? 'なぜ効かなかった？' : '根拠') + '</div>' +
+            whyHtml = '<div class="why-toggle" onclick="toggleWhyTree(\'' + uid + '\')">\u25b6 ' + (dotCls === 'improved' ? 'なぜ効いた？' : dotCls === 'worsened' ? 'なぜ効かなかった？' : '根拠') + '</div>' +
               '<div class="why-tree' + (openWhyItems[uid] ? ' open' : '') + '" id="' + uid + '">' + buildWhyTree(c.why_chain) + '</div>';
           }
           return '<div class="evo-change"><div class="evo-dot ' + dotCls + '"></div><div style="flex:1">' +
             '<div class="evo-text">' + escHtml(c.description || c.change || '') + '</div>' +
             '<div class="evo-result ' + resCls + '">' + escHtml(c.result_text || '') + '</div>' +
             whyHtml +
-            '<span class="cross-link" onclick="switchTab(\\\'tab-strategy\\\',\\\'jc-' + pairId + '\\\')">\\u2192 戦略で詳細</span>' +
-            '<span class="cross-link" style="margin-left:12px" onclick="switchTab(\\\'tab-ai\\\')">\\u2192 AIタブで判断を確認</span>' +
+            '<span class="cross-link" onclick="switchTab(\'tab-strategy\',\'jc-' + pairId + '\')">\u2192 戦略で詳細</span>' +
+            '<span class="cross-link" style="margin-left:12px" onclick="switchTab(\'tab-ai\')">\u2192 AIタブで判断を確認</span>' +
           '</div></div>';
         }).join('') + '</div>';
       } else {
         changesHtml = '<div class="evo-changes"><div class="evo-change"><div class="evo-dot neutral"></div><div style="flex:1">' +
-          '<div class="evo-text">勝率(RR\\u22651.0) ' + wr + '% \\u00b7 ' + p.wins + '勝' + (p.total - p.wins) + '敗\\uff08計' + p.total + '\\uff09</div>' +
+          '<div class="evo-text">勝率(RR\u22651.0) ' + wr + '% \u00b7 ' + p.wins + '勝' + (p.total - p.wins) + '敗\uff08計' + p.total + '\uff09</div>' +
           '<div class="evo-result unchanged">パラメーター変更なし</div>' +
         '</div></div></div>';
       }
@@ -1727,7 +1698,7 @@ export const JS = `
 
   function buildWhyTree(chain) {
     if (!chain || chain.length === 0) return '';
-    var nums = '\u2460\u2461\u2462\u2463\u2464';
+    var nums = '①②③④⑤';
     return chain.map(function(w, i) {
       if (typeof w === 'string') {
         return '<div class="why-node">' +
@@ -1811,7 +1782,7 @@ export const JS = `
       if (acc) brierVal.style.color = acc.brierScore < 0.25 ? 'var(--green)' : 'var(--orange)';
     }
     if (brierTrend && acc && acc.brierTrend) {
-      brierTrend.textContent = acc.brierTrend === 'improving' ? '\\u2193改善中' : acc.brierTrend === 'worsening' ? '\\u2191悪化' : '';
+      brierTrend.textContent = acc.brierTrend === 'improving' ? '\u2193改善中' : acc.brierTrend === 'worsening' ? '\u2191悪化' : '';
     }
 
     // Brierスパークライン（brierHistoryがあれば描画、なければaccuracy推移で代用）
@@ -1864,21 +1835,21 @@ export const JS = `
     var whyHtml = '';
     if (item.why_chain && item.why_chain.length > 0) {
       var uid = 'why-ai-' + (idx != null ? idx : 'a0');
-      whyHtml = '<div class="why-toggle" onclick="toggleWhyTree(\\'' + uid + '\\')">\\u25b6 Why\\u00d75 根拠チェーン</div>' +
+      whyHtml = '<div class="why-toggle" onclick="toggleWhyTree(\'' + uid + '\')">\u25b6 Why\u00d75 根拠チェーン</div>' +
         '<div class="why-tree' + (openWhyItems[uid] ? ' open' : '') + '" id="' + uid + '">' + buildWhyTree(item.why_chain) + '</div>';
     }
 
     var crossHtml = '';
     if (item.crossLink) {
-      var clArgs = '\\\'' + escHtml(item.crossLink.tab || 'tab-stats') + '\\\'';
-      if (item.crossLink.scrollTo) clArgs += ',\\\'' + escHtml(item.crossLink.scrollTo) + '\\\'';
-      crossHtml = '<span class="cross-link" onclick="switchTab(' + clArgs + ')">' + escHtml(item.crossLink.text || '\\u2192 詳細') + '</span>';
+      var clArgs = '\'' + escHtml(item.crossLink.tab || 'tab-stats') + '\'';
+      if (item.crossLink.scrollTo) clArgs += ',\'' + escHtml(item.crossLink.scrollTo) + '\'';
+      crossHtml = '<span class="cross-link" onclick="switchTab(' + clArgs + ')">' + escHtml(item.crossLink.text || '\u2192 詳細') + '</span>';
     }
 
     return '<div class="verdict-card ' + cardCls + '">' +
       '<div class="vc-header"><span class="vc-action">' + escHtml(item.action || '') + '</span><span class="vc-verdict ' + cardCls + '">' + verdictText + '</span></div>' +
-      '<div class="vc-reason">\\u300c' + escHtml(item.reason || '') + '\\u300d</div>' +
-      (item.outcome ? '<div class="vc-outcome ' + outcomeCls + '"' + outcomeStyle + '>\\u2192 ' + escHtml(item.outcome) + '</div>' : '') +
+      '<div class="vc-reason">\u300c' + escHtml(item.reason || '') + '\u300d</div>' +
+      (item.outcome ? '<div class="vc-outcome ' + outcomeCls + '"' + outcomeStyle + '>\u2192 ' + escHtml(item.outcome) + '</div>' : '') +
       whyHtml +
       '<div class="vc-time">' + fmtTimeAgo(item.time || '') + '</div>' +
       crossHtml +
@@ -1905,7 +1876,7 @@ export const JS = `
         outcome: h.result_text || '',
         time: h.created_at || h.time || '',
         why_chain: h.why_chain || null,
-        crossLink: { tab: 'tab-stats', scrollTo: 'evo-' + (h.pair || '').replace(/[\\/\\s]/g, '-').toLowerCase(), text: '\\u2192 学びで効果を確認' }
+        crossLink: { tab: 'tab-stats', scrollTo: 'evo-' + (h.pair || '').replace(/[\/\s]/g, '-').toLowerCase(), text: '\u2192 学びで効果を確認' }
       }, 'pr-' + i);
     }).join('');
   }
@@ -1936,7 +1907,7 @@ export const JS = `
         time: n.analyzed_at || n.pubDate || '',
         why_chain: n.why_chain || null,
         hold_reason: n.hold_reason || null,
-        crossLink: { tab: 'tab-portfolio', text: '\\u2192 今タブで進行確認' }
+        crossLink: { tab: 'tab-portfolio', text: '\u2192 今タブで進行確認' }
       }, 'nc-' + i);
     }).join('');
   }
@@ -2025,7 +1996,7 @@ export const JS = `
 
     container.innerHTML = traded.map(function(instr) {
       var p = byPair[instr.pair] || { total: 0, wins: 0, totalPnl: 0 };
-      var pairId = instr.pair.replace(/[\\/\\s]/g, '-').toLowerCase();
+      var pairId = instr.pair.replace(/[\/\s]/g, '-').toLowerCase();
       var pairChanges = ph.filter(function(h) { return h.pair === instr.pair; });
       var currentVersion = pairChanges.length > 0 ? 'v' + (pairChanges.length + 1) : 'v1';
       var wr = p.total > 0 ? (p.wins / p.total * 100).toFixed(0) : '—';
@@ -2092,7 +2063,7 @@ export const JS = `
             '<div class="score-total">' +
               '<span>閾値: <span style="color:' + thresholdColor + '">' + threshold.toFixed(2) + '</span></span>' +
               '<span style="color:var(--tertiary); font-weight:500;">(重み合計 ' + totalW.toFixed(2) + ')</span>' +
-              '<span style="color:var(--tertiary)">\\u00b7</span>' +
+              '<span style="color:var(--tertiary)">\u00b7</span>' +
               '<span style="color:var(--blue)">' + escHtml(strategyLabel) + '</span>' +
             '</div>' +
           '</div>';
@@ -2105,7 +2076,7 @@ export const JS = `
         var steps = pairChanges.map(function(c, idx) {
           var stepCls = idx === 0 ? 'current' : (c.verdict === 'worked' || c.verdict === 'improved' ? 'good' : c.verdict === 'worsened' || c.verdict === 'didnt' ? 'bad' : 'good');
           var ver = 'v' + (pairChanges.length - idx + 1);
-          if (idx === 0) ver = currentVersion + '\\uff08現在\\uff09';
+          if (idx === 0) ver = currentVersion + '\uff08現在\uff09';
           var resCls = c.verdict === 'worked' || c.verdict === 'improved' ? 'worked' : c.verdict === 'worsened' || c.verdict === 'didnt' ? 'didnt' : '';
           return '<div class="jc-step ' + stepCls + '">' +
             '<div class="jc-step-header"><span class="jc-step-ver">' + ver + '</span><span class="jc-step-time">' + fmtTimeAgo(c.created_at || c.time || '') + '</span></div>' +
@@ -2114,7 +2085,7 @@ export const JS = `
           '</div>';
         });
         // Add v1 initial step
-        steps.push('<div class="jc-step good"><div class="jc-step-header"><span class="jc-step-ver">v1\\uff08初期\\uff09</span></div><div class="jc-step-desc">デフォルト設定</div></div>');
+        steps.push('<div class="jc-step good"><div class="jc-step-header"><span class="jc-step-ver">v1\uff08初期\uff09</span></div><div class="jc-step-desc">デフォルト設定</div></div>');
         timelineHtml = '<div class="jc-timeline">' + steps.join('') + '</div>';
       }
 
@@ -2211,7 +2182,7 @@ export const JS = `
               // 変更あり: 初期値 → 現在値(青)、変更なし: 現在値のみ(グレー)
               var valHtml = chg
                 ? '<span style="font-size:11px;color:var(--secondary)">' + escHtml(initStr) + '</span>' +
-                  '<span style="font-size:11px;color:var(--tertiary);margin:0 4px">\\u2192</span>' +
+                  '<span style="font-size:11px;color:var(--tertiary);margin:0 4px">\u2192</span>' +
                   '<span style="font-size:13px;font-weight:700;color:var(--blue)">' + escHtml(vStr) + '</span>'
                 : '<span style="font-size:13px;color:var(--secondary)">' + escHtml(vStr) + '</span>';
               rowsStr +=
@@ -2230,10 +2201,10 @@ export const JS = `
           }
           var metaNote = '<div style="display:flex;align-items:center;gap:6px;padding:8px 10px;background:var(--bg);border-radius:var(--rs);font-size:11px;color:var(--tertiary);margin-bottom:10px">' +
             '<span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:var(--blue);flex-shrink:0"></span>' +
-            '青・太字 = 初期値から変更済み \\u00b7 v' + (pc.param_version || 1) + ' \\u00b7 最終レビュー: ' + (pc.last_reviewed_at ? fmtTimeAgo(pc.last_reviewed_at) : '未実施') +
+            '青・太字 = 初期値から変更済み \u00b7 v' + (pc.param_version || 1) + ' \u00b7 最終レビュー: ' + (pc.last_reviewed_at ? fmtTimeAgo(pc.last_reviewed_at) : '未実施') +
           '</div>';
           // 状態変数ベース: openJcParams[uid] が true なら open クラスを付与
-          paramsHtml = '<div class="jc-params-toggle" onclick="toggleJcParam(\\'' + uid + '\\')">\\u25b6 パラメーター詳細（全項目）</div>' +
+          paramsHtml = '<div class="jc-params-toggle" onclick="toggleJcParam(\'' + uid + '\')">\u25b6 パラメーター詳細（全項目）</div>' +
             '<div class="jc-params' + (openJcParams[uid] ? ' open' : '') + '" id="' + uid + '">' + metaNote + tblHtml + '</div>';
         }
       }
@@ -2242,7 +2213,7 @@ export const JS = `
         '<div class="jc-header"><span class="jc-pair">' + escHtml(instr.label) + '</span><span class="jc-ver">現在 ' + currentVersion + '</span></div>' +
         '<div class="jc-summary">' + escHtml(summaryText) + '</div>' +
         scoreHtml + timelineHtml + paramsHtml +
-        '<span class="cross-link" onclick="switchTab(\\\'tab-stats\\\',\\\'evo-' + pairId + '\\\')">\\u2192 学びで成果確認</span>' +
+        '<span class="cross-link" onclick="switchTab(\'tab-stats\',\'evo-' + pairId + '\')">\u2192 学びで成果確認</span>' +
       '</div>';
     }).join('');
   }
@@ -2297,7 +2268,7 @@ export const JS = `
     if (healthSub) {
       var ss = data.systemStatus;
       healthSub.textContent = ss
-        ? '最終チェック: ' + new Date().toLocaleTimeString('ja-JP', { hour: '2-digit', minute: '2-digit' }) + ' \\u00b7 稼働 ' + (ss.totalRuns || 0).toLocaleString('ja-JP') + '回'
+        ? '最終チェック: ' + new Date().toLocaleTimeString('ja-JP', { hour: '2-digit', minute: '2-digit' }) + ' \u00b7 稼働 ' + (ss.totalRuns || 0).toLocaleString('ja-JP') + '回'
         : '—';
     }
 
@@ -2305,7 +2276,7 @@ export const JS = `
     var ddCurrent = el('dd-current');
     if (ddCurrent) {
       var ddPctVal = calcRealDDPct(data);
-      ddCurrent.textContent = '\\u25b2 現在 ' + ddPctVal.toFixed(1) + '%';
+      ddCurrent.textContent = '\u25b2 現在 ' + ddPctVal.toFixed(1) + '%';
       ddCurrent.style.color = ddPctVal >= 10 ? 'var(--red)' : ddPctVal >= 5 ? 'var(--orange)' : 'var(--green)';
       ddCurrent.style.fontWeight = '600';
     }
@@ -2376,7 +2347,7 @@ export const JS = `
     var cronMs = data.cronTimings && data.cronTimings.totalMs;
     var cronSec = cronMs ? cronMs / 1000 : 0;
     var cronStatus = cronMs ? (cronSec >= 50 ? 'タイムアウト' : cronSec >= 30 ? '遅延' : '正常') : (ss.totalRuns > 0 ? '正常' : '—');
-    var cronVal = cronMs ? cronSec.toFixed(1) + 's \\u00b7 ' + cronStatus : cronStatus;
+    var cronVal = cronMs ? cronSec.toFixed(1) + 's \u00b7 ' + cronStatus : cronStatus;
     var cronOkStatus = cronMs ? cronSec < 50 : ss.totalRuns > 0;
     var cronExpandHtml = '<div class="hc-detail"><span class="hc-detail-label">最終実行:</span> ' + (cronMs ? cronSec.toFixed(1) + '秒' : '—') + '</div>' +
       '<div class="hc-detail"><span class="hc-detail-label">閾値:</span> <span>30s 警告 / 50s タイムアウト</span></div>';
@@ -2407,7 +2378,7 @@ export const JS = `
 
     var checks = [
       { name: 'Cron 実行',   ok: cronOkStatus,     value: cronVal,    cls: cronMs && cronSec >= 30 && cronSec < 50 ? 'warn' : null, expandHtml: cronExpandHtml },
-      { name: 'RiskGuard',   ok: ddOk,             value: 'DD ' + ddPct + '% \\u00b7 ' + ddStage, expandHtml: riskExpandHtml },
+      { name: 'RiskGuard',   ok: ddOk,             value: 'DD ' + ddPct + '% \u00b7 ' + ddStage, expandHtml: riskExpandHtml },
       { name: 'レート取得',   ok: data.rate != null, value: data.rate != null ? INSTRUMENTS.length + '/' + INSTRUMENTS.length + ' 銘柄' : 'エラー', expandHtml: rateExpandHtml },
       { name: 'AI API',      ok: data.recentDecisions && data.recentDecisions.length > 0, value: '応答正常', expandHtml: aiExpandHtml },
       { name: 'D1 DB',       ok: true,             value: dbDisplayVal, expandHtml: dbExpandHtml },
@@ -2433,7 +2404,7 @@ export const JS = `
     } else {
       logList.innerHTML = abnormal.slice(0, 20).map(function(l) {
         var lvlCls = l.level === 'ERROR' ? 'error' : 'warn';
-        var crossHtml = l.relatedPair ? '<span class="cross-link" onclick="switchTab(\\\'tab-portfolio\\\')">\\u2192 関連ポジション</span>' : '';
+        var crossHtml = l.relatedPair ? '<span class="cross-link" onclick="switchTab(\'tab-portfolio\')">\u2192 関連ポジション</span>' : '';
         return '<div class="log-item">' +
           '<div class="log-header"><span class="log-level ' + lvlCls + '">' + l.level + '</span>' +
           '<span class="log-cat">' + escHtml(l.category || '') + '</span>' +
@@ -2503,15 +2474,15 @@ export const JS = `
     if (isWin) {
       haptic.success();
       banner.className = 'tp-banner';
-      bIcon.textContent = rr >= 2.0 ? '\\ud83c\\udf1f' : '\\u2705';
-      bTitle.textContent = (best.pair || '') + ' RR ' + rr.toFixed(1) + ' \\u2014 ' + (rr >= 2.0 ? '\\u5927\\u52dd\\u5229!' : '\\u52dd\\u5229!');
-      bSub.textContent = fmtYenCompact(pnlVal) + ' ' + (isTP ? 'TP\\u5230\\u9054' : reason);
+      bIcon.textContent = rr >= 2.0 ? '\ud83c\udf1f' : '\u2705';
+      bTitle.textContent = (best.pair || '') + ' RR ' + rr.toFixed(1) + ' \u2014 ' + (rr >= 2.0 ? '\u5927\u52dd\u5229!' : '\u52dd\u5229!');
+      bSub.textContent = fmtYenCompact(pnlVal) + ' ' + (isTP ? 'TP\u5230\u9054' : reason);
     } else {
       haptic.warn();
       banner.className = 'tp-banner sl-banner';
-      bIcon.textContent = '\\ud83d\\udee1\\ufe0f';
-      bTitle.textContent = (best.pair || '') + ' SL\\u767a\\u52d5 \\u2014 \\u30ea\\u30b9\\u30af\\u7ba1\\u7406\\u6210\\u529f';
-      bSub.textContent = fmtYenCompact(pnlVal) + ' · \\u6b21\\u306fRR\\u2265' + Math.max(1.0, rr + 0.5).toFixed(1) + '\\u3092\\u72d9\\u3046';
+      bIcon.textContent = '\ud83d\udee1\ufe0f';
+      bTitle.textContent = (best.pair || '') + ' SL\u767a\u52d5 \u2014 \u30ea\u30b9\u30af\u7ba1\u7406\u6210\u529f';
+      bSub.textContent = fmtYenCompact(pnlVal) + ' · \u6b21\u306fRR\u2265' + Math.max(1.0, rr + 0.5).toFixed(1) + '\u3092\u72d9\u3046';
     }
 
     banner.classList.add('show');
@@ -2610,7 +2581,7 @@ export const JS = `
         var whyUid = 'why-sheet-' + pair.replace(/[^a-z0-9]/gi, '-');
         var whyChainHtml = '';
         if (tc.entryWhyChain && tc.entryWhyChain.length > 0) {
-          whyChainHtml = '<div class="why-toggle" onclick="var t=document.getElementById(\\'' + whyUid + '\\');t.classList.toggle(\\'open\\')">\u25b6 Why\u00d75 エントリー根拠</div>' +
+          whyChainHtml = '<div class="why-toggle" onclick="var t=document.getElementById(\'' + whyUid + '\');t.classList.toggle(\'open\')">▶ Why×5 エントリー根拠</div>' +
             '<div class="why-tree" id="' + whyUid + '">' + buildWhyTree(tc.entryWhyChain) + '</div>';
         }
         body.innerHTML += '<div class="trace-section"><div class="trace-title">なぜオープンした？</div>' +
@@ -2642,11 +2613,11 @@ export const JS = `
 
       var lReasoning = logicDec.reasoning || '';
       // breakdown ブロック: [rsi=...] の形を抽出
-      // template literal内ではバックスラッシュが消えるため \\[ → \[ に変換される
-      var bdMatch = lReasoning.match(/\\[rsi=[^\\]]+\\]/);
+      // template literal内ではバックスラッシュが消えるため \[ → [ に変換される
+      var bdMatch = lReasoning.match(/\[rsi=[^\]]+\]/);
       if (!bdMatch) return;
       var bdStr = bdMatch[0].slice(1, -1);
-      var tokens = bdStr.match(/(\\w+)=([0-9.]+)\\*([0-9.]+)/g) || [];
+      var tokens = bdStr.match(/(\w+)=([0-9.]+)\*([0-9.]+)/g) || [];
       if (tokens.length === 0) return;
 
       // 総合スコア（score=X.XX または entry_score=X.XX）
@@ -2657,7 +2628,7 @@ export const JS = `
         : 'var(--tertiary)';
 
       var rowsHtml = tokens.map(function(token) {
-        var m = token.match(/(\\w+)=([0-9.]+)\\*([0-9.]+)/);
+        var m = token.match(/(\w+)=([0-9.]+)\*([0-9.]+)/);
         if (!m) return '';
         var key = m[1];
         var score = parseFloat(m[2]);
@@ -2966,7 +2937,7 @@ export const JS = `
     var remainingM = Math.max(0, Math.floor((remainingMs % 3600000) / 60000));
     return '<div class="rotation-banner" style="background:linear-gradient(135deg,#1c1c1e 0%,#2c2c2e 100%);border:1px solid rgba(255,159,10,0.4);border-radius:16px;padding:16px;margin:12px 16px;">' +
       '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">' +
-        '<span style="font-size:13px;font-weight:600;color:#ff9f0a;">\uD83D\uDD04 銘柄入替え提案</span>' +
+        '<span style="font-size:13px;font-weight:600;color:#ff9f0a;">🔄 銘柄入替え提案</span>' +
         '<span style="font-size:11px;color:#8e8e93;">残り ' + remainingH + 'h' + remainingM + 'm</span>' +
       '</div>' +
       '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:12px;">' +
@@ -2982,8 +2953,8 @@ export const JS = `
         '</div>' +
       '</div>' +
       '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">' +
-        '<button onclick="rotationDecide(' + p.id + ',\\\'approve\\\')" style="background:#30d158;color:#000;border:none;border-radius:10px;padding:10px;font-size:13px;font-weight:600;cursor:pointer;">\u2713 承認</button>' +
-        '<button onclick="rotationDecide(' + p.id + ',\\\'reject\\\')" style="background:#ff453a;color:#fff;border:none;border-radius:10px;padding:10px;font-size:13px;font-weight:600;cursor:pointer;">\u2715 拒否</button>' +
+        '<button onclick="rotationDecide(' + p.id + ',\'approve\')" style="background:#30d158;color:#000;border:none;border-radius:10px;padding:10px;font-size:13px;font-weight:600;cursor:pointer;">✓ 承認</button>' +
+        '<button onclick="rotationDecide(' + p.id + ',\'reject\')" style="background:#ff453a;color:#fff;border:none;border-radius:10px;padding:10px;font-size:13px;font-weight:600;cursor:pointer;">✕ 拒否</button>' +
       '</div>' +
     '</div>';
   }
@@ -2996,7 +2967,7 @@ export const JS = `
       var barWidth = Math.min(100, s.total_score / 3);
       var isLowTheme = s.theme_score <= 20;
       return '<div style="display:flex;align-items:center;padding:8px 0;border-bottom:1px solid rgba(255,255,255,0.06);">' +
-        '<span style="font-size:12px;color:#fff;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' + (isLowTheme ? '\u26A0 ' : '') + escHtml(s.symbol) + '</span>' +
+        '<span style="font-size:12px;color:#fff;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' + (isLowTheme ? '⚠ ' : '') + escHtml(s.symbol) + '</span>' +
         '<div style="width:80px;height:4px;background:rgba(255,255,255,0.1);border-radius:2px;margin:0 8px;">' +
           '<div style="width:' + barWidth + '%;height:100%;background:' + color + ';border-radius:2px;"></div>' +
         '</div>' +
@@ -3015,7 +2986,7 @@ export const JS = `
     }
     var statusLabel = { 'APPROVED': '手動承認', 'AUTO_APPROVED': '自動承認', 'REJECTED': '拒否', 'PENDING': '保留中' };
     function fmtPnl(pnl) {
-      if (pnl === null || pnl === undefined) return '<span style="color:#8e8e93">\u2014</span>';
+      if (pnl === null || pnl === undefined) return '<span style="color:#8e8e93">—</span>';
       var color = pnl >= 0 ? '#30d158' : '#ff453a';
       return '<span style="color:' + color + '">' + (pnl >= 0 ? '+' : '') + pnl.toFixed(1) + '%</span>';
     }
@@ -3105,11 +3076,11 @@ export const JS = `
     var items = rotations.slice(0, 8);
     for (var i = 0; i < items.length; i++) {
       var r = items[i];
-      var market = r.market === 'us' ? '\\ud83c\\uddfa\\ud83c\\uddf8' : '\\ud83c\\uddef\\ud83c\\uddf5';
+      var market = r.market === 'us' ? '\ud83c\uddfa\ud83c\uddf8' : '\ud83c\uddef\ud83c\uddf5';
       var date = new Date(r.proposed_at || r.decided_at);
       var dateStr = (date.getMonth() + 1) + '/' + date.getDate();
       html += '<div class="screener-history-row">' +
-        '<span>' + market + ' <b>' + (r.in_symbol || '') + '</b> \\u2190 ' + (r.out_symbol || '') + '</span>' +
+        '<span>' + market + ' <b>' + (r.in_symbol || '') + '</b> \u2190 ' + (r.out_symbol || '') + '</span>' +
         '<span class="screener-history-reason">' + (r.status || '') + '</span>' +
         '<span class="screener-history-date">' + dateStr + '</span>' +
       '</div>';
@@ -3255,4 +3226,3 @@ export const JS = `
   })();
 
 })();
-`;
