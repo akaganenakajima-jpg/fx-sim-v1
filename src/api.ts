@@ -388,8 +388,8 @@ export async function getApiStatus(db: D1Database, tradingEnv?: { TRADING_ENABLE
 
       // news_raw から採用記事（最大30件、7日TTL+purgeで自動管理）
       db
-        .prepare(`SELECT id, source, title_ja, desc_ja, url, fetched_at, pub_date, composite_score AS score, filter_accepted FROM news_raw WHERE filter_accepted = 1 ORDER BY id DESC LIMIT 30`)
-        .all<{ id: number; source: string; title_ja: string; desc_ja: string; url: string | null; fetched_at: string; pub_date: string | null; score: number | null; filter_accepted: number }>(),
+        .prepare(`SELECT id, source, title_ja, desc_ja, url, fetched_at, pub_date, composite_score AS score, filter_accepted, scores FROM news_raw WHERE filter_accepted = 1 ORDER BY id DESC LIMIT 30`)
+        .all<{ id: number; source: string; title_ja: string; desc_ja: string; url: string | null; fetched_at: string; pub_date: string | null; score: number | null; filter_accepted: number; scores: string | null }>(),
 
       // システムログ（直近30件）
       db
