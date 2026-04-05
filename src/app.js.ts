@@ -952,7 +952,7 @@ export const JS = `
     var acceptedAsAnalysis = accepted.filter(function(n) { return !analysisTitlesSet[n.title]; }).map(function(n) {
       var tt = triggerMap[n.title] || triggerMap[n.title_ja] || null;
       var td = triggerDetailMap[n.title] || triggerDetailMap[n.title_ja] || null;
-      return { title: n.title, title_ja: n.title_ja, desc_ja: n.desc_ja, description: n.desc_ja, attention: true, score: n.score || 0, source: n.source, pubDate: n.pub_date || n.fetched_at, affected_pairs: [], triggerType: tt, triggerDetail: td };
+      return { title: n.title, title_ja: n.title_ja, desc_ja: n.desc_ja, description: n.desc_ja, attention: true, score: n.score || 0, source: n.source, pubDate: n.pub_date || n.fetched_at, affected_pairs: [], triggerType: tt, triggerDetail: td, scores: n.scores || null };
     });
     // analysisにもtriggerTypeを付与
     analysis.forEach(function(a) {
