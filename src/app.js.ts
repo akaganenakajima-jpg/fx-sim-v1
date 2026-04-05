@@ -1721,18 +1721,24 @@ export const JS = `
     var totalN = (acc ? acc.n : 0) + newsN;
     var totalPending = (acc ? Math.max(0, acc.n - acc.wins - (acc.n - acc.wins)) : 0) + prPending;
 
-    // ヒーロー正解率
+    // 総合正解率（トレード + Param Review + ニュース分析の合算）
+    var overallCorrect = (acc ? acc.wins : 0) + prCorrect + newsCorrect;
+    var overallWrong = (acc ? acc.n - acc.wins : 0) + prWrong + newsWrong;
+    var overallTotal = overallCorrect + overallWrong;
+    var overallRate = overallTotal > 0 ? overallCorrect / overallTotal : null;
+
+    // ヒーロー正解率（総合ベース）
     var scoreNum = el('ai-score-num');
     if (scoreNum) {
-      if (acc) {
-        scoreNum.textContent = (acc.accuracy * 100).toFixed(0) + '%';
-        scoreNum.style.color = acc.accuracy >= 0.6 ? 'var(--green)' : acc.accuracy >= 0.5 ? 'var(--orange)' : 'var(--red)';
+      if (overallRate != null) {
+        scoreNum.textContent = (overallRate * 100).toFixed(0) + '%';
+        scoreNum.style.color = overallRate >= 0.6 ? 'var(--green)' : overallRate >= 0.5 ? 'var(--orange)' : 'var(--red)';
       } else {
         scoreNum.textContent = '—%';
       }
     }
     var scoreSub = el('ai-score-sub');
-    if (scoreSub) scoreSub.textContent = acc ? '直近' + acc.n + '件のAI行動のうち、' + acc.wins + '件が正しかった' : '—';
+    if (scoreSub) scoreSub.textContent = overallTotal > 0 ? '直近' + overallTotal + '件の全AI行動のうち、' + overallCorrect + '件が正しかった' : '—';
 
     // ニュース分析/Param Review内訳
     var newsVal = el('ai-brk-news-val');
@@ -1782,9 +1788,7 @@ export const JS = `
       }
     }
 
-    // 正解/不正解/判定中（paramHistoryも含めて合算）
-    var overallCorrect = (acc ? acc.wins : 0) + prCorrect + newsCorrect;
-    var overallWrong = (acc ? acc.n - acc.wins : 0) + prWrong + newsWrong;
+    // 正解/不正解/判定中カウント表示（overallCorrect/overallWrong は上段で算出済み）
     var overallPending = prPending;
     var vCorrect = el('ai-v-correct');
     if (vCorrect) { vCorrect.textContent = String(overallCorrect); vCorrect.style.color = 'var(--green)'; }

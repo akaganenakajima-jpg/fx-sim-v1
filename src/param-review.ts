@@ -107,9 +107,12 @@ async function calcTradeStats(db: D1Database, pair: string): Promise<TradeStats>
   const losses = rows.filter(r => (r.realized_rr ?? 0) < 1.0);
 
   const winRate = wins.length / rows.length;
-  const avgWin  = wins.length > 0 ? wins.reduce((s, r) => s + r.pnl, 0) / wins.length : 0;
-  const avgLoss = losses.length > 0 ? Math.abs(losses.reduce((s, r) => s + r.pnl, 0) / losses.length) : 1;
-  const actualRr = avgLoss > 0 ? avgWin / avgLoss : 0;
+  // actualRr: realized_rr の単純平均（プロジェクト統一定義 = 実現利益/初期リスク）
+  // ペイオフ比（avgWin_pnl/avgLoss_pnl）ではなく純粋なRR平均を使用
+  const rrRows = rows.filter(r => r.realized_rr != null);
+  const actualRr = rrRows.length > 0
+    ? rrRows.reduce((s, r) => s + (r.realized_rr ?? 0), 0) / rrRows.length
+    : 0;
   const profitFactor = losses.length > 0
     ? wins.reduce((s, r) => s + r.pnl, 0) / Math.abs(losses.reduce((s, r) => s + r.pnl, 0))
     : wins.length > 0 ? 99 : 0;

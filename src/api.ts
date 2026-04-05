@@ -1235,13 +1235,13 @@ function buildParamHistory(
 ): StatusResponse['paramHistory'] {
   const rows = rawResult?.results ?? [];
   return rows.map(r => {
-    // verdict判定: profit_factorが1.0以上かつwin_rateが改善傾向なら'worked'
+    // verdict判定: PF（期待値）主軸。勝率が低くてもトータル期待値プラスなら worked
+    // 旧: pf >= 1.1 && wr >= 0.5 → AND条件で高PF低勝率が不正解になる問題を修正
     const pf = r.profit_factor ?? 0;
-    const wr = r.win_rate ?? 0;
     const verdict: 'worked' | 'worsened' | 'pending' =
       r.profit_factor == null ? 'pending'
-      : pf >= 1.1 && wr >= 0.5 ? 'worked'
-      : pf < 0.9 || wr < 0.4 ? 'worsened'
+      : pf >= 1.1 ? 'worked'
+      : pf < 0.9 ? 'worsened'
       : 'pending';
 
     const shortReason = r.reason?.length > 30 ? r.reason.slice(0, 30) + '…' : (r.reason || '');
@@ -1249,7 +1249,8 @@ function buildParamHistory(
     const change = r.reason || '';
     const wrPct = r.win_rate != null ? `${(r.win_rate * 100).toFixed(0)}%` : '—';
     const rrStr = r.actual_rr != null ? r.actual_rr.toFixed(2) : '—';
-    const result_text = `的中率 ${wrPct}, RR ${rrStr}${r.trades_eval ? `（${r.trades_eval}件評価）` : ''}`;
+    const pfStr = r.profit_factor != null ? r.profit_factor.toFixed(2) : '—';
+    const result_text = `的中率 ${wrPct}, 平均RR ${rrStr}, PF ${pfStr}${r.trades_eval ? `（${r.trades_eval}件評価）` : ''}`;
 
     return {
       pair: r.pair,
