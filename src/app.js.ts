@@ -31,6 +31,15 @@ export const JS = `
 (function () {
   'use strict';
 
+  // ── ARIA tabpanel 初期化（WCAG 4.1.2: スクリプト実行時に全パネルへ aria-hidden を設定）──
+  (function() {
+    var allPanels = document.querySelectorAll('[role="tabpanel"]');
+    for (var i = 0; i < allPanels.length; i++) {
+      allPanels[i].setAttribute('aria-hidden',
+        allPanels[i].classList.contains('active') ? 'false' : 'true');
+    }
+  })();
+
   // ── Haptic Feedback ユーティリティ ──
   var haptic = {
     light: function() { if (navigator.vibrate) navigator.vibrate(10); },
@@ -323,9 +332,15 @@ export const JS = `
   function switchTab(tabId, scrollTo) {
     haptic.light();
     var panels = document.querySelectorAll('.tab-panel');
-    for (var i = 0; i < panels.length; i++) panels[i].classList.remove('active');
+    for (var i = 0; i < panels.length; i++) {
+      panels[i].classList.remove('active');
+      panels[i].setAttribute('aria-hidden', 'true');
+    }
     var target = document.getElementById(tabId);
-    if (target) target.classList.add('active');
+    if (target) {
+      target.classList.add('active');
+      target.setAttribute('aria-hidden', 'false');
+    }
 
     var tabs = document.querySelectorAll('.tabs .tab');
     for (var j = 0; j < tabs.length; j++) {
@@ -349,6 +364,13 @@ export const JS = `
     var sbItems = document.querySelectorAll('.sidebar-tab');
     for (var s = 0; s < sbItems.length; s++) {
       sbItems[s].classList.toggle('active', sbItems[s].getAttribute('data-tab') === tabId);
+    }
+
+    // aria-selected 同期（WCAG 4.1.2）
+    var allTabControls = document.querySelectorAll('[role="tab"]');
+    for (var k = 0; k < allTabControls.length; k++) {
+      allTabControls[k].setAttribute('aria-selected',
+        allTabControls[k].getAttribute('data-tab') === tabId ? 'true' : 'false');
     }
 
     // ニュースドロワー: 今タブのみ表示
@@ -530,7 +552,10 @@ export const JS = `
     if (balEl) balEl.textContent = fmtYen(capital);
 
     var roiEl = el('m-roi');
-    if (roiEl) roiEl.textContent = fmtPct(roiPct);
+    if (roiEl) {
+      roiEl.textContent = fmtPct(roiPct);
+      roiEl.style.color = roiPct >= 0 ? 'var(--green)' : 'var(--red)';
+    }
 
     var avgRrEl = el('m-avgrr');
     if (avgRrEl) {

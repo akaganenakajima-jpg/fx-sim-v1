@@ -188,12 +188,19 @@ function withSec(res: Response): Response {
   h.set('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
   h.set('X-XSS-Protection', '1; mode=block');
   h.set('Referrer-Policy', 'strict-origin-when-cross-origin');
+  h.set('Permissions-Policy', 'camera=(), microphone=(), geolocation=(), payment=()');
+  h.set('Content-Security-Policy', "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; object-src 'none'; base-uri 'self'");
   return new Response(res.body, { status: res.status, statusText: res.statusText, headers: h });
 }
 
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     const url = new URL(request.url);
+    // HTTP → HTTPS リダイレクト（平文接続を拒否）
+    if (url.protocol === 'http:') {
+      url.protocol = 'https:';
+      return Response.redirect(url.toString(), 301);
+    }
     // GET専用ルートへの非GETメソッドを早期リジェクト（PUT/DELETE/PATCH → 405）
     const GET_ONLY_ROUTES = ['/api/status', '/api/params', '/api/scores', '/api/screener', '/api/ai-report', '/api/rotation/pending', '/api/rotation/history'];
     if (GET_ONLY_ROUTES.includes(url.pathname) && request.method !== 'GET' && request.method !== 'HEAD') {
@@ -240,6 +247,10 @@ export default {
           headers: { 'Content-Type': 'image/svg+xml', 'Cache-Control': 'public, max-age=86400' },
         });
       }
+      case '/robots.txt':
+        return new Response('User-agent: *\nDisallow: /api/\n', {
+          headers: { 'Content-Type': 'text/plain; charset=utf-8', 'Cache-Control': 'public, max-age=86400' },
+        });
       case '/api/status':
         try {
           const status = await getApiStatus(env.DB, {

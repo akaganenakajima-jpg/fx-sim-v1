@@ -63,6 +63,10 @@ export async function logTradeJournal(
   }
 ): Promise<void> {
   // RRレシオ算出: |tp - entry| / |sl - entry|
+  // トレイリングストップがSLをブレークイーブン付近まで引き上げた場合、リスクがほぼゼロになり
+  // rrRatioが異常値になるのを防ぐ。エントリー価格の0.2%をフロアとして使用することで、
+  // FX（~159円: floor=0.318）・株式（~359ドル: floor=0.718）どちらも正しく保護される。
+  const MIN_RISK_PCT = 0.002; // エントリー価格の0.2%
   let rrRatio: number | null = null;
   if (
     position.tp_rate != null &&
@@ -71,7 +75,8 @@ export async function logTradeJournal(
   ) {
     const reward = Math.abs(position.tp_rate - position.entry_rate);
     const risk = Math.abs(position.sl_rate - position.entry_rate);
-    if (risk > 0) {
+    const minRisk = Math.max(0.01, position.entry_rate * MIN_RISK_PCT);
+    if (risk >= minRisk) {
       rrRatio = Math.round((reward / risk) * 100) / 100;
     }
   }
@@ -337,7 +342,7 @@ export async function getPairStats(db: D1Database): Promise<PairStats[]> {
         COUNT(*) as count,
         SUM(CASE WHEN rr_ratio >= 1.0 THEN 1 ELSE 0 END) as wins,
         ROUND(AVG(pnl), 2) as avg_pnl,
-        ROUND(AVG(rr_ratio), 2) as avg_rr
+        ROUND(AVG(CASE WHEN rr_ratio <= 20 THEN rr_ratio ELSE NULL END), 2) as avg_rr
       FROM trade_logs
       WHERE pair IS NOT NULL AND closed_at IS NOT NULL
       GROUP BY pair
