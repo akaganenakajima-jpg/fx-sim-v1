@@ -275,6 +275,30 @@ export const JS = `
     return null;
   }
 
+  // 含み損を含むリアルタイムDD%を計算（決済済みDDベース + 未決済含み損）
+  function calcRealDDPct(data) {
+    var ddSt = data.statistics && data.statistics.drawdown;
+    var closedDD = ddSt ? (ddSt.currentDD || 0) : 0;
+    var closedDDPct = ddSt ? (ddSt.currentDDPct || 0) : 0;
+    var totalPnl = (data.performance && data.performance.totalPnl) || 0;
+    var unrealized = 0;
+    var opens = data.openPositions || [];
+    for (var i = 0; i < opens.length; i++) {
+      var pos = opens[i];
+      var instr = findInstr(pos.pair);
+      var cr = getCurrentRate(pos.pair);
+      if (instr && cr != null) {
+        unrealized += pos.direction === 'BUY'
+          ? (cr - pos.entry_rate) * instr.multiplier * (pos.lot || 1)
+          : (pos.entry_rate - cr) * instr.multiplier * (pos.lot || 1);
+      }
+    }
+    var unrealizedLoss = Math.abs(Math.min(0, unrealized));
+    var realCurrentDD = closedDD + unrealizedLoss;
+    var peakBalance = INITIAL_CAPITAL + totalPnl + closedDD;
+    return peakBalance > 0 ? (realCurrentDD / peakBalance) * 100 : closedDDPct;
+  }
+
   // ══════════════════════════════════════════
   // スパークライン
   // ══════════════════════════════════════════
@@ -2210,9 +2234,8 @@ export const JS = `
     var logs = data.systemLogs || [];
     var errCount = logs.filter(function(l) { return l.level === 'ERROR'; }).length;
     var warnCount = logs.filter(function(l) { return l.level === 'WARN'; }).length;
-    // DDリスクも考慮 (WARNING=8%以上でシステム警告)
-    var ddStat2 = data.statistics && data.statistics.drawdown;
-    var ddForHero = ddStat2 ? (ddStat2.currentDDPct || ddStat2.maxDDPct || 0) : 0;
+    // DDリスクも考慮 (WARNING=8%以上でシステム警告) — 含み損を含むリアルタイムDD
+    var ddForHero = calcRealDDPct(data);
     var ddWarn = ddForHero >= 10; // HALT以上
     var isError = errCount > 0 || ddForHero >= 10;
     var isWarn = !isError && (warnCount > 0 || ddForHero >= 8);
@@ -2253,30 +2276,31 @@ export const JS = `
         : '—';
     }
 
-    // DD段階バー（riskStatusはpaper modeでnullのためstatistics.drawdownを使用）
+    // DD段階バー — 含み損を含むリアルタイムDD
     var ddCurrent = el('dd-current');
     if (ddCurrent) {
-      var ddSt = data.statistics && data.statistics.drawdown;
-      var ddPctVal = ddSt ? ddSt.currentDDPct || ddSt.maxDDPct || 0 : 0;
+      var ddPctVal = calcRealDDPct(data);
       ddCurrent.textContent = '\\u25b2 現在 ' + ddPctVal.toFixed(1) + '%';
       ddCurrent.style.color = ddPctVal >= 10 ? 'var(--red)' : ddPctVal >= 5 ? 'var(--orange)' : 'var(--green)';
       ddCurrent.style.fontWeight = '600';
     }
 
-    // 稼働率/エラー率
+    // 稼働率/エラー率 — runs24h/errors24h（24h正確な分母・分子）
     var uptimeEl = el('sys-uptime');
     var errRateEl = el('sys-error-rate');
+    var ls = data.logStats || {};
+    var runs24h = ls.runs24h || 0;
+    var errors24h = ls.errors24h || 0;
     if (uptimeEl) {
-      var totalRuns = data.systemStatus ? data.systemStatus.totalRuns : 0;
-      var errRate = totalRuns > 0 ? (errCount / Math.max(logs.length, 1) * 100) : 0;
-      var uptime = 100 - errRate;
-      uptimeEl.textContent = totalRuns > 0 ? uptime.toFixed(2) + '%' : '—';
-      uptimeEl.style.color = uptime >= 99 ? 'var(--green)' : uptime >= 95 ? 'var(--orange)' : 'var(--red)';
+      var errRate24h = runs24h > 0 ? (errors24h / runs24h) * 100 : 0;
+      var uptime24h = 100 - errRate24h;
+      uptimeEl.textContent = runs24h > 0 ? uptime24h.toFixed(2) + '%' : '—';
+      uptimeEl.style.color = uptime24h >= 99 ? 'var(--green)' : uptime24h >= 95 ? 'var(--orange)' : 'var(--red)';
     }
     if (errRateEl) {
-      var eRate = errCount > 0 ? (errCount / Math.max(logs.length, 1) * 100) : 0;
-      errRateEl.textContent = eRate.toFixed(2) + '%';
-      errRateEl.style.color = eRate < 1 ? 'var(--green)' : eRate < 5 ? 'var(--orange)' : 'var(--red)';
+      var eRate24h = runs24h > 0 ? (errors24h / runs24h) * 100 : 0;
+      errRateEl.textContent = runs24h > 0 ? eRate24h.toFixed(2) + '%' : '—';
+      errRateEl.style.color = eRate24h < 1 ? 'var(--green)' : eRate24h < 5 ? 'var(--orange)' : 'var(--red)';
     }
 
     // ヘルスチェック6項目
@@ -2291,7 +2315,7 @@ export const JS = `
     if (!container) return;
     var ss = data.systemStatus || {};
     var ddStat = data.statistics && data.statistics.drawdown;
-    var ddPctNum = ddStat ? (ddStat.currentDDPct || ddStat.maxDDPct || 0) : 0;
+    var ddPctNum = calcRealDDPct(data); // 含み損込みリアルタイムDD
     var ddPct = ddPctNum.toFixed(1);
     var ddMaxPct = ddStat ? (ddStat.maxDDPct || 0).toFixed(1) : '0.0';
     // テスタ理論準拠: CAUTION(7%) / WARNING(10%=デイトレ上限) / HALT(15%) / STOP(20%=スイング上限)
