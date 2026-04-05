@@ -80,6 +80,8 @@ interface Env {
   // FINNHUB_API_KEY は calendar.ts と共有（上記に既に定義）
   // AI銘柄マネージャー
   JQUANTS_REFRESH_TOKEN?: string;
+  // Workers AI（エッジ推論: センチメント分析）
+  AI: Ai;
 }
 
 // ── キー別クールダウン管理 ──
@@ -512,7 +514,7 @@ async function fetchMarketData(env: Env, now: Date): Promise<MarketData | null> 
   }
 
   // Gemini Flash でフィルタ + タイトル・概要の日本語化を一括処理（title_ja・desc_ja付与）
-  const news = await filterAndTranslateNews(newsData.items, env.GEMINI_API_KEY, env.DB);
+  const news = await filterAndTranslateNews(newsData.items, env.GEMINI_API_KEY, env.DB, env.AI);
   const activeNewsSources = [...new Set(news.map(n => n.source))].join(',');
   const indicators = indicatorsResult.status === 'fulfilled' ? indicatorsResult.value : { vix: null, us10y: null, nikkei: null, sp500: null, usdjpy: null, btcusd: null, gold: null, eurusd: null, ethusd: null, crudeoil: null, natgas: null, copper: null, silver: null, gbpusd: null, audusd: null, solusd: null, dax: null, nasdaq: null, uk100: null, hk33: null, eurjpy: null, gbpjpy: null, audjpy: null, kawasaki_kisen: null, nippon_yusen: null, softbank_g: null, lasertec: null, tokyo_electron: null, disco: null, advantest: null, fast_retailing: null, nippon_steel: null, mufg: null, mitsui_osk: null, tokio_marine: null, mitsubishi_corp: null, toyota: null, sakura_internet: null, mhi: null, ihi: null, anycolor: null, cover_corp: null, nvda: null, tsla: null, aapl: null, amzn: null, amd: null, meta: null, msft: null, googl: null, fearGreed: null, fearGreedLabel: null, cftcJpyNetLong: null };
   const frankfurterRate = frankfurterResult.status === 'fulfilled' ? frankfurterResult.value : null;

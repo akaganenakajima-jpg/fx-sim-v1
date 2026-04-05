@@ -149,6 +149,7 @@ body{background:var(--bg);color:var(--text);font-size:15px;line-height:1.47;
 .nf-item.nf-emergency{border-left-color:var(--red)}.nf-item.nf-trend{border-left-color:var(--blue)}.nf-item.nf-attention{border-left-color:var(--orange)}
 .nf-header{display:flex;justify-content:space-between;align-items:center;margin-bottom:8px}
 .nf-badge{display:inline-block;font-size:11px;font-weight:700;padding:2px 8px;border-radius:4px;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.nf-wai-badge{display:inline-block;font-size:10px;font-weight:700;padding:1px 6px;border-radius:3px;margin-left:6px;background:rgba(50,215,75,0.15);color:var(--green);vertical-align:middle}
 .nf-badge-emergency{background:rgba(255,69,58,0.2);color:var(--red)}.nf-badge-trend{background:rgba(10,132,255,0.25);color:var(--blue)}.nf-badge-attention{background:rgba(255,159,10,0.2);color:var(--orange)}.nf-badge-info{background:rgba(142,142,147,0.15);color:var(--secondary)}
 .nf-time{font-size:11px;color:var(--tertiary);white-space:nowrap;flex-shrink:0;margin-left:8px}.nf-headline{font-size:14px;font-weight:600;line-height:1.4;margin-bottom:8px}
 .nf-ai{display:flex;gap:8px;align-items:flex-start;margin-bottom:8px;padding:8px 12px;background:rgba(10,132,255,0.06);border-radius:8px}

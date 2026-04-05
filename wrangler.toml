@@ -17,6 +17,9 @@ binding = "DB"
 database_name = "fx-sim-v1-db"
 database_id = "0796cb8f-0d50-40de-928e-c5c2ea427359"
 
+[ai]
+binding = "AI"
+
 [vars]
 TWELVE_DATA_API_KEY = ""  # wrangler secret put TWELVE_DATA_API_KEY で設定
 # Ph.6: PARALLEL_PATH_AB は Path A廃止に伴い削除（Path B のみ実行）

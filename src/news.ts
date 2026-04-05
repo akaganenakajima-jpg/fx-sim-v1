@@ -6,6 +6,7 @@
 import { insertSystemLog, insertTokenUsage } from './db';
 import { CRYPTO_PAIRS } from './weekend';
 import { NEWS_WEIGHTS_DEFAULT, NEWS_WEIGHTS_STOCK } from './constants';
+import { analyzeSentimentBatch, type SentimentResult } from './ai-sentiment';
 
 export interface NewsItem {
   title: string;
@@ -665,8 +666,20 @@ export async function filterAndTranslateNews(
   items: NewsItem[],
   geminiApiKey: string | undefined,
   db: D1Database,
+  ai?: Ai,
 ): Promise<NewsItem[]> {
   if (!geminiApiKey || items.length === 0) return items;
+
+  // Workers AI sentiment: Geminiと並列実行するため先に非同期開始
+  const aiSentimentPromise: Promise<Map<number, SentimentResult>> = ai
+    ? analyzeSentimentBatch(ai, items.map((item, i) => ({
+        index: i,
+        text: `${item.title} ${(item.description ?? '').replace(/<[^>]+>/g, '').slice(0, 300)}`,
+      }))).catch(e => {
+        console.warn(`[news] Workers AI batch error: ${String(e).slice(0, 100)}`);
+        return new Map<number, SentimentResult>();
+      })
+    : Promise.resolve(new Map<number, SentimentResult>());
 
   // 適応的閾値を一度だけ計算（キャッシュパス・本番パス共用）
   const adaptiveThreshold = await getAdaptiveCompositeThreshold(db);
@@ -690,8 +703,12 @@ export async function filterAndTranslateNews(
         relevance: number; credibility: number;
         sentiment: number; breadth: number; novelty: number;
         composite: number;
+        s_source?: string;
       }>();
       const rejectMapCached = new Map<number, string>();
+
+      // Workers AI sentiment結果を取得（Geminiキャッシュヒット時も並列実行済み）
+      const aiSentimentMap = await aiSentimentPromise;
 
       // 過去トピックキャッシュ（ユニーク性スコア算出に使用）
       let recentTopicsCached: string[] = [];
@@ -712,16 +729,20 @@ export async function filterAndTranslateNews(
         const t = scoreTimeliness(item.freshnessMin);
         const u = scoreUniqueness(r.topic, recentTopicsCached);
         const credBase = scoreCredibility(item.source);
-        const ai = r.scores ?? { r: 6, c: credBase, s: 5, b: 5, n: 6 };
+        const geminiScores = r.scores ?? { r: 6, c: credBase, s: 5, b: 5, n: 6 };
+        // Workers AI優先 → Geminiフォールバック
+        const waiResult = aiSentimentMap.get(r.index);
+        const mergedAi = { ...geminiScores, s: waiResult ? waiResult.score : geminiScores.s };
         const isStockSpecific = Boolean(item.source?.includes('.T')) &&
           !GEO_MACRO_KEYWORDS_RE.test(item.title ?? '');
-        const composite = computeComposite(t, u, ai.r, ai.c, ai.s, ai.b, ai.n, isStockSpecific);
+        const composite = computeComposite(t, u, mergedAi.r, mergedAi.c, mergedAi.s, mergedAi.b, mergedAi.n, isStockSpecific);
         const composite100 = Math.round(composite * 100) / 10;       // 0-100（DB保存・表示用）
         scoresMapCached.set(r.index, {
           timeliness: t, uniqueness: u,
-          relevance: ai.r, credibility: ai.c,
-          sentiment: ai.s, breadth: ai.b, novelty: ai.n,
+          relevance: mergedAi.r, credibility: mergedAi.c,
+          sentiment: mergedAi.s, breadth: mergedAi.b, novelty: mergedAi.n,
           composite: composite100,
+          s_source: waiResult ? 'workers_ai' : 'gemini',
         });
         if (composite < COMPOSITE_THRESHOLD_CACHE) {
           rejectMapCached.set(r.index, `スコア不足(${composite100})`);
@@ -810,7 +831,7 @@ ${articleLines}
 採用する記事（scoresフィールドに5軸スコアを0〜10で付与）:
   {"index":0,"accepted":true,"title_ja":"日本語タイトル","desc_ja":"日本語概要","topic":"核心10字","scores":{"r":8,"c":9,"s":7,"b":6,"n":8}}
 
-  r=relevance(市場有効性), c=credibility(信憑性), s=sentiment(シグナル強度), b=breadth(影響銘柄数), n=novelty(新規情報度)
+  r=relevance(市場有効性), c=credibility(信憑性), s=sentiment(概算シグナル強度;参考値), b=breadth(影響銘柄数), n=novelty(新規情報度)
 
 除外する記事:
   {"index":1,"accepted":false,"reject_reason":"スポーツ"}
@@ -896,8 +917,12 @@ JSON配列のみを返し、他の文字は一切含めないでください。`
       relevance: number; credibility: number;
       sentiment: number; breadth: number; novelty: number;
       composite: number;
+      s_source?: string;
     }>();
     const rejectMap = new Map<number, string>();
+
+    // Workers AI sentiment結果を取得（Gemini呼び出しと並列実行済み）
+    const aiSentimentMap = await aiSentimentPromise;
 
     for (const r of results) {
       if (r.index < 0 || r.index >= items.length) continue;
@@ -914,19 +939,22 @@ JSON配列のみを返し、他の文字は一切含めないでください。`
       const u = scoreUniqueness(r.topic, recentTopics);
       const credBase = scoreCredibility(item.source);
 
-      // AI側スコア（なければデフォルト値）
-      const ai = r.scores ?? { r: 6, c: credBase, s: 5, b: 5, n: 6 };
+      // AI側スコア（なければデフォルト値）+ Workers AIでs値を上書き
+      const geminiScores = r.scores ?? { r: 6, c: credBase, s: 5, b: 5, n: 6 };
+      const waiResult = aiSentimentMap.get(r.index);
+      const mergedAi = { ...geminiScores, s: waiResult ? waiResult.score : geminiScores.s };
 
       const isStockSpecific = Boolean(item.source?.includes('.T')) &&
         !GEO_MACRO_KEYWORDS_RE.test(item.title ?? '');
-      const composite = computeComposite(t, u, ai.r, ai.c, ai.s, ai.b, ai.n, isStockSpecific);
+      const composite = computeComposite(t, u, mergedAi.r, mergedAi.c, mergedAi.s, mergedAi.b, mergedAi.n, isStockSpecific);
       const composite100 = Math.round(composite * 100) / 10;         // 0-100（DB保存・表示用）
 
       scoresMap.set(r.index, {
         timeliness: t, uniqueness: u,
-        relevance: ai.r, credibility: ai.c,
-        sentiment: ai.s, breadth: ai.b, novelty: ai.n,
+        relevance: mergedAi.r, credibility: mergedAi.c,
+        sentiment: mergedAi.s, breadth: mergedAi.b, novelty: mergedAi.n,
         composite: composite100,
+        s_source: waiResult ? 'workers_ai' : 'gemini',
       });
 
       if (composite < COMPOSITE_THRESHOLD) {
@@ -1165,6 +1193,7 @@ export async function updateFilterResults(
     relevance: number; credibility: number;
     sentiment: number; breadth: number; novelty: number;
     composite: number;
+    s_source?: string;
   }>,
   db: D1Database,
 ): Promise<void> {

@@ -1157,8 +1157,13 @@ export const JS = `
       tradeActionHtml = '<div class="nf-action"><span style="font-size:12px;color:var(--tertiary)">\\u2192</span>' +
         '<span class="nf-action-text" style="color:var(--tertiary)">影響なし · パラメーター変更なし</span></div>';
     }
+    // Workers AIバッジ: scoresにs_source='workers_ai'があれば表示
+    var parsedScores = null;
+    try { parsedScores = n.scores ? JSON.parse(n.scores) : null; } catch(e) {}
+    var waiIndicator = (parsedScores && parsedScores.s_source === 'workers_ai')
+      ? '<span class="nf-wai-badge">\\u26a1 Edge AI</span>' : '';
     return '<div class="nf-item ' + borderCls + '">' +
-      '<div class="nf-header"><span class="nf-badge ' + badgeCls + '">' + badgeText + '</span><span class="nf-time">' + fmtTimeAgo(n.analyzed_at || n.pubDate || '') + '</span></div>' +
+      '<div class="nf-header"><span class="nf-badge ' + badgeCls + '">' + badgeText + '</span>' + waiIndicator + '<span class="nf-time">' + fmtTimeAgo(n.analyzed_at || n.pubDate || '') + '</span></div>' +
       '<div class="nf-headline">' + escHtml(n.title_ja || n.title || '') + '</div>' +
       (aiText ? '<div class="nf-ai"><span class="nf-ai-label">' + (isAttention ? 'AI判断' : 'AI') + '</span><span class="nf-ai-text">' + escHtml(aiText) + '</span></div>' : '') +
       pairsHtml + tradeActionHtml +
