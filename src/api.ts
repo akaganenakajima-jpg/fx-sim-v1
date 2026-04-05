@@ -113,6 +113,7 @@ export interface StatusResponse {
     verdict: 'worked' | 'worsened' | 'pending';
     winRate: number | null;
     rr: number | null;
+    pf: number | null;
     created_at: string;
     time: string;
     why_chain: string[] | null;
@@ -1152,7 +1153,8 @@ function buildParamHistory(
     const change = r.reason || '';
     const wrPct = r.win_rate != null ? `${(r.win_rate * 100).toFixed(0)}%` : '—';
     const rrStr = r.actual_rr != null ? r.actual_rr.toFixed(2) : '—';
-    const result_text = `的中率 ${wrPct}, RR ${rrStr}${r.trades_eval ? `（${r.trades_eval}件評価）` : ''}`;
+    const pfStr = r.profit_factor != null ? r.profit_factor.toFixed(2) : '—';
+    const result_text = `的中率 ${wrPct}, RR ${rrStr}, PF ${pfStr}${r.trades_eval ? `（${r.trades_eval}件評価）` : ''}`;
 
     return {
       pair: r.pair,
@@ -1164,6 +1166,7 @@ function buildParamHistory(
       verdict,
       winRate: r.win_rate,
       rr: r.actual_rr,
+      pf: r.profit_factor,
       created_at: r.created_at,
       time: r.created_at,
       why_chain: synthesizeParamWhyChain(r.reason, r.win_rate, r.actual_rr),

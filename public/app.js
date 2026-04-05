@@ -563,10 +563,22 @@
     var subEl = el('pnl-sub');
     if (subEl) subEl.textContent = '今日の損益';
 
-    // メトリクスストリップ
+    // メトリクスストリップ（有効証拠金 = 確定損益 + 含み損益）
     var totalPnl = perf.totalPnl || 0;
-    var capital = INITIAL_CAPITAL + totalPnl;
-    var roiPct = (totalPnl / INITIAL_CAPITAL) * 100;
+    var unrealized = 0;
+    var opens = data.openPositions || [];
+    for (var oi = 0; oi < opens.length; oi++) {
+      var opos = opens[oi];
+      var oinstr = findInstr(opos.pair);
+      var ocr = getCurrentRate(opos.pair);
+      if (oinstr && ocr != null) {
+        unrealized += opos.direction === 'BUY'
+          ? (ocr - opos.entry_rate) * oinstr.multiplier * (opos.lot || 1)
+          : (opos.entry_rate - ocr) * oinstr.multiplier * (opos.lot || 1);
+      }
+    }
+    var capital = INITIAL_CAPITAL + totalPnl + unrealized;
+    var roiPct = ((totalPnl + unrealized) / INITIAL_CAPITAL) * 100;
 
     var balEl = el('m-balance');
     if (balEl) balEl.textContent = fmtYen(capital);
@@ -610,7 +622,7 @@
       var pct = Math.max(0, Math.min(Math.round(pa.progressPct), 100));
       sigFill.style.width = pct + '%';
       if (pa.isAdequate) sigFill.style.background = 'var(--green)';
-      if (sigLabel) sigLabel.textContent = '有意性 ' + pct + '%';
+      if (sigLabel) sigLabel.textContent = pct >= 100 ? '統計的信頼性 確保' : 'データ蓄積度 ' + pct + '%';
     }
   }
 
@@ -1405,7 +1417,10 @@
       return;
     }
     var cumPnl = [];
-    var sum = INITIAL_CAPITAL;
+    var closesPnlSum = 0;
+    for (var i = 0; i < closes.length; i++) { closesPnlSum += (closes[i].pnl || 0); }
+    var basePnl = INITIAL_CAPITAL + ((data.performance && data.performance.totalPnl) || 0) - closesPnlSum;
+    var sum = basePnl;
     for (var i = 0; i < closes.length; i++) {
       sum += (closes[i].pnl || 0);
       cumPnl.push(sum);
@@ -1420,7 +1435,7 @@
       var y = h - pad - ((v - min) / range) * (h - pad * 2);
       return x.toFixed(1) + ',' + y.toFixed(1);
     }).join(' ');
-    var color = cumPnl[cumPnl.length - 1] >= INITIAL_CAPITAL ? 'var(--green)' : 'var(--red)';
+    var color = cumPnl[cumPnl.length - 1] >= basePnl ? 'var(--green)' : 'var(--red)';
 
     // パラメーター変更マーカー（縦破線 + ラベル）
     var markerHtml = '';
@@ -1736,15 +1751,18 @@
     var newsN = newsCorrect + newsWrong;
     var newsAccuracyVal = newsN > 0 ? newsCorrect / newsN : null;
 
-    // 全体: APIのaiAccuracy + paramHistory/news合算
-    var totalCorrect = (acc ? acc.wins : 0) + (newsN > 0 ? newsCorrect : 0);
-    var totalN = (acc ? acc.n : 0) + newsN;
-    var totalPending = (acc ? Math.max(0, acc.n - acc.wins - (acc.n - acc.wins)) : 0) + prPending;
+    // 全体: 取引判断 + paramHistory + ニュース分析を合算した正解率
+    var combinedN = (acc ? acc.n : 0) + prN + newsN;
+    var combinedCorrect = (acc ? acc.wins : 0) + prCorrect + newsCorrect;
+    var combinedAccuracy = combinedN > 0 ? combinedCorrect / combinedN : null;
 
-    // ヒーロー正解率
+    // ヒーロー正解率（AI合算）
     var scoreNum = el('ai-score-num');
     if (scoreNum) {
-      if (acc) {
+      if (combinedAccuracy != null) {
+        scoreNum.textContent = (combinedAccuracy * 100).toFixed(0) + '%';
+        scoreNum.style.color = combinedAccuracy >= 0.6 ? 'var(--green)' : combinedAccuracy >= 0.5 ? 'var(--orange)' : 'var(--red)';
+      } else if (acc) {
         scoreNum.textContent = (acc.accuracy * 100).toFixed(0) + '%';
         scoreNum.style.color = acc.accuracy >= 0.6 ? 'var(--green)' : acc.accuracy >= 0.5 ? 'var(--orange)' : 'var(--red)';
       } else {
@@ -1752,7 +1770,7 @@
       }
     }
     var scoreSub = el('ai-score-sub');
-    if (scoreSub) scoreSub.textContent = acc ? '直近' + acc.n + '件のAI行動のうち、' + acc.wins + '件が正しかった' : '—';
+    if (scoreSub) scoreSub.textContent = combinedN > 0 ? '直近' + combinedN + '件のAI行動のうち、' + combinedCorrect + '件が正しかった' : '—';
 
     // ニュース分析/Param Review内訳
     var newsVal = el('ai-brk-news-val');
@@ -1866,6 +1884,10 @@
     }
     container.innerHTML = ph.map(function(h, i) {
       var v = h.verdict === 'worked' || h.verdict === 'improved' ? 'correct' : h.verdict === 'worsened' || h.verdict === 'didnt' ? 'wrong' : 'pending';
+      // PFが利用可能な場合はPF基準で上書き（PF≥1.1→correct, PF<0.9→wrong, それ以外→pending）
+      if (h.pf != null) {
+        v = h.pf >= 1.1 ? 'correct' : h.pf < 0.9 ? 'wrong' : 'pending';
+      }
       // reasonは変更理由の核心部分（先頭50字）
       var shortReason = (h.change || h.reason || '');
       if (shortReason.length > 50) shortReason = shortReason.slice(0, 50) + '…';
@@ -2074,10 +2096,15 @@
       var timelineHtml = '';
       if (pairChanges.length > 0) {
         var steps = pairChanges.map(function(c, idx) {
-          var stepCls = idx === 0 ? 'current' : (c.verdict === 'worked' || c.verdict === 'improved' ? 'good' : c.verdict === 'worsened' || c.verdict === 'didnt' ? 'bad' : 'good');
+          // PFが利用可能な場合はPF基準で判定（PF≥1.1→worked, PF<0.9→worsened）
+          var effectiveVerdict = c.verdict;
+          if (c.pf != null) {
+            effectiveVerdict = c.pf >= 1.1 ? 'worked' : c.pf < 0.9 ? 'worsened' : 'pending';
+          }
+          var stepCls = idx === 0 ? 'current' : (effectiveVerdict === 'worked' || effectiveVerdict === 'improved' ? 'good' : effectiveVerdict === 'worsened' || effectiveVerdict === 'didnt' ? 'bad' : 'good');
           var ver = 'v' + (pairChanges.length - idx + 1);
           if (idx === 0) ver = currentVersion + '\uff08現在\uff09';
-          var resCls = c.verdict === 'worked' || c.verdict === 'improved' ? 'worked' : c.verdict === 'worsened' || c.verdict === 'didnt' ? 'didnt' : '';
+          var resCls = effectiveVerdict === 'worked' || effectiveVerdict === 'improved' ? 'worked' : effectiveVerdict === 'worsened' || effectiveVerdict === 'didnt' ? 'didnt' : '';
           return '<div class="jc-step ' + stepCls + '">' +
             '<div class="jc-step-header"><span class="jc-step-ver">' + ver + '</span><span class="jc-step-time">' + fmtTimeAgo(c.created_at || c.time || '') + '</span></div>' +
             '<div class="jc-step-desc">' + escHtml(c.description || c.change || '') + '</div>' +
