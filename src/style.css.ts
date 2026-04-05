@@ -565,9 +565,21 @@ body.drawer-open .tabs, body.sheet-open .tabs { transform: translateZ(0) transla
   .param-progress-fill.progress-urgent { animation: none; }
   .badge-upgraded { animation: none; }
   .emergency-news-banner.visible { animation: none; }
+  .card-glow-success { animation: none; }
+  .urgent-pulse { animation: none; }
+  .tp-banner-inner::before { animation: none; }
+  .tp-banner.sl-banner .tp-banner-inner::after { animation: none; }
+  .highlight-flash { animation: none; }
+  .pnl-flash { animation: none; }
+  .ptr-spinner { animation: none; }
   .param-card-detail { transition: none; }
   .param-category-body { transition: none; }
+  * { transition-duration: 0.01ms !important; animation-duration: 0.01ms !important; }
 }
+
+/* ═══ Skip navigation (WCAG 2.4.1) ═══ */
+.skip-link{position:absolute;top:-999px;left:-999px;z-index:99999;padding:8px 16px;background:var(--blue);color:#fff;font-size:14px;font-weight:600;border-radius:6px;text-decoration:none}
+.skip-link:focus{top:8px;left:8px}
 
 /* ═══ Tracking list text overflow protection ═══ */
 #tracking-list-container div { overflow: hidden; text-overflow: ellipsis; }
@@ -677,7 +689,7 @@ button:focus-visible { outline: 2px solid var(--blue); outline-offset: 2px; }
 }
 
 /* ═══ アクティビティフィード ═══ */
-.feed-item{display:grid;grid-template-columns:52px 38px 72px 1fr auto;align-items:center;column-gap:6px;padding:8px 16px;border-bottom:1px solid rgba(255,255,255,0.04);font-size:12px}
+.feed-item{display:grid;grid-template-columns:52px 54px 72px 1fr auto;align-items:center;column-gap:6px;padding:8px 16px;border-bottom:1px solid rgba(255,255,255,0.04);font-size:12px}
 .feed-item-ind{opacity:0.8}
 .feed-tag{padding:2px 6px;border-radius:4px;font-size:11px;font-weight:600;letter-spacing:0.2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .feed-tag-buy{background:rgba(10,132,255,0.18);color:#0A84FF}

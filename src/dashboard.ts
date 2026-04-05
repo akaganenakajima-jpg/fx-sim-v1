@@ -22,34 +22,38 @@ export function getDashboardHtml(): string {
   <meta property="og:title" content="FX Sim — AI FX Trading Simulator">
   <meta property="og:description" content="Gemini AIがリアルタイムにFX相場を分析する仮想トレードシミュレーター">
   <meta property="og:type" content="website">
+  <meta property="og:url" content="https://fx-sim-v1.ai-battle-sim.workers.dev/">
   <meta property="og:image" content="https://fx-sim-v1.ai-battle-sim.workers.dev/icon-512.svg">
   <link rel="stylesheet" href="/style.css?v=${CSS_VERSION}">
 </head>
 <body>
 
+<!-- ═══ Skip navigation (WCAG 2.4.1) ═══ -->
+<a href="#main-content" class="skip-link">メインコンテンツへスキップ</a>
+
 <!-- ═══ PC Tabbar (769-1279px: horizontal tabs at top) ═══ -->
-<nav class="pc-tabbar" id="pc-tabbar" aria-label="PCタブナビゲーション">
-  <button class="pc-tabbar-item active" data-tab="tab-portfolio" onclick="switchTab('tab-portfolio')">
+<nav class="pc-tabbar" id="pc-tabbar" role="tablist" aria-label="PCタブナビゲーション">
+  <button class="pc-tabbar-item active" role="tab" aria-selected="true" aria-controls="tab-portfolio" data-tab="tab-portfolio" onclick="switchTab('tab-portfolio')">
     <svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12l9-8 9 8"/><path d="M5 10v9a1 1 0 001 1h3v-5h6v5h3a1 1 0 001-1v-9"/></svg>
     HOME
   </button>
-  <button class="pc-tabbar-item" data-tab="tab-news" onclick="switchTab('tab-news')">
+  <button class="pc-tabbar-item" role="tab" aria-selected="false" aria-controls="tab-news" data-tab="tab-news" onclick="switchTab('tab-news')">
     <svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M7 8h4"/><path d="M7 12h10"/><path d="M7 16h10"/></svg>
     ニュース
   </button>
-  <button class="pc-tabbar-item" data-tab="tab-stats" onclick="switchTab('tab-stats')">
+  <button class="pc-tabbar-item" role="tab" aria-selected="false" aria-controls="tab-stats" data-tab="tab-stats" onclick="switchTab('tab-stats')">
     <svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M3 20l5-8 4 4 5-9 4 5"/></svg>
     学び
   </button>
-  <button class="pc-tabbar-item" data-tab="tab-ai" onclick="switchTab('tab-ai')">
+  <button class="pc-tabbar-item" role="tab" aria-selected="false" aria-controls="tab-ai" data-tab="tab-ai" onclick="switchTab('tab-ai')">
     <svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="6" y="6" width="12" height="12" rx="2"/><path d="M9 2v4M15 2v4M9 18v4M15 18v4M2 9h4M2 15h4M18 9h4M18 15h4"/></svg>
     AI
   </button>
-  <button class="pc-tabbar-item" data-tab="tab-strategy" onclick="switchTab('tab-strategy')">
+  <button class="pc-tabbar-item" role="tab" aria-selected="false" aria-controls="tab-strategy" data-tab="tab-strategy" onclick="switchTab('tab-strategy')">
     <svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M4 8h4m4 0h8M4 16h8m4 0h4"/><circle cx="10" cy="8" r="2"/><circle cx="14" cy="16" r="2"/></svg>
     戦略
   </button>
-  <button class="pc-tabbar-item" data-tab="tab-log" onclick="switchTab('tab-log')">
+  <button class="pc-tabbar-item" role="tab" aria-selected="false" aria-controls="tab-log" data-tab="tab-log" onclick="switchTab('tab-log')">
     <svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M12 1v2m0 18v2m-9-11h2m18 0h2m-4.2-6.8l-1.4 1.4M6.6 17.4l-1.4 1.4m0-12.8l1.4 1.4m10.8 10.8l1.4 1.4"/></svg>
     系統
   </button>
@@ -58,31 +62,33 @@ export function getDashboardHtml(): string {
 <!-- ═══ PC Sidebar (≥1280px: fixed left sidebar) ═══ -->
 <aside class="pc-sidebar" id="pc-sidebar">
   <div class="sidebar-logo">FX</div>
-  <button class="sidebar-tab active" data-tab="tab-portfolio" onclick="switchTab('tab-portfolio')">
+  <div role="tablist" aria-label="サイドバーナビゲーション">
+  <button class="sidebar-tab active" role="tab" aria-selected="true" aria-controls="tab-portfolio" data-tab="tab-portfolio" onclick="switchTab('tab-portfolio')">
     <svg aria-hidden="true" viewBox="0 0 24 24"><path d="M3 12l9-8 9 8"/><path d="M5 10v9a1 1 0 001 1h3v-5h6v5h3a1 1 0 001-1v-9"/></svg>
     <span>HOME</span>
   </button>
-  <button class="sidebar-tab" data-tab="tab-news" onclick="switchTab('tab-news')">
+  <button class="sidebar-tab" role="tab" aria-selected="false" aria-controls="tab-news" data-tab="tab-news" onclick="switchTab('tab-news')">
     <svg aria-hidden="true" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M7 8h4"/><path d="M7 12h10"/><path d="M7 16h10"/></svg>
     <span>ニュース</span>
   </button>
-  <button class="sidebar-tab" data-tab="tab-stats" onclick="switchTab('tab-stats')">
+  <button class="sidebar-tab" role="tab" aria-selected="false" aria-controls="tab-stats" data-tab="tab-stats" onclick="switchTab('tab-stats')">
     <svg aria-hidden="true" viewBox="0 0 24 24"><path d="M3 20l5-8 4 4 5-9 4 5"/></svg>
     <span>学び</span>
   </button>
-  <button class="sidebar-tab" data-tab="tab-ai" onclick="switchTab('tab-ai')">
+  <button class="sidebar-tab" role="tab" aria-selected="false" aria-controls="tab-ai" data-tab="tab-ai" onclick="switchTab('tab-ai')">
     <svg aria-hidden="true" viewBox="0 0 24 24"><rect x="6" y="6" width="12" height="12" rx="2"/><path d="M9 2v4M15 2v4M9 18v4M15 18v4M2 9h4M2 15h4M18 9h4M18 15h4"/></svg>
     <span>AI</span>
   </button>
-  <button class="sidebar-tab" data-tab="tab-strategy" onclick="switchTab('tab-strategy')">
+  <button class="sidebar-tab" role="tab" aria-selected="false" aria-controls="tab-strategy" data-tab="tab-strategy" onclick="switchTab('tab-strategy')">
     <svg aria-hidden="true" viewBox="0 0 24 24"><path d="M4 8h4m4 0h8M4 16h8m4 0h4"/><circle cx="10" cy="8" r="2"/><circle cx="14" cy="16" r="2"/></svg>
     <span>戦略</span>
   </button>
   <div class="sidebar-spacer"></div>
-  <button class="sidebar-tab sidebar-bottom" data-tab="tab-log" onclick="switchTab('tab-log')">
+  <button class="sidebar-tab sidebar-bottom" role="tab" aria-selected="false" aria-controls="tab-log" data-tab="tab-log" onclick="switchTab('tab-log')">
     <svg aria-hidden="true" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M12 1v2m0 18v2m-9-11h2m18 0h2m-4.2-6.8l-1.4 1.4M6.6 17.4l-1.4 1.4m0-12.8l1.4 1.4m10.8 10.8l1.4 1.4"/></svg>
     <span>系統</span>
   </button>
+  </div>
 </aside>
 
 <!-- ═══ PC Panel (≥1920px: right news panel) ═══ -->
@@ -120,8 +126,11 @@ export function getDashboardHtml(): string {
   </div>
 </div>
 
+<!-- ═══ メインコンテンツ（スクリーンリーダー landmark） ═══ -->
+<main id="main-content">
+
 <!-- ═══════════ TAB 1: 今 (tab-portfolio) ═══════════ -->
-<div class="tab-panel active" id="tab-portfolio">
+<div class="tab-panel active" id="tab-portfolio" role="tabpanel" aria-label="HOME" aria-hidden="false">
 
   <!-- PnL ヒーロー -->
   <section class="hero">
@@ -197,7 +206,7 @@ export function getDashboardHtml(): string {
 </div>
 
 <!-- ═══════════ TAB 2: ニュース (tab-news) ═══════════ -->
-<div class="tab-panel" id="tab-news">
+<div class="tab-panel" id="tab-news" role="tabpanel" aria-label="ニュース" aria-hidden="true">
 
   <!-- ニュースKPI -->
   <div class="sec">ニュース概況</div>
@@ -233,7 +242,7 @@ export function getDashboardHtml(): string {
 </div>
 
 <!-- ═══════════ TAB 3: 学び (tab-stats) ═══════════ -->
-<div class="tab-panel" id="tab-stats">
+<div class="tab-panel" id="tab-stats" role="tabpanel" aria-label="学び" aria-hidden="true">
 
   <!-- KPI 6つ -->
   <div class="sec">全体パフォーマンス</div>
@@ -304,7 +313,7 @@ export function getDashboardHtml(): string {
 </div>
 
 <!-- ═══════════ TAB 4: AI (tab-ai) ═══════════ -->
-<div class="tab-panel" id="tab-ai">
+<div class="tab-panel" id="tab-ai" role="tabpanel" aria-label="AI" aria-hidden="true">
 
   <!-- ヒーロー正解率 -->
   <div class="ai-score" id="ai-score">
@@ -350,7 +359,7 @@ export function getDashboardHtml(): string {
 </div>
 
 <!-- ═══════════ TAB 5: 戦略 (tab-strategy) ═══════════ -->
-<div class="tab-panel" id="tab-strategy">
+<div class="tab-panel" id="tab-strategy" role="tabpanel" aria-label="戦略" aria-hidden="true">
 
   <!-- ティア分類 -->
   <div class="sec">各銘柄の進化</div>
@@ -366,7 +375,7 @@ export function getDashboardHtml(): string {
 </div>
 
 <!-- ═══════════ TAB 6: 系統 (tab-log) ═══════════ -->
-<div class="tab-panel" id="tab-log">
+<div class="tab-panel" id="tab-log" role="tabpanel" aria-label="系統" aria-hidden="true">
 
   <!-- ヘルスヒーロー -->
   <div class="health-hero" id="health-hero">
@@ -423,29 +432,31 @@ export function getDashboardHtml(): string {
 
 </div>
 
+</main>
+
 <!-- ═══ Floating Liquid Glass タブバー ═══ -->
-<nav class="tabs" id="main-tabs" aria-label="メインナビゲーション">
-  <div class="tab on" role="button" tabindex="0" data-tab="tab-portfolio" onclick="switchTab('tab-portfolio')">
+<nav class="tabs" id="main-tabs" role="tablist" aria-label="メインナビゲーション">
+  <div class="tab on" role="tab" aria-selected="true" aria-controls="tab-portfolio" tabindex="0" data-tab="tab-portfolio" onclick="switchTab('tab-portfolio')">
     <svg class="tab-icon" aria-hidden="true" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12l9-8 9 8"/><path d="M5 10v9a1 1 0 001 1h3v-5h6v5h3a1 1 0 001-1v-9"/></svg>
     <span class="tab-t">HOME</span>
   </div>
-  <div class="tab" role="button" tabindex="0" data-tab="tab-news" onclick="switchTab('tab-news')">
+  <div class="tab" role="tab" aria-selected="false" aria-controls="tab-news" tabindex="0" data-tab="tab-news" onclick="switchTab('tab-news')">
     <svg class="tab-icon" aria-hidden="true" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M7 8h4"/><path d="M7 12h10"/><path d="M7 16h10"/></svg>
     <span class="tab-t">ニュース</span>
   </div>
-  <div class="tab" role="button" tabindex="0" data-tab="tab-stats" onclick="switchTab('tab-stats')">
+  <div class="tab" role="tab" aria-selected="false" aria-controls="tab-stats" tabindex="0" data-tab="tab-stats" onclick="switchTab('tab-stats')">
     <svg class="tab-icon" aria-hidden="true" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M3 20l5-8 4 4 5-9 4 5"/></svg>
     <span class="tab-t">学び</span>
   </div>
-  <div class="tab" role="button" tabindex="0" data-tab="tab-ai" onclick="switchTab('tab-ai')">
+  <div class="tab" role="tab" aria-selected="false" aria-controls="tab-ai" tabindex="0" data-tab="tab-ai" onclick="switchTab('tab-ai')">
     <svg class="tab-icon" aria-hidden="true" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="6" y="6" width="12" height="12" rx="2"/><path d="M9 2v4M15 2v4M9 18v4M15 18v4M2 9h4M2 15h4M18 9h4M18 15h4"/></svg>
     <span class="tab-t">AI</span>
   </div>
-  <div class="tab" role="button" tabindex="0" data-tab="tab-strategy" onclick="switchTab('tab-strategy')">
+  <div class="tab" role="tab" aria-selected="false" aria-controls="tab-strategy" tabindex="0" data-tab="tab-strategy" onclick="switchTab('tab-strategy')">
     <svg class="tab-icon" aria-hidden="true" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M4 8h4m4 0h8M4 16h8m4 0h4"/><circle cx="10" cy="8" r="2"/><circle cx="14" cy="16" r="2"/></svg>
     <span class="tab-t">戦略</span>
   </div>
-  <div class="tab" role="button" tabindex="0" data-tab="tab-log" onclick="switchTab('tab-log')">
+  <div class="tab" role="tab" aria-selected="false" aria-controls="tab-log" tabindex="0" data-tab="tab-log" onclick="switchTab('tab-log')">
     <svg class="tab-icon" aria-hidden="true" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M12 1v2m0 18v2m-9-11h2m18 0h2m-4.2-6.8l-1.4 1.4M6.6 17.4l-1.4 1.4m0-12.8l1.4 1.4m10.8 10.8l1.4 1.4"/></svg>
     <span class="tab-t">系統</span>
   </div>
@@ -468,7 +479,7 @@ export function getDashboardHtml(): string {
   <div id="news-drawer-body" class="news-drawer-body"></div>
 </div>
 
-<script src="/app.js?v=30"></script>
+<script src="/app.js?v=31"></script>
 </body>
 </html>`;
 }
