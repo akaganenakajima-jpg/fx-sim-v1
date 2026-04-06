@@ -411,6 +411,12 @@ export function getDashboardHtml(): string {
     <div style="display:flex;justify-content:space-between"><span>NORMAL</span><span>CAUTION</span><span>WARN</span><span>HALT</span><span>STOP</span></div>
   </div>
 
+  <!-- DD管理コントロール -->
+  <div class="sec">DD管理コントロール</div>
+  <div id="dd-control-panel" style="margin:0 16px 16px">
+    <!-- JS で renderDDControls() が描画 -->
+  </div>
+
   <!-- 稼働率/エラー率 -->
   <div style="display:flex;gap:4px;margin:0 16px 8px" id="sys-uptime-grid">
     <div style="flex:1;padding:12px 8px;background:var(--surface);border-radius:var(--rs);text-align:center">

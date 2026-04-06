@@ -7,6 +7,7 @@ import { INSTRUMENTS } from './instruments';
 import { getSessionStats, getPairStats, type SessionStats, type PairStats } from './trade-journal';
 import { wilsonCI, sharpeWithSE, varCvar, kellyFraction, markovTransition, maxDrawdown, rollingReturns, pnlVolatility, profitFactor, bootstrapROI, aiAccuracy, randomBaselineComparison, pairCorrelation, logReturnStats, powerAnalysis, ewmaVolatility, engleGrangerCointegration, hierarchicalWinRate } from './stats';
 import { INITIAL_CAPITAL, RELIABILITY_TRUSTED, RELIABILITY_TENTATIVE } from './constants';
+import { isGlobalDDEnabled, setGlobalDDEnabled } from './risk-manager';
 
 export interface LatestDecision {
   id: number;
@@ -119,6 +120,8 @@ export interface StatusResponse {
     why_chain: string[] | null;
   }>;
   tradingMode: 'paper' | 'demo' | 'live';
+  globalDDEnabled: boolean;
+  ddStopped: boolean;
   riskStatus: {
     killSwitchActive: boolean;
     todayLoss: number;
@@ -642,6 +645,8 @@ export async function getApiStatus(db: D1Database, tradingEnv?: { TRADING_ENABLE
     },
     sparklines,
     performanceByPair,
+    globalDDEnabled: await isGlobalDDEnabled(db).catch(() => false),
+    ddStopped: await db.prepare(`SELECT value FROM risk_state WHERE key = 'dd_stopped'`).first<{ value: string }>().then(r => r?.value === 'true').catch(() => false),
     riskStatus,
     instrumentScores: instrScoresRaw.results ?? [],
     rrSummary: (() => {
@@ -1529,5 +1534,21 @@ export async function resumeSystem(db: D1Database): Promise<{ success: boolean; 
     return { success: true, message: 'システムを再稼働しました（DD STOP解除）' };
   } catch (e) {
     return { success: false, message: String(e) };
+  }
+}
+
+// ─── DD管理システム ON/OFF トグル ─────────────────────────────────────────────
+
+/** グローバルDD管理のON/OFFを切り替える。実弾投入前は OFF がデフォルト設計。 */
+export async function toggleDDEnabled(
+  db: D1Database,
+  enabled: boolean
+): Promise<{ success: boolean; globalDDEnabled: boolean; message: string }> {
+  try {
+    await setGlobalDDEnabled(db, enabled);
+    const label = enabled ? 'ON（有効）' : 'OFF（無効）';
+    return { success: true, globalDDEnabled: enabled, message: `DD管理を${label}に切り替えました` };
+  } catch (e) {
+    return { success: false, globalDDEnabled: false, message: String(e) };
   }
 }
