@@ -98,7 +98,7 @@ export function isNakaneWindow(now: Date): boolean {
  * | EUR/JPY     | ◎1.0  | ◎1.0   | △0.5 | ○0.8    |
  * | GBP/JPY     | ○0.8  | ◎1.0   | △0.5 | ○0.8    |
  * | AUD/JPY     | ◎1.0  | △0.5   | △0.5 | ○0.8    |
- * | 日本株(10)  | ◎1.0  | ✗0     | ✗0   | ✗0      |
+ * | 日本株(19)  | ◎1.0  | ✗0     | ✗0   | ✗0      |
  * | 米国株(8)   | ✗0    | △0.3   | ◎1.0 | ○0.8    |
  */
 export function getSessionInstrumentMultiplier(
@@ -115,7 +115,14 @@ export function getSessionInstrumentMultiplier(
 
   // overlap: FX/商品=0.8、日本株=0（TSE閉場）、米国株=0.8
   if (session === 'overlap') {
-    const jpStocks = ['川崎汽船','日本郵船','ソフトバンクG','レーザーテック','東京エレクトロン','ディスコ','アドバンテスト','ファーストリテイリング','日本製鉄','三菱UFJ'];
+    const jpStocks = [
+      // 旧10銘柄
+      '川崎汽船', '日本郵船', 'ソフトバンクG', 'レーザーテック', '東京エレクトロン',
+      'ディスコ', 'アドバンテスト', 'ファーストリテイリング', '日本製鉄', '三菱UFJ',
+      // 新9銘柄
+      '商船三井', '東京海上HD', '三菱商事', 'トヨタ', 'さくらインターネット',
+      '三菱重工', 'IHI', 'ANYCOLOR', 'カバー',
+    ];
     if (jpStocks.includes(pair)) return 0;
     return 0.8;
   }
@@ -144,7 +151,7 @@ export function getSessionInstrumentMultiplier(
       EURJPY: 1.0,
       GBPJPY: 0.8,
       AUDJPY: 1.0,
-      // 日本株: 東京セッション = TSE営業時間
+      // 日本株: 東京セッション = TSE営業時間（旧10+新9銘柄）
       '川崎汽船': 1.0,
       '日本郵船': 1.0,
       'ソフトバンクG': 1.0,
@@ -155,6 +162,15 @@ export function getSessionInstrumentMultiplier(
       'ファーストリテイリング': 1.0,
       '日本製鉄': 1.0,
       '三菱UFJ': 1.0,
+      '商船三井': 1.0,
+      '東京海上HD': 1.0,
+      '三菱商事': 1.0,
+      'トヨタ': 1.0,
+      'さくらインターネット': 1.0,
+      '三菱重工': 1.0,
+      IHI: 1.0,
+      ANYCOLOR: 1.0,
+      'カバー': 1.0,
       // 米国株: 東京セッションでは取引不可
       NVDA: 0, TSLA: 0, AAPL: 0, AMZN: 0, AMD: 0,
       META: 0, MSFT: 0, GOOGL: 0,
@@ -182,11 +198,13 @@ export function getSessionInstrumentMultiplier(
       EURJPY: 1.0,
       GBPJPY: 1.0,
       AUDJPY: 0.5,
-      // 日本株: TSE閉場
+      // 日本株: TSE閉場（旧10+新9銘柄）
       '川崎汽船': 0, '日本郵船': 0, 'ソフトバンクG': 0,
       'レーザーテック': 0, '東京エレクトロン': 0, 'ディスコ': 0,
       'アドバンテスト': 0, 'ファーストリテイリング': 0,
       '日本製鉄': 0, '三菱UFJ': 0,
+      '商船三井': 0, '東京海上HD': 0, '三菱商事': 0, 'トヨタ': 0,
+      'さくらインターネット': 0, '三菱重工': 0, IHI: 0, ANYCOLOR: 0, 'カバー': 0,
       // 米国株: プレマーケット（低倍率）
       NVDA: 0.3, TSLA: 0.3, AAPL: 0.3, AMZN: 0.3, AMD: 0.3,
       META: 0.3, MSFT: 0.3, GOOGL: 0.3,
@@ -214,11 +232,13 @@ export function getSessionInstrumentMultiplier(
       EURJPY: 0.5,
       GBPJPY: 0.5,
       AUDJPY: 0.5,
-      // 日本株: TSE閉場
+      // 日本株: TSE閉場（旧10+新9銘柄）
       '川崎汽船': 0, '日本郵船': 0, 'ソフトバンクG': 0,
       'レーザーテック': 0, '東京エレクトロン': 0, 'ディスコ': 0,
       'アドバンテスト': 0, 'ファーストリテイリング': 0,
       '日本製鉄': 0, '三菱UFJ': 0,
+      '商船三井': 0, '東京海上HD': 0, '三菱商事': 0, 'トヨタ': 0,
+      'さくらインターネット': 0, '三菱重工': 0, IHI: 0, ANYCOLOR: 0, 'カバー': 0,
       // 米国株: NYSE/NASDAQ本場
       NVDA: 1.0, TSLA: 1.0, AAPL: 1.0, AMZN: 1.0, AMD: 1.0,
       META: 1.0, MSFT: 1.0, GOOGL: 1.0,

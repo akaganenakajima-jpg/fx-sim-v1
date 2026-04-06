@@ -257,6 +257,21 @@ export async function runLogicDecisions(
 
   let logicNewEntries = 0; // このtickで新規開設したロジックポジション数
 
+  // ── SKIP理由カテゴリ集計カウンタ ──────────────────────────────────────────
+  // tick単位で1件のJSONログに集約（D1書き込みコスト: +0、可視情報: 大幅増）
+  // カテゴリ一覧: PYRAMID/OPEN_LIM/VIX/SESSION/INST_CAP/SL_CD/CORR_CD/
+  //              DAILY_LIM/HIST/ER_LIM/SCORE/CONFIRM/NO_TPSL/
+  //              REVERSAL/RR_LOW/SANITY/PYRAMID2/CORR_GUARD
+  //              LOT_ZERO_SESSION(TSE閉場等)/LOT_ZERO_WKND(週末)/LOT_ZERO(その他)
+  // NEUTRAL サブカテゴリ:
+  //   NEUTRAL_RSI    = RSIが中立ゾーン内（最多）
+  //   NEUTRAL_ER     = ER（ADX相当）が閾値未満
+  //   NEUTRAL_REGIME = レジーム不許可（volatile等）
+  //   NEUTRAL_MACD   = RSI/BBシグナルあるがMACDフィルターキャンセル
+  //   NEUTRAL_DATA   = データ不足
+  const skipCounts: Record<string, number> = {};
+  const addSkip = (cat: string): void => { skipCounts[cat] = (skipCounts[cat] ?? 0) + 1; };
+
   // ── Reversal Guard: 月曜ギャップ窓の検知 ────────────────────────────────────
   // UTC 日曜 22:00〜月曜 01:59 = FX市場オープン直後4時間（窓埋め or 逆転が最多発する時間帯）
   const gapWindowDay  = now.getUTCDay();
@@ -293,6 +308,8 @@ export async function runLogicDecisions(
           ...(tempParams.atr_tp_multiplier  != null && { atr_tp_multiplier: tempParams.atr_tp_multiplier }),
           ...(tempParams.atr_sl_multiplier  != null && { atr_sl_multiplier: tempParams.atr_sl_multiplier }),
           ...(tempParams.vix_max            != null && { vix_max:           tempParams.vix_max }),
+          // v243: 期間限定実験 — entry_score_min の一時上書き（news_temp_params に実験行を挿入して使用）
+          ...(tempParams.entry_score_min    != null && { entry_score_min:   tempParams.entry_score_min }),
         }
       : baseParams;
 
@@ -307,12 +324,14 @@ export async function runLogicDecisions(
       const maxPyramid = params.max_pyramiding_entries ?? 0;
       if (maxPyramid <= 0) {
         summary.skipped++;
+        addSkip('PYRAMID');
         continue;
       }
       // ピラミッディング条件チェック（後でシグナル方向が確定してから最終判定）
       // ここではポジション数上限のみ先にチェック
       if (existingPositions.length >= 1 + maxPyramid) {
         summary.skipped++;
+        addSkip('PYRAMID');
         continue;
       }
     }
@@ -320,6 +339,7 @@ export async function runLogicDecisions(
     // OPEN上限チェック
     if (openPairs.size + logicNewEntries >= MAX_OPEN_POSITIONS) {
       summary.skipped++;
+      addSkip('OPEN_LIM');
       continue;
     }
 
@@ -327,6 +347,7 @@ export async function runLogicDecisions(
     const vix = indicators.vix;
     if (vix != null && vix > params.vix_max) {
       summary.skipped++;
+      addSkip('VIX');
       summary.signals.push({ pair, signal: 'SKIP', reason: `VIX=${vix.toFixed(1)}>${params.vix_max}` });
       continue;
     }
@@ -339,6 +360,7 @@ export async function runLogicDecisions(
         : (currentHour >= params.session_start_utc || currentHour < params.session_end_utc);
       if (!inSession) {
         summary.skipped++;
+        addSkip('SESSION');
         summary.signals.push({ pair, signal: 'SKIP', reason: `session外(${currentHour}h UTC)` });
         continue;
       }
@@ -348,6 +370,7 @@ export async function runLogicDecisions(
     const instDaily = await checkInstrumentDailyLoss(db, pair, now, paperBypass);
     if (instDaily.paused) {
       summary.skipped++;
+      addSkip('INST_CAP');
       summary.signals.push({ pair, signal: 'SKIP',
         reason: `銘柄日次Cap超過(${instDaily.dailyPnl.toFixed(0)}円)` });
       continue;
@@ -366,6 +389,7 @@ export async function runLogicDecisions(
       if (todaySLCount >= 4) {
         // 4回目以降: 当日エントリー禁止
         summary.skipped++;
+        addSkip('SL_CD');
         summary.signals.push({ pair, signal: 'SKIP', reason: `SL当日禁止(本日${todaySLCount}回SL)` });
         continue;
       }
@@ -380,6 +404,7 @@ export async function runLogicDecisions(
         const cooldownMs = cooldownMinutes * 60 * 1000;
         if (now.getTime() - slTime < cooldownMs) {
           summary.skipped++;
+          addSkip('SL_CD');
           summary.signals.push({ pair, signal: 'SKIP', reason: `SLクールダウン中(${cooldownMinutes}分, 本日${todaySLCount}回目)` });
           continue;
         }
@@ -404,6 +429,7 @@ export async function runLogicDecisions(
           const groupSlTime = new Date(groupLastSl.closed_at).getTime();
           if (now.getTime() - groupSlTime < CORRELATION_GROUP_COOLDOWN_MS) {
             summary.skipped++;
+            addSkip('CORR_CD');
             summary.signals.push({ pair, signal: 'SKIP', reason: `相関グループCD(${group}: ${groupLastSl.pair}がSL)` });
             continue;
           }
@@ -440,6 +466,7 @@ export async function runLogicDecisions(
       ).bind(pair).first<{cnt: number}>();
       if (todayEntries && todayEntries.cnt >= dynamicLimit) {
         summary.skipped++;
+        addSkip('DAILY_LIM');
         summary.signals.push({ pair, signal: 'SKIP', reason: `日次上限(${todayEntries.cnt}/${dynamicLimit})[avgRR=${avgRr.toFixed(2)}]` });
         continue;
       }
@@ -450,6 +477,7 @@ export async function runLogicDecisions(
     const minRequired = params.rsi_period + 1;
     if (closes.length < minRequired) {
       summary.skipped++;
+      addSkip('HIST');
       summary.signals.push({ pair, signal: 'SKIP', reason: `価格履歴不足(${closes.length}/${minRequired}件)` });
       continue;
     }
@@ -482,6 +510,8 @@ export async function runLogicDecisions(
 
     if (techSignal.signal === 'NEUTRAL') {
       summary.skipped++;
+      // neutralCode でボトルネックを分類（NEUTRAL_RSI / NEUTRAL_ER / NEUTRAL_REGIME / NEUTRAL_MACD / NEUTRAL_DATA）
+      addSkip(techSignal.neutralCode ?? 'NEUTRAL');
       continue;
     }
 
@@ -492,6 +522,7 @@ export async function runLogicDecisions(
         && techSignal.er != null && params.er_upper_limit > 0) {
       if (techSignal.er > params.er_upper_limit) {
         summary.skipped++;
+        addSkip('ER_LIM');
         summary.signals.push({ pair, signal: 'SKIP',
           reason: `ER=${techSignal.er.toFixed(3)}>${params.er_upper_limit}(mean_rev上限)` });
         continue;
@@ -504,6 +535,7 @@ export async function runLogicDecisions(
     if (techSignal.scores && params.entry_score_min > 0) {
       if (techSignal.scores.total < params.entry_score_min) {
         summary.skipped++;
+        addSkip('SCORE');
         summary.signals.push({ pair, signal: 'SKIP',
           reason: `entry_score=${techSignal.scores.total.toFixed(2)}<${params.entry_score_min} [${techSignal.scores.breakdown}]` });
         continue;
@@ -518,6 +550,7 @@ export async function runLogicDecisions(
       const signalStrength = Math.min(1, (rsiDev + techSignal.er) / 2);
       if (signalStrength < params.min_signal_strength) {
         summary.skipped++;
+        addSkip('SCORE');
         summary.signals.push({ pair, signal: 'SKIP',
           reason: `signal_str=${signalStrength.toFixed(2)}<${params.min_signal_strength}(min)` });
         continue;
@@ -538,6 +571,7 @@ export async function runLogicDecisions(
 
       if (significantSignals < params.min_confirm_signals) {
         summary.skipped++;
+        addSkip('CONFIRM');
         summary.signals.push({ pair, signal: 'SKIP',
           reason: `confirm=${significantSignals}<${params.min_confirm_signals}(根拠不足)` });
         continue;
@@ -547,6 +581,7 @@ export async function runLogicDecisions(
     // BUY/SELL シグナル → TP/SL null チェック
     if (techSignal.tp_rate == null || techSignal.sl_rate == null) {
       summary.skipped++;
+      addSkip('NO_TPSL');
       continue;
     }
 
@@ -588,6 +623,7 @@ export async function runLogicDecisions(
             if (rsiVeryOverheat || (isBBOverextended && gapInfo.magnitude === 'LARGE')) {
               // 二次防衛: スキップ（逆転リスク極大）
               summary.skipped++;
+              addSkip('REVERSAL');
               summary.signals.push({ pair, signal: 'SKIP', reason: `${guardNote} → スキップ` });
               void insertSystemLog(db, 'INFO', 'REVERSAL_GUARD',
                 `${pair} エントリースキップ`, guardNote);
@@ -654,10 +690,14 @@ export async function runLogicDecisions(
     // ── Ph.7 RR比チェック（スケール適用後）──────────────────────────
     const tpDist = Math.abs(scaledTp - currentRate);
     const slDist = Math.abs(scaledSl - currentRate);
+    // ε=1e-4 を許容: parseFloat+toFixed(5) 経路で RR=2.0 が 1.9999... になる
+    // 浮動小数点ノイズ（例: rate=7890.5, atr=89.1 → RR=1.999999999999990）を除去
+    // 真に不合格なケース（1.9994 等）は ε より大きく離れているため正しく弾かれる
     const actualRR = slDist > 0 ? tpDist / slDist : 0;
 
-    if (actualRR < params.min_rr_ratio) {
+    if (actualRR < params.min_rr_ratio - 1e-4) {
       summary.skipped++;
+      addSkip('RR_LOW');
       summary.signals.push({ pair, signal: 'SKIP',
         reason: `RR=${actualRR.toFixed(2)}<${params.min_rr_ratio}(min)` });
       continue;
@@ -676,6 +716,7 @@ export async function runLogicDecisions(
         `LOGIC TP/SL異常: ${pair} ${techSignal.signal}`,
         sanity.reason ?? undefined);
       summary.skipped++;
+      addSkip('SANITY');
       continue;
     }
 
@@ -689,6 +730,7 @@ export async function runLogicDecisions(
       const allSameDir = existingPositions.every(p => p.direction === dir);
       if (!allSameDir) {
         summary.skipped++;
+        addSkip('PYRAMID2');
         summary.signals.push({ pair, signal: 'SKIP', reason: `ピラミッディング不可: 既存ポジションと逆方向` });
         continue;
       }
@@ -703,6 +745,7 @@ export async function runLogicDecisions(
       });
       if (!allRiskFree) {
         summary.skipped++;
+        addSkip('PYRAMID2');
         summary.signals.push({ pair, signal: 'SKIP', reason: `ピラミッディング不可: 既存ポジション未リスクフリー` });
         continue;
       }
@@ -715,10 +758,14 @@ export async function runLogicDecisions(
     if (!corrGuard.allowed) {
       await insertSystemLog(db, 'WARN', 'RISK', `LOGIC 相関ガード: ${pair}`, corrGuard.reason);
       summary.skipped++;
+      addSkip('CORR_GUARD');
       continue;
     }
 
     // ロット倍率（DD段階 × ティア × 連敗縮退）
+    // ⚠️ bypass mode (DD OFF) では getDrawdownLevel() が globalDDEnabled=false を検出し
+    //    lotMultiplier=1.0 を返す（risk-manager.ts L198-203）。
+    //    isPaperTestBypassMode=true と ddResult.lotMultiplier=1.0 は必ず同時に成立する。
     const ddLotMult  = ddResult.lotMultiplier;
     const tierMult   = instrument.tierLotMultiplier;
 
@@ -761,6 +808,17 @@ export async function runLogicDecisions(
 
     if (requestedLot <= 0) {
       summary.skipped++;
+      // LOT_ZERO サブカテゴリ: 原因特定のために分類
+      //   LOT_ZERO_SESSION: sessionInstrMult=0 (TSE閉場中の日本株、NYクローズ中の株指数等)
+      //   LOT_ZERO_WKND:    weekendEntryMult=0 (週末市場クローズ)
+      //   LOT_ZERO:         上記以外 (DD lot / 連敗縮退 等の積が0)
+      if (sessionInstrMult <= 0) {
+        addSkip('LOT_ZERO_SESSION');
+      } else if (weekendEntryMult <= 0) {
+        addSkip('LOT_ZERO_WKND');
+      } else {
+        addSkip('LOT_ZERO');
+      }
       continue;
     }
 
@@ -844,17 +902,26 @@ export async function runLogicDecisions(
   }
 
   {
-    // 日次上限・ER超過等のSKIP理由は常にログに記録（動的上限の動作確認用）
-    const skipReasons = summary.signals
-      .filter(s => s.signal === 'SKIP')
-      .map(s => `${s.pair}:${s.reason ?? 'SKIP'}`)
-      .slice(0, 8);
+    // tick単位SKIP集計ログ（D1: 1write/tick）
+    // skip フィールドでボトルネックフィルターを即座に特定できる
+    // 例: {"entered":0,"skipped":46,"skip":{"SESSION":22,"NEUTRAL":18,"SCORE":6}}
+    const enteredSignals = summary.signals
+      .filter(s => s.signal !== 'SKIP' && s.signal !== 'NEUTRAL')
+      .map(s => `${s.pair}:${s.signal}`)
+      .join(',');
+    const skipDetail = Object.entries(skipCounts)
+      .sort((a, b) => b[1] - a[1])
+      .map(([cat, n]) => `${cat}=${n}`)
+      .join(' ');
     await insertSystemLog(db, 'INFO', 'FLOW',
       `LOGIC完了: ${summary.entered}件エントリー / ${summary.skipped}件スキップ`,
-      JSON.stringify([
-        ...summary.signals.filter(s => s.signal !== 'SKIP').map(s => `${s.pair}:${s.signal}`),
-        ...(skipReasons.length > 0 ? [`SKIP理由:${skipReasons.join(',')}`.slice(0, 300)] : []),
-      ]));
+      JSON.stringify({
+        entered: summary.entered,
+        skipped: summary.skipped,
+        skip: skipCounts,                          // カテゴリ別集計（降順確認はfrontend側で）
+        signals: enteredSignals || null,           // エントリーしたペア一覧
+        skipTop: skipDetail.slice(0, 200) || null, // 人間可読サマリー
+      }).slice(0, 500));
   }
 
   // T07: 日次BUY+SELL件数モニタリング — 時刻比例チェック（T015修正）

@@ -195,6 +195,11 @@ export async function getDrawdownLevel(db: D1Database): Promise<DrawdownResult> 
   // ⚠️ ユーザー指示による仕様（2026-04-01）:
   //   global_dd_enabled=false（デフォルト）の場合、DD%やdd_stoppedの値に
   //   関わらず常にNORMAL/lotMultiplier=1.0を返す。実弾投入まで無効。バグではない。
+  //
+  // INC-20260406-001 保証:
+  //   isPaperTestBypassMode() = !isGlobalDDEnabled() と等価なので、
+  //   paperBypass=true のとき必ずここで早期リターン → ddLotMult=1.0 が保証される。
+  //   「bypass mode でも DD lot=0 になる」経路は存在しない。
   const globalDDEnabled = await isGlobalDDEnabled(db);
   if (!globalDDEnabled) {
     const balance = await getCurrentBalance(db);

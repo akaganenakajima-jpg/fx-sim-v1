@@ -21,6 +21,16 @@ export interface TechnicalSignal {
   regime: 'trending' | 'ranging' | 'volatile' | 'unknown';
   signal: 'BUY' | 'SELL' | 'NEUTRAL';
   reason: string;
+  /**
+   * signal==='NEUTRAL' のときの分類コード（observability 用）。
+   * - NEUTRAL_RSI:    RSIが中立ゾーン内（最多）
+   * - NEUTRAL_ER:     ER（ADX相当）が閾値未満（トレンドなし）
+   * - NEUTRAL_REGIME: レジームが許可外（volatile等）
+   * - NEUTRAL_MACD:   RSI/BBシグナルありだがMACDフィルターでキャンセル
+   * - NEUTRAL_DATA:   データ不足（closes件数 < period）
+   * 戦略変更なし。ログ集計でのボトルネック特定用。
+   */
+  neutralCode?: 'NEUTRAL_RSI' | 'NEUTRAL_ER' | 'NEUTRAL_REGIME' | 'NEUTRAL_MACD' | 'NEUTRAL_DATA';
   tp_rate: number | null;      // ATRベースTP（エントリーレートから計算）
   sl_rate: number | null;      // ATRベースSL
   // Ph.10: BBスクイーズ・ブレイクアウト起点かどうか
@@ -362,13 +372,13 @@ export function calcTechnicalSignal(
 
   // データ不足
   if (rsi === null || atr === null || er === null) {
-    return { pair, rsi, atr, er, regime, signal: 'NEUTRAL',
+    return { pair, rsi, atr, er, regime, signal: 'NEUTRAL', neutralCode: 'NEUTRAL_DATA',
              reason: `データ不足(closes=${closes.length}件)`, tp_rate: null, sl_rate: null };
   }
 
   // レジームが許可外
   if (!allowedRegimes.includes(regime)) {
-    return { pair, rsi, atr, er, regime, signal: 'NEUTRAL',
+    return { pair, rsi, atr, er, regime, signal: 'NEUTRAL', neutralCode: 'NEUTRAL_REGIME',
              reason: `レジーム${regime}は許可外(${regime_allow})`, tp_rate: null, sl_rate: null };
   }
 
@@ -376,7 +386,7 @@ export function calcTechnicalSignal(
   // adx_min=25 → ER閾値=0.40 に相当（線形マッピング: adx_min/60）
   const erThreshold = adx_min / 60;
   if (er < erThreshold) {
-    return { pair, rsi, atr, er, regime, signal: 'NEUTRAL',
+    return { pair, rsi, atr, er, regime, signal: 'NEUTRAL', neutralCode: 'NEUTRAL_ER',
              reason: `ER=${er.toFixed(3)} < 閾値${erThreshold.toFixed(3)}（ADX${adx_min}相当）`,
              tp_rate: null, sl_rate: null };
   }
@@ -520,7 +530,7 @@ export function calcTechnicalSignal(
   if (rsi < rsi_oversold) {
     // MACDフィルター: ヒストグラムが正方向に拡大していないならキャンセル
     if (macdData && macdData.histogram < macdData.prevHistogram) {
-      return { pair, rsi, atr, er, regime, signal: 'NEUTRAL',
+      return { pair, rsi, atr, er, regime, signal: 'NEUTRAL', neutralCode: 'NEUTRAL_MACD',
                reason: `RSI=${rsi.toFixed(1)}<${rsi_oversold} だがMACD↓(H=${macdData.histogram.toFixed(4)}<prev=${macdData.prevHistogram.toFixed(4)})`,
                tp_rate: null, sl_rate: null };
     }
@@ -536,7 +546,7 @@ export function calcTechnicalSignal(
   if (rsi > rsi_overbought) {
     // MACDフィルター: ヒストグラムが負方向に拡大していないならキャンセル
     if (macdData && macdData.histogram > macdData.prevHistogram) {
-      return { pair, rsi, atr, er, regime, signal: 'NEUTRAL',
+      return { pair, rsi, atr, er, regime, signal: 'NEUTRAL', neutralCode: 'NEUTRAL_MACD',
                reason: `RSI=${rsi.toFixed(1)}>${rsi_overbought} だがMACD↑(H=${macdData.histogram.toFixed(4)}>prev=${macdData.prevHistogram.toFixed(4)})`,
                tp_rate: null, sl_rate: null };
     }
@@ -548,8 +558,8 @@ export function calcTechnicalSignal(
              tp_rate: tp, sl_rate: sl, scores };
   }
 
-  // 中立
-  return { pair, rsi, atr, er, regime, signal: 'NEUTRAL',
+  // 中立（RSIが oversold〜overbought の中立ゾーン内）
+  return { pair, rsi, atr, er, regime, signal: 'NEUTRAL', neutralCode: 'NEUTRAL_RSI',
            reason: `RSI=${rsi.toFixed(1)} 中立ゾーン(${rsi_oversold}〜${rsi_overbought})`,
            tp_rate: null, sl_rate: null };
 }

@@ -376,3 +376,42 @@ describe('clearDDStoppedFlag', () => {
     expect(result.level).not.toBe('STOP');
   });
 });
+
+// ─── getDrawdownLevel — bypass mode（INC-20260406-001 保証） ───────────────
+// bypass mode では getDrawdownLevel() が lotMultiplier=1.0 を保証する。
+// 「bypass=true なのに ddLotMult=0 で LOT_ZERO になる」経路は存在しないことを確認。
+// ⚠️ INC-20260406-001: 実弾投入前にこのテストブロックを削除すること。
+
+describe('getDrawdownLevel — DD OFF(bypass)時は必ず lotMultiplier=1.0', () => {
+  it('global_dd_enabled=false + dd_stopped=true でも lotMultiplier=1.0', async () => {
+    // dd_stopped=true は DD ON 時のみ有効。DD OFF では無視される。
+    const db = makeDb({ global_dd_enabled: 'false', dd_stopped: 'true', hwm: '10000', balance: '7000' });
+    const result = await getDrawdownLevel(db);
+    expect(result.lotMultiplier).toBe(1.0);
+    expect(result.level).toBe('NORMAL');
+  });
+
+  it('global_dd_enabled=false + ddPct=30%(STOP相当) でも lotMultiplier=1.0', async () => {
+    // DD OFF なら DD% が STOP閾値(20%)超でも lot=0 にならない保証
+    const db = makeDb({ global_dd_enabled: 'false', dd_stopped: 'false', hwm: '10000' });
+    // getCurrentBalance が 7000 を返すよう balance をオーバーライド
+    const origPrepare = (db as any).prepare.bind(db);
+    (db as any).prepare = (sql: string) => {
+      if (sql.includes('risk_state') && sql.includes('current_balance')) {
+        return { bind: (..._a: unknown[]) => ({ first: async () => ({ value: '7000' }), run: async () => ({}), all: async () => ({ results: [] }) }) };
+      }
+      return origPrepare(sql);
+    };
+    const result = await getDrawdownLevel(db);
+    expect(result.lotMultiplier).toBe(1.0);
+    expect(result.level).toBe('NORMAL');
+  });
+
+  it('global_dd_enabled=true + ddPct=30%(STOP) → lotMultiplier=0（実弾モードは正常にブロック）', async () => {
+    // DD ON ではブロックされることを確認（上記テストとの対比）
+    const db = makeDb({ global_dd_enabled: 'true', dd_stopped: 'true', hwm: '10000' });
+    const result = await getDrawdownLevel(db);
+    expect(result.lotMultiplier).toBe(0);
+    expect(result.level).toBe('STOP');
+  });
+});
