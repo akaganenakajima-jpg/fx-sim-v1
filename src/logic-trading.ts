@@ -261,7 +261,8 @@ export async function runLogicDecisions(
   // tick単位で1件のJSONログに集約（D1書き込みコスト: +0、可視情報: 大幅増）
   // カテゴリ一覧: PYRAMID/OPEN_LIM/VIX/SESSION/INST_CAP/SL_CD/CORR_CD/
   //              DAILY_LIM/HIST/NEUTRAL/ER_LIM/SCORE/CONFIRM/NO_TPSL/
-  //              REVERSAL/RR_LOW/SANITY/PYRAMID2/CORR_GUARD/LOT_ZERO
+  //              REVERSAL/RR_LOW/SANITY/PYRAMID2/CORR_GUARD
+  //              LOT_ZERO_SESSION(TSE閉場等)/LOT_ZERO_WKND(週末)/LOT_ZERO(その他)
   const skipCounts: Record<string, number> = {};
   const addSkip = (cat: string): void => { skipCounts[cat] = (skipCounts[cat] ?? 0) + 1; };
 
@@ -755,6 +756,9 @@ export async function runLogicDecisions(
     }
 
     // ロット倍率（DD段階 × ティア × 連敗縮退）
+    // ⚠️ bypass mode (DD OFF) では getDrawdownLevel() が globalDDEnabled=false を検出し
+    //    lotMultiplier=1.0 を返す（risk-manager.ts L198-203）。
+    //    isPaperTestBypassMode=true と ddResult.lotMultiplier=1.0 は必ず同時に成立する。
     const ddLotMult  = ddResult.lotMultiplier;
     const tierMult   = instrument.tierLotMultiplier;
 
@@ -797,7 +801,17 @@ export async function runLogicDecisions(
 
     if (requestedLot <= 0) {
       summary.skipped++;
-      addSkip('LOT_ZERO');
+      // LOT_ZERO サブカテゴリ: 原因特定のために分類
+      //   LOT_ZERO_SESSION: sessionInstrMult=0 (TSE閉場中の日本株、NYクローズ中の株指数等)
+      //   LOT_ZERO_WKND:    weekendEntryMult=0 (週末市場クローズ)
+      //   LOT_ZERO:         上記以外 (DD lot / 連敗縮退 等の積が0)
+      if (sessionInstrMult <= 0) {
+        addSkip('LOT_ZERO_SESSION');
+      } else if (weekendEntryMult <= 0) {
+        addSkip('LOT_ZERO_WKND');
+      } else {
+        addSkip('LOT_ZERO');
+      }
       continue;
     }
 
