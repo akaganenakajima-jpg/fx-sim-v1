@@ -1287,6 +1287,9 @@
     // エクイティカーブ
     renderEquityChart(data);
 
+    // 戦略別パフォーマンス パイチャート
+    renderStrategyPieChart(data);
+
     // 手法×環境マトリクス
     renderStrategyMatrix(data);
 
@@ -1408,6 +1411,127 @@
         + '</div>';
     });
     cards.innerHTML = html;
+  }
+
+  // ─── 戦略タイプ分類 ────────────────────────────────────────────────
+  // trigger / strategy フィールドから3カテゴリに振り分ける
+  //   'news'      : trigger='NEWS' またはstrategyに'news'/'ai'を含む
+  //   'trend'     : strategyに'trend'/'breakout'を含む
+  //   'reversion' : それ以外（mean_reversionなど）
+  function classifyStrategyType(trade) {
+    var trigger  = (trade.trigger  || '').toLowerCase();
+    var strategy = (trade.strategy || '').toLowerCase();
+    if (trigger === 'news' || strategy.indexOf('news') >= 0 || strategy.indexOf('ai') >= 0) {
+      return 'news';
+    }
+    if (strategy.indexOf('trend') >= 0 || strategy.indexOf('breakout') >= 0) {
+      return 'trend';
+    }
+    return 'reversion';
+  }
+
+  // ─── 戦略別パフォーマンス パイチャート描画 ──────────────────────────
+  function renderStrategyPieChart(data) {
+    var canvas = el('strategy-pie-chart');
+    var legendEl = el('strategy-pie-legend');
+    if (!canvas || !legendEl) return;
+
+    var trades = data.recentCloses || [];
+
+    // 3バケット集計: 利益合計（Math.max(0,pnl)）と取引件数
+    var buckets = {
+      news:      { label: 'ニュース',       color: '#FF9F0A', pnl: 0, count: 0 },
+      trend:     { label: 'トレンド/BKout', color: '#30D158', pnl: 0, count: 0 },
+      reversion: { label: '平均回帰',        color: '#0A84FF', pnl: 0, count: 0 }
+    };
+    for (var i = 0; i < trades.length; i++) {
+      var t = trades[i];
+      var cat = classifyStrategyType(t);
+      buckets[cat].pnl   += Math.max(0, t.pnl || 0);
+      buckets[cat].count += 1;
+    }
+
+    var totalPnl = buckets.news.pnl + buckets.trend.pnl + buckets.reversion.pnl;
+
+    // HiDPI 対応
+    var SIZE = 120;
+    var dpr  = window.devicePixelRatio || 1;
+    canvas.width  = SIZE * dpr;
+    canvas.height = SIZE * dpr;
+    canvas.style.width  = SIZE + 'px';
+    canvas.style.height = SIZE + 'px';
+    var ctx = canvas.getContext('2d');
+    ctx.scale(dpr, dpr);
+
+    var cx = SIZE / 2;
+    var cy = SIZE / 2;
+    var R  = SIZE / 2 - 6;   // 外径 (6px 余白)
+    var IR = R * 0.45;        // ドーナツ内径
+
+    ctx.clearRect(0, 0, SIZE, SIZE);
+
+    if (totalPnl === 0) {
+      // データなし: グレー円 + メッセージ
+      ctx.beginPath();
+      ctx.arc(cx, cy, R, 0, 2 * Math.PI);
+      ctx.fillStyle = 'rgba(142,142,147,0.2)';
+      ctx.fill();
+      ctx.fillStyle = 'rgba(142,142,147,0.7)';
+      ctx.font = '10px -apple-system, sans-serif';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText('データなし', cx, cy);
+      legendEl.innerHTML = '';
+      return;
+    }
+
+    // パイ描画
+    var keys = ['news', 'trend', 'reversion'];
+    var startAngle = -Math.PI / 2; // 12時方向スタート
+    var GAP = 0.03; // セグメント間のギャップ（ラジアン）
+
+    for (var k = 0; k < keys.length; k++) {
+      var key   = keys[k];
+      var b     = buckets[key];
+      if (b.pnl === 0) continue;
+      var sweep = (b.pnl / totalPnl) * 2 * Math.PI - GAP;
+      if (sweep <= 0) continue;
+
+      ctx.beginPath();
+      ctx.moveTo(cx, cy);
+      ctx.arc(cx, cy, R, startAngle, startAngle + sweep);
+      ctx.closePath();
+      ctx.fillStyle = b.color;
+      ctx.fill();
+
+      // ドーナツ: 内円を白で抜く
+      ctx.beginPath();
+      ctx.arc(cx, cy, IR, 0, 2 * Math.PI);
+      ctx.fillStyle = getComputedStyle(document.documentElement).getPropertyValue('--surface').trim() || '#1C1C1E';
+      ctx.fill();
+
+      startAngle += sweep + GAP;
+    }
+
+    // 凡例生成
+    var legendHtml = '';
+    for (var lk = 0; lk < keys.length; lk++) {
+      var lKey = keys[lk];
+      var lb   = buckets[lKey];
+      var pct  = totalPnl > 0 ? Math.round(lb.pnl / totalPnl * 100) : 0;
+      legendHtml +=
+        '<div style="display:flex;align-items:center;gap:6px">' +
+          '<span style="display:inline-block;width:10px;height:10px;border-radius:2px;background:' + lb.color + ';flex-shrink:0"></span>' +
+          '<div style="flex:1">' +
+            '<div style="font-size:11px;color:var(--secondary);font-weight:600">' + lb.label + '</div>' +
+            '<div style="font-size:10px;color:var(--tertiary)">' + lb.count + '件 · ' + pct + '%</div>' +
+          '</div>' +
+          '<div style="font-size:12px;font-weight:700;color:' + (lb.pnl > 0 ? lb.color : 'var(--tertiary)') + '">' +
+            (lb.pnl > 0 ? '+¥' + Math.round(lb.pnl).toLocaleString() : '—') +
+          '</div>' +
+        '</div>';
+    }
+    legendEl.innerHTML = legendHtml;
   }
 
   function renderEquityChart(data) {
