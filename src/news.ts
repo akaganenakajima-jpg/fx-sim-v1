@@ -806,21 +806,24 @@ export async function filterAndTranslateNews(
 
     // 過去トピックセクション（あれば追加）
     const recentTopicsSection = recentTopics.length > 0
-      ? `\n【配信済みトピック（過去2時間）】\n以下は既に配信済みの記事です。まったく同じ発表・声明・数値を報じている記事のみ重複として除外してください。\n同じテーマでも、異なる発言者・新たな数値・異なる角度・追加の事実が含まれる場合は重複ではありません。\n${recentTopics.map(t => `- ${t}`).join('\n')}\n`
+      ? `\n【参考: 配信済みトピック（過去2時間）】\n※これは参考情報です。除外判定を優先しないでください。\n以下とまったく同一の発表・声明・数値を報じているだけの記事のみ重複として除外してください。\n同じテーマ・同じ会社・同じ指標でも、新しい発言・新しい数値・状況の進展・市場の反応などが含まれれば採用すること。\n${recentTopics.map(t => `- ${t}`).join('\n')}\n`
       : '';
 
     const prompt = `以下のニュース記事一覧を分析してください。
 
+【基本方針】
+迷ったときは採用する。除外するのは以下の条件に明確に該当する場合のみ。
+FX・為替・金融・経済・株式・債券・商品市場・地政学リスク・金融政策・マクロ経済に少しでも関連すれば採用する。
+
 【作業内容】
 1. 各記事がFX・為替・金融・経済・株式・債券・商品市場・地政学リスク・金融政策・マクロ経済に関連するか判定する
 2. 関連する記事のみ、タイトルと概要を日本語に翻訳する（既に日本語なら原文のまま）
-3. 以下に該当する記事は除外する:
-   - スポーツ・芸能・社会面・天気・事件・生活情報
+3. 以下に明確に該当する記事のみ除外する（判断に迷う場合は採用すること）:
+   - スポーツ・芸能・社会面・天気・事件・生活情報（金融と無関係なもの）
    - まとめ記事（"X things to watch", "weekly roundup", "今週の振り返り"等）
    - 過去の事象を振り返る記事（"how X happened", "what went wrong"等の事後分析）
    - コラム・オピニオン・解説記事で、新しい事実を含まないもの
    - まったく同じ発表・声明・数値を別ソースが報じているだけの記事（ただし、同テーマでも異なる発言者・新たな数値・異なる角度・追加の事実が含まれる場合は採用する）
-   速報性が高く、今後の相場に影響しうる新しい事実・発表・データのみを通すこと
 ${recentTopicsSection}
 【記事一覧】
 ${articleLines}
@@ -1493,11 +1496,34 @@ export function getEffectiveThreshold(
  */
 export async function getAdaptiveCompositeThreshold(db: D1Database): Promise<number> {
   const DEFAULT_THRESHOLD = 6.5;
+  const EMERGENCY_THRESHOLD = 4.5; // サーキットブレーカー発動時の緊急下限
   const TARGET_RATE_LOW = 0.15;   // 15%
   const TARGET_RATE_HIGH = 0.25;  // 25%
   const SAMPLE_SIZE = 200;
+  const CIRCUIT_BREAKER_SIZE = 30; // 直近N件がゼロ採用なら緊急フォールバック
 
   try {
+    // ── サーキットブレーカー: 直近30件が全滅なら即座に緊急閾値へ ──
+    // 200件窓は過去の採用実績で希釈されるため、直近の急激な劣化を見逃す
+    const recentStats = await db.prepare(`
+      SELECT
+        COUNT(*) as total,
+        SUM(CASE WHEN filter_accepted = 1 THEN 1 ELSE 0 END) as accepted
+      FROM (
+        SELECT filter_accepted FROM news_raw
+        WHERE filter_accepted IS NOT NULL
+        ORDER BY id DESC
+        LIMIT ${CIRCUIT_BREAKER_SIZE}
+      )
+    `).first<{ total: number; accepted: number }>();
+
+    if (recentStats && recentStats.total >= 20 && recentStats.accepted === 0) {
+      // 直近30件の採用がゼロ → スコア閾値を大幅緩和して採用を促進
+      console.log(`[news] adaptive-threshold: circuit-breaker OPEN (recent ${recentStats.total} records: 0 accepted) → threshold=${EMERGENCY_THRESHOLD}`);
+      return EMERGENCY_THRESHOLD;
+    }
+
+    // ── 通常: 200件ローリング窓の採用率に基づく調整 ──
     const stats = await db.prepare(`
       SELECT
         COUNT(*) as total,
@@ -1514,11 +1540,11 @@ export async function getAdaptiveCompositeThreshold(db: D1Database): Promise<num
 
     const rate = stats.accepted / stats.total;
 
-    if (rate < 0.05) return 4.5;    // 採用率 5% 未満: 大幅に緩和
+    if (rate < 0.05) return EMERGENCY_THRESHOLD; // 採用率 5% 未満: 大幅に緩和
     if (rate < TARGET_RATE_LOW) {
       // 採用率 5-15%: 線形補間で 4.5〜6.5 の範囲
       const t = (rate - 0.05) / (TARGET_RATE_LOW - 0.05);
-      return Math.round((4.5 + t * (DEFAULT_THRESHOLD - 4.5)) * 10) / 10;
+      return Math.round((EMERGENCY_THRESHOLD + t * (DEFAULT_THRESHOLD - EMERGENCY_THRESHOLD)) * 10) / 10;
     }
     if (rate > TARGET_RATE_HIGH) {
       // 採用率 25% 超: 線形補間で 6.5〜8.5 の範囲
