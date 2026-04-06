@@ -268,6 +268,15 @@ export function getDashboardHtml(): string {
     </div>
   </div>
 
+  <!-- 戦略別パフォーマンス パイチャート -->
+  <div style="margin:12px 16px 0;background:var(--surface);border-radius:var(--rs);padding:12px" id="strategy-pie-section">
+    <div style="font-size:11px;color:var(--tertiary);margin-bottom:8px;font-weight:600">戦略別パフォーマンス</div>
+    <div style="display:flex;align-items:center;gap:16px">
+      <canvas id="strategy-pie-chart" width="120" height="120" style="flex-shrink:0;width:120px;height:120px"></canvas>
+      <div id="strategy-pie-legend" style="flex:1;display:flex;flex-direction:column;gap:8px"></div>
+    </div>
+  </div>
+
   <!-- 手法×環境マトリクス -->
   <div class="sec">手法 × 環境マトリクス</div>
   <div class="matrix-grid" id="strategy-matrix"></div>
