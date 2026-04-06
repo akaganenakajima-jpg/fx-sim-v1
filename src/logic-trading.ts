@@ -12,7 +12,7 @@ import {
   type InstrumentParamsRow,
 } from './logic-indicators';
 import { checkTpSlSanity } from './sanity';
-import { checkCorrelationGuard, getDrawdownLevel, updateHWM, getCurrentBalance, applyDrawdownControl, checkDailyLossCap, checkInstrumentDailyLoss } from './risk-manager';
+import { checkCorrelationGuard, getDrawdownLevel, updateHWM, getCurrentBalance, applyDrawdownControl, checkDailyLossCap, checkInstrumentDailyLoss, isPaperTestBypassMode } from './risk-manager'; // ⚠️ INC-20260406-001: isPaperTestBypassMode は実弾投入前に削除
 import { openPosition } from './position';
 import { insertDecision, insertSystemLog, insertIndicatorLog, getCacheValue, setCacheValue, type Position } from './db';
 import { INSTRUMENTS, getDefaultParams, getYahooSymbol } from './instruments';
@@ -220,25 +220,39 @@ export async function runLogicDecisions(
     return summary; // early_morning: 全銘柄取引禁止
   }
 
+  // ⚠️ INC-20260406-001: ペーパーテストバイパスモード判定（実弾投入前に削除）
+  // DD OFF時は全停止ロジックをスキップし、計算・ログのみ実行する
+  const paperBypass = await isPaperTestBypassMode(db);
+
   // DD状態を事前取得（全銘柄共通）
   const ddResult = await getDrawdownLevel(db);
   const balance = await getCurrentBalance(db);
   await updateHWM(db, balance);
-  await applyDrawdownControl(db, ddResult);
+  await applyDrawdownControl(db, ddResult, paperBypass); // ⚠️ INC-20260406-001
 
   if (ddResult.level === 'STOP') {
-    await insertSystemLog(db, 'WARN', 'LOGIC',
-      'DD STOP: ロジックエントリー全銘柄スキップ',
-      `DD=${ddResult.ddPct.toFixed(1)}%`);
-    return summary;
+    if (paperBypass) {
+      // ⚠️ INC-20260406-001: 検証モード — STOP相当でも取引継続
+      await insertSystemLog(db, 'INFO', 'LOGIC',
+        `[ADVISORY] DD STOP相当(${ddResult.ddPct.toFixed(1)}%) — 検証モードのためエントリー継続`);
+    } else {
+      await insertSystemLog(db, 'WARN', 'LOGIC',
+        'DD STOP: ロジックエントリー全銘柄スキップ',
+        `DD=${ddResult.ddPct.toFixed(1)}%`);
+      return summary;
+    }
   }
 
-  // ── 日次損失上限チェック（HWM × 0.5%/日） ──
-  const dailyCap = await checkDailyLossCap(db, now);
+  // ── 日次損失上限チェック（⚠️ INC-20260406-001: paperBypass時はcapped=false） ──
+  const dailyCap = await checkDailyLossCap(db, now, 0.02, paperBypass);
   if (dailyCap.capped) {
     await insertSystemLog(db, 'WARN', 'LOGIC',
       `Daily Loss Cap: 当日損失 ${dailyCap.dailyLoss.toFixed(2)}円 >= 上限 ${dailyCap.capAmount.toFixed(2)}円 — 全銘柄スキップ`);
     return summary;
+  } else if (dailyCap.bypassed) {
+    // ⚠️ INC-20260406-001: 検証モード — 上限超過していても参考ログのみ
+    await insertSystemLog(db, 'INFO', 'LOGIC',
+      `[ADVISORY] Daily Loss Cap超過(${dailyCap.dailyLoss.toFixed(2)}円) — 検証モードのためスキップなし`).catch(() => {});
   }
 
   let logicNewEntries = 0; // このtickで新規開設したロジックポジション数
@@ -330,8 +344,8 @@ export async function runLogicDecisions(
       }
     }
 
-    // ── 銘柄別日次損失上限チェック（テスタ流: シナリオ崩壊銘柄はやらない） ──
-    const instDaily = await checkInstrumentDailyLoss(db, pair, now);
+    // ── 銘柄別日次損失上限チェック（⚠️ INC-20260406-001: paperBypass時はpaused=false） ──
+    const instDaily = await checkInstrumentDailyLoss(db, pair, now, paperBypass);
     if (instDaily.paused) {
       summary.skipped++;
       summary.signals.push({ pair, signal: 'SKIP',

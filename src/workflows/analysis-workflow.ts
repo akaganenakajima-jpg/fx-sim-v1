@@ -27,7 +27,7 @@ import { detectBreakout } from '../breakout';
 import { determineRegime, formatRegimeForPrompt, getRegimeProhibitions } from '../regime';
 import { getWeekendStatus, getTradeableInstruments } from '../weekend';
 import { runParamReview } from '../param-review';
-import { evaluateRecoveryIfNeeded, getDrawdownLevel, checkInstrumentDailyLoss } from '../risk-manager';
+import { evaluateRecoveryIfNeeded, getDrawdownLevel, checkInstrumentDailyLoss, isPaperTestBypassMode } from '../risk-manager'; // ⚠️ INC-20260406-001: isPaperTestBypassMode は実弾投入前に削除
 import { runNewsTrigger, consumeEmergencyForceFlag } from '../news-trigger';
 import { logReturn } from '../stats';
 import { buildPricesMap, buildWeekendContext } from './core-workflow';
@@ -737,14 +737,24 @@ export async function runAnalysis(env: Env): Promise<void> {
 
       // BUY/SELL: ポジション開設
       if (result.decisions.length > 0) {
+        // ⚠️ INC-20260406-001: バイパスモード判定（DD OFF時は停止チェックをスキップ）
+        const pathBPaperBypass = await isPaperTestBypassMode(env.DB);
+
         // DD STOPチェック: dd_stopped=true の場合は PATH_B 経由のエントリーも停止
         // （B2 CB 発動→B1フォールバックでも DD STOP をバイパスしないための保護）
         const ddCheckForPathB = await getDrawdownLevel(env.DB);
         if (ddCheckForPathB.level === 'STOP') {
-          await insertSystemLog(env.DB, 'WARN', 'RISK',
-            'DD STOP: PATH_Bエントリー全銘柄スキップ',
-            `DD=${ddCheckForPathB.ddPct.toFixed(1)}% decisions=${result.decisions.length}件`);
-          return handledPairs;
+          if (pathBPaperBypass) {
+            // ⚠️ INC-20260406-001: 検証モード — STOP相当でもPATH_Bエントリー継続
+            await insertSystemLog(env.DB, 'INFO', 'RISK',
+              `[ADVISORY] DD STOP相当: PATH_Bエントリー継続（検証モード）`,
+              `DD=${ddCheckForPathB.ddPct.toFixed(1)}% decisions=${result.decisions.length}件`);
+          } else {
+            await insertSystemLog(env.DB, 'WARN', 'RISK',
+              'DD STOP: PATH_Bエントリー全銘柄スキップ',
+              `DD=${ddCheckForPathB.ddPct.toFixed(1)}% decisions=${result.decisions.length}件`);
+            return handledPairs;
+          }
         }
         let pathBNewEntries = 0; // W005: このtickの新規開設数
         const PATH_B_OPEN_LIMIT = 10; // W005: 全体OPEN上限
@@ -761,8 +771,8 @@ export async function runAnalysis(env: Env): Promise<void> {
             ).catch(() => {});
             continue;
           }
-          // 銘柄別日次損失上限チェック（テスタ流: シナリオ崩壊銘柄はやらない）
-          const instDailyB = await checkInstrumentDailyLoss(env.DB, dec.pair, new Date());
+          // 銘柄別日次損失上限チェック（⚠️ INC-20260406-001: pathBPaperBypass時はpaused=false）
+          const instDailyB = await checkInstrumentDailyLoss(env.DB, dec.pair, new Date(), pathBPaperBypass);
           if (instDailyB.paused) {
             await insertSystemLog(env.DB, 'INFO', 'RISK',
               `PATH_B 銘柄日次Cap超過スキップ: ${dec.pair}`,

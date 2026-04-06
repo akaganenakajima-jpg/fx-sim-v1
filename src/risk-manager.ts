@@ -65,6 +65,32 @@ export async function setGlobalDDEnabled(db: D1Database, enabled: boolean): Prom
   await setRiskStateValue(db, 'global_dd_enabled', enabled ? 'true' : 'false');
 }
 
+/**
+ * ペーパーテスト検証バイパスモードかどうかを返す。
+ *
+ * ⚠️ INC-20260406-001: 実弾投入前にこの関数の呼び出しを全削除すること。
+ *   `grep -rn "isPaperTestBypassMode\|INC-20260406-001" src/` で一覧確認できる。
+ *
+ * DD OFF（globalDDEnabled=false）のとき true を返す。
+ * このモードでは DD系・日次損失系の強制停止を全バイパスし、
+ * 計算・ログのみ実行する（取引は止めない）。
+ *
+ * @returns true → 全停止ロジックをバイパス（監視のみ・制御なし）
+ */
+export async function isPaperTestBypassMode(db: D1Database): Promise<boolean> {
+  return !(await isGlobalDDEnabled(db));
+}
+
+/**
+ * dd_stopped フラグをリセットする。
+ * DD OFF 切替時の残留フラグ除去と、検証モード復帰時に使用。
+ *
+ * ⚠️ INC-20260406-001: 実弾投入前に呼び出し箇所を確認すること。
+ */
+export async function clearDDStoppedFlag(db: D1Database): Promise<void> {
+  await setRiskStateValue(db, 'dd_stopped', 'false');
+}
+
 // ─── HWM管理 ────────────────────────────────────
 
 const INITIAL_BALANCE = INITIAL_CAPITAL;
@@ -100,13 +126,18 @@ export async function getCurrentBalance(db: D1Database): Promise<number> {
 
 /**
  * 当日（UTC 0:00〜）の実現損失合計を取得し、HWM × capPct を超えているか判定。
- * @returns { dailyLoss: 当日損失合計（負値）, capped: 上限超過か, capAmount: 上限額 }
+ *
+ * @param bypass ⚠️ INC-20260406-001: ペーパーテストモード時は true。
+ *   損失計算・ログ出力は行うが capped=false を返し取引を止めない。
+ *   実弾投入前にすべての呼び出し箇所から bypass 引数を削除すること。
+ * @returns { dailyLoss: 当日損失合計（負値）, capped: 上限超過か, capAmount: 上限額, bypassed?: true }
  */
 export async function checkDailyLossCap(
   db: D1Database,
   now: Date,
   capPct: number = 0.02, // デフォルト 2%（一般トレーディング基準: Alexander Elder等）
-): Promise<{ dailyLoss: number; capped: boolean; capAmount: number }> {
+  bypass: boolean = false, // ⚠️ INC-20260406-001
+): Promise<{ dailyLoss: number; capped: boolean; capAmount: number; bypassed?: true }> {
   const hwm = await getHWM(db);
   const capAmount = hwm * capPct;
   const todayStart = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate())).toISOString();
@@ -119,6 +150,10 @@ export async function checkDailyLossCap(
     .bind(todayStart)
     .first<{ dailyPnl: number }>();
   const dailyLoss = row?.dailyPnl ?? 0;
+  // ⚠️ INC-20260406-001: バイパスモードは capped=false（計算のみ・停止なし）
+  if (bypass) {
+    return { dailyLoss, capped: false, capAmount, bypassed: true };
+  }
   return { dailyLoss, capped: dailyLoss <= -capAmount, capAmount };
 }
 
@@ -127,10 +162,14 @@ export async function checkDailyLossCap(
 /**
  * 銘柄別の日次損失チェック。UTC 00:00 で自動リセット。
  * ⚠️ 週末クローズ制約: この関数自体は銘柄を選ばない（呼び出し側で制御）
+ *
+ * @param bypass ⚠️ INC-20260406-001: ペーパーテストモード時は true。
+ *   損失計算は行うが paused=false を返し当該銘柄のスキップを行わない。
+ *   実弾投入前に bypass 引数を全削除すること。
  */
 export async function checkInstrumentDailyLoss(
-  db: D1Database, pair: string, now: Date
-): Promise<{ dailyPnl: number; paused: boolean }> {
+  db: D1Database, pair: string, now: Date, bypass: boolean = false, // ⚠️ INC-20260406-001
+): Promise<{ dailyPnl: number; paused: boolean; bypassed?: true }> {
   const todayStart = new Date(Date.UTC(
     now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()
   )).toISOString();
@@ -142,6 +181,10 @@ export async function checkInstrumentDailyLoss(
   ).bind(pair, todayStart).first<{ dailyPnl: number }>();
 
   const dailyPnl = row?.dailyPnl ?? 0;
+  // ⚠️ INC-20260406-001: バイパスモードは paused=false（計算のみ・スキップなし）
+  if (bypass) {
+    return { dailyPnl, paused: false, bypassed: true };
+  }
   return { dailyPnl, paused: dailyPnl <= -INSTRUMENT_DAILY_LOSS_CAP };
 }
 
@@ -206,18 +249,34 @@ export async function getDrawdownLevel(db: D1Database): Promise<DrawdownResult> 
 
 // ─── DD制御アクション ────────────────────────────
 
+/**
+ * @param bypass ⚠️ INC-20260406-001: ペーパーテストモード時は true。
+ *   dd_stopped フラグを書き込まず、ADVISORY ログのみ出力する。
+ *   実弾投入前に bypass 引数を全削除すること。
+ */
 export async function applyDrawdownControl(
   db: D1Database,
-  result: DrawdownResult
+  result: DrawdownResult,
+  bypass: boolean = false, // ⚠️ INC-20260406-001
 ): Promise<void> {
   if (result.level === 'STOP') {
-    await setRiskStateValue(db, 'dd_stopped', 'true');
-    await insertSystemLog(db, 'WARN', 'RISK',
-      `DD STOP: ${result.ddPct.toFixed(1)}% — 完全停止`);
+    if (!bypass) {
+      // 実弾モードのみ dd_stopped フラグを書き込む
+      await setRiskStateValue(db, 'dd_stopped', 'true');
+      await insertSystemLog(db, 'WARN', 'RISK',
+        `DD STOP: ${result.ddPct.toFixed(1)}% — 完全停止`);
+    } else {
+      // ⚠️ INC-20260406-001: 検証モード — フラグ書き込みなし・参考ログのみ
+      await insertSystemLog(db, 'INFO', 'RISK',
+        `[ADVISORY] DD STOP相当: ${result.ddPct.toFixed(1)}% — 検証モードのため停止しない`,
+        `HWM=${result.hwm.toFixed(0)} Balance=${result.balance.toFixed(0)}`);
+    }
   } else if (result.level === 'HALT' || result.level === 'WARNING') {
-    // 段階的縮小（DDベース）: 完全停止せずロット縮小で継続
-    await insertSystemLog(db, 'WARN', 'RISK',
-      `DD ${result.level}: ${result.ddPct.toFixed(1)}% — lotMult=${result.lotMultiplier}で継続`,
+    // 段階的縮小ログ（バイパス時も記録するが、lotMultiplierは呼び出し側が無視）
+    const prefix = bypass ? '[ADVISORY] ' : '';
+    const suffix = bypass ? ' — 検証モードのためロット縮小なし' : `で継続`;
+    await insertSystemLog(db, bypass ? 'INFO' : 'WARN', 'RISK',
+      `${prefix}DD ${result.level}: ${result.ddPct.toFixed(1)}% — lotMult=${result.lotMultiplier}${suffix}`,
       `HWM=${result.hwm.toFixed(0)} Balance=${result.balance.toFixed(0)}`);
   }
 }

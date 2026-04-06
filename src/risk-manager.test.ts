@@ -6,7 +6,7 @@
  * - 市場別DD: 市場クローズ遷移で dd_stopped 自動クリア。バグではない。
  */
 import { describe, it, expect } from 'vitest';
-import { isGlobalDDEnabled, setGlobalDDEnabled, isMarketOpen, checkMarketCloseAndReleaseDDStop, getDrawdownLevel } from './risk-manager';
+import { isGlobalDDEnabled, setGlobalDDEnabled, isMarketOpen, checkMarketCloseAndReleaseDDStop, getDrawdownLevel, isPaperTestBypassMode, clearDDStoppedFlag, checkDailyLossCap, checkInstrumentDailyLoss, applyDrawdownControl } from './risk-manager';
 
 // ─── D1Database ミニマルモック ───────────────────────────────────────────────
 
@@ -219,5 +219,160 @@ describe('checkMarketCloseAndReleaseDDStop', () => {
     await checkMarketCloseAndReleaseDDStop(db, utc(5, 21)); // 金曜21:00 closed
     // wasOpen=true（未設定はtrue扱い）、currentlyOpen=false → クリアされる
     expect(db._store['dd_stopped:forex']).toBe('false');
+  });
+});
+
+// ─── isPaperTestBypassMode ─────────────────────────────────────────────────
+// ⚠️ INC-20260406-001: 検証モードのテスト。実弾投入前にこのテストブロックを削除すること。
+
+describe('isPaperTestBypassMode', () => {
+  it('global_dd_enabled=false のとき true（バイパス有効）', async () => {
+    const db = makeDb({ global_dd_enabled: 'false' });
+    expect(await isPaperTestBypassMode(db)).toBe(true);
+  });
+
+  it('global_dd_enabled 未設定のとき true（デフォルトOFF=バイパス有効）', async () => {
+    const db = makeDb({});
+    expect(await isPaperTestBypassMode(db)).toBe(true);
+  });
+
+  it('global_dd_enabled=true のとき false（バイパス無効 = 実弾モード）', async () => {
+    const db = makeDb({ global_dd_enabled: 'true' });
+    expect(await isPaperTestBypassMode(db)).toBe(false);
+  });
+});
+
+// ─── checkDailyLossCap — バイパスモード ─────────────────────────────────────
+// ⚠️ INC-20260406-001: bypass=true テスト
+
+describe('checkDailyLossCap — bypass=true', () => {
+  it('日次損失が上限超過していても bypass=true なら capped=false を返す', async () => {
+    // HWM=10000, capPct=0.02 → capAmount=200円
+    // dailyLoss が -300円（上限超過）でも capped=false
+    const db = makeDb({ hwm: '10000' });
+    // positions テーブルのモックに-300円を返すよう拡張
+    const origPrepare = (db as any).prepare.bind(db);
+    (db as any).prepare = (sql: string) => {
+      if (sql.includes('FROM positions') && sql.includes('SUM(pnl)') && !sql.includes('pair =')) {
+        return {
+          bind: (..._a: unknown[]) => ({
+            first: async () => ({ dailyPnl: -300 }),
+            run: async () => ({}),
+            all: async () => ({ results: [] }),
+          }),
+        };
+      }
+      return origPrepare(sql);
+    };
+    const result = await checkDailyLossCap(db, new Date(), 0.02, true);
+    expect(result.capped).toBe(false);
+    expect(result.bypassed).toBe(true);
+    expect(result.dailyLoss).toBe(-300); // 損失額は正しく計算される
+  });
+
+  it('bypass=false（デフォルト）のとき上限超過で capped=true を返す', async () => {
+    const db = makeDb({ hwm: '10000' });
+    const origPrepare = (db as any).prepare.bind(db);
+    (db as any).prepare = (sql: string) => {
+      if (sql.includes('FROM positions') && sql.includes('SUM(pnl)') && !sql.includes('pair =')) {
+        return {
+          bind: (..._a: unknown[]) => ({
+            first: async () => ({ dailyPnl: -300 }),
+            run: async () => ({}),
+            all: async () => ({ results: [] }),
+          }),
+        };
+      }
+      return origPrepare(sql);
+    };
+    const result = await checkDailyLossCap(db, new Date(), 0.02, false);
+    expect(result.capped).toBe(true);
+    expect(result.bypassed).toBeUndefined();
+  });
+});
+
+// ─── checkInstrumentDailyLoss — バイパスモード ───────────────────────────────
+// ⚠️ INC-20260406-001
+
+describe('checkInstrumentDailyLoss — bypass=true', () => {
+  it('銘柄日次損失が上限超過していても bypass=true なら paused=false を返す', async () => {
+    const db = makeDb({});
+    const origPrepare = (db as any).prepare.bind(db);
+    (db as any).prepare = (sql: string) => {
+      if (sql.includes('FROM positions') && sql.includes('pair =')) {
+        return {
+          bind: (..._a: unknown[]) => ({
+            first: async () => ({ dailyPnl: -9999 }), // 上限を大幅超過
+            run: async () => ({}),
+            all: async () => ({ results: [] }),
+          }),
+        };
+      }
+      return origPrepare(sql);
+    };
+    const result = await checkInstrumentDailyLoss(db, 'USD/JPY', new Date(), true);
+    expect(result.paused).toBe(false);
+    expect(result.bypassed).toBe(true);
+  });
+
+  it('bypass=false（デフォルト）のとき上限超過で paused=true を返す', async () => {
+    const db = makeDb({});
+    const origPrepare = (db as any).prepare.bind(db);
+    (db as any).prepare = (sql: string) => {
+      if (sql.includes('FROM positions') && sql.includes('pair =')) {
+        return {
+          bind: (..._a: unknown[]) => ({
+            first: async () => ({ dailyPnl: -9999 }),
+            run: async () => ({}),
+            all: async () => ({ results: [] }),
+          }),
+        };
+      }
+      return origPrepare(sql);
+    };
+    const result = await checkInstrumentDailyLoss(db, 'USD/JPY', new Date(), false);
+    expect(result.paused).toBe(true);
+    expect(result.bypassed).toBeUndefined();
+  });
+});
+
+// ─── applyDrawdownControl — バイパスモード ─────────────────────────────────
+// ⚠️ INC-20260406-001
+
+describe('applyDrawdownControl — bypass=true', () => {
+  it('bypass=true のとき STOP でも dd_stopped フラグを書き込まない', async () => {
+    const db = makeDb({ global_dd_enabled: 'false', hwm: '10000' });
+    const stopResult = { level: 'STOP' as const, ddPct: 22.0, hwm: 10000, balance: 7800, lotMultiplier: 0 };
+    await applyDrawdownControl(db, stopResult, true);
+    // dd_stopped が 'true' に書き込まれていないことを確認
+    expect(db._store['dd_stopped']).not.toBe('true');
+  });
+
+  it('bypass=false のとき STOP で dd_stopped=true が書き込まれる', async () => {
+    const db = makeDb({ global_dd_enabled: 'true', hwm: '10000' });
+    const stopResult = { level: 'STOP' as const, ddPct: 22.0, hwm: 10000, balance: 7800, lotMultiplier: 0 };
+    await applyDrawdownControl(db, stopResult, false);
+    expect(db._store['dd_stopped']).toBe('true');
+  });
+});
+
+// ─── clearDDStoppedFlag ─────────────────────────────────────────────────────
+// ⚠️ INC-20260406-001
+
+describe('clearDDStoppedFlag', () => {
+  it('dd_stopped=true の状態から clearDDStoppedFlag を呼ぶと false になる', async () => {
+    const db = makeDb({ dd_stopped: 'true' });
+    await clearDDStoppedFlag(db);
+    expect(db._store['dd_stopped']).toBe('false');
+  });
+
+  it('DD OFF → ON 遷移時に stale flag が悪さしない（clears before re-enable）', async () => {
+    // DD ONにする前に clearDDStoppedFlag を呼ぶことで即STOPを防ぐシナリオ
+    const db = makeDb({ global_dd_enabled: 'false', dd_stopped: 'true' });
+    await clearDDStoppedFlag(db);
+    await setGlobalDDEnabled(db, true);
+    // DD ON 後、dd_stopped が false → STOP にならない
+    const result = await getDrawdownLevel(db);
+    expect(result.level).not.toBe('STOP');
   });
 });

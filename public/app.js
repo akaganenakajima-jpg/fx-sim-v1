@@ -2541,7 +2541,7 @@
             '<div class="dd-ctrl-status">' + statusLabel + '</div>' +
             '<div class="dd-ctrl-desc">' + (ddEnabled
               ? 'DD%が閾値を超えるとロットを縮小・停止します'
-              : '実弾導入前のテストモード。DD制限なし') + '</div>' +
+              : '検証モード（監視のみ・制御なし）<br><span style="font-size:11px;color:var(--tertiary)">DD%・損失上限は計算されますが取引を止めません</span>') + '</div>' +
           '</div>' +
           '<label class="ios-toggle" title="DD管理ON/OFF">' +
             '<input type="checkbox" id="' + toggleId + '"' + (ddEnabled ? ' checked' : '') + ' onchange="onDDToggleChange(this.checked)">' +
@@ -2562,7 +2562,9 @@
     var ddMaxPct = ddStat ? (ddStat.maxDDPct || 0).toFixed(1) : '0.0';
     // テスタ理論準拠: CAUTION(7%) / WARNING(10%=デイトレ上限) / HALT(15%) / STOP(20%=スイング上限)
     var ddStage = ddPctNum >= DD_STP ? 'STOP' : ddPctNum >= DD_HLT ? 'HALT' : ddPctNum >= DD_WARN ? 'WARNING' : ddPctNum >= DD_CAUT ? 'CAUTION' : 'NORMAL';
-    var ddOk = ddPctNum < DD_WARN;
+    // ⚠️ INC-20260406-001: DD OFFの検証モード中は okを強制true（赤STOP表示を出さない）
+    var ddControlEnabled = !!data.globalDDEnabled;
+    var ddOk = ddControlEnabled ? ddPctNum < DD_WARN : true;
 
     // ニュース採用率計算
     // 優先順位:
@@ -2636,7 +2638,8 @@
 
     var checks = [
       { name: 'Cron 実行',   ok: cronOkStatus,     value: cronVal,    cls: cronMs && cronSec >= 30 && cronSec < 50 ? 'warn' : null, expandHtml: cronExpandHtml },
-      { name: 'RiskGuard',   ok: ddOk,             value: 'DD ' + ddPct + '% \u00b7 ' + ddStage, expandHtml: riskExpandHtml },
+      // ⚠️ INC-20260406-001: DD OFF中は「監視のみ」表示（赤STOP出さない）
+      { name: 'RiskGuard',   ok: ddOk,             value: ddControlEnabled ? ('DD ' + ddPct + '% \u00b7 ' + ddStage) : ('DD ' + ddPct + '%（監視のみ）'), expandHtml: riskExpandHtml },
       { name: 'レート取得',   ok: data.rate != null, value: data.rate != null ? INSTRUMENTS.length + '/' + INSTRUMENTS.length + ' 銘柄' : 'エラー', expandHtml: rateExpandHtml },
       { name: 'AI API',      ok: data.recentDecisions && data.recentDecisions.length > 0, value: '応答正常', expandHtml: aiExpandHtml },
       { name: 'D1 DB',       ok: true,             value: dbDisplayVal, expandHtml: dbExpandHtml },
