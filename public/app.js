@@ -2500,11 +2500,56 @@
       errRateEl.style.color = eRate24h < 1 ? 'var(--green)' : eRate24h < 5 ? 'var(--orange)' : 'var(--red)';
     }
 
+    // DDコントロールパネル
+    renderDDControls(data);
+
     // ヘルスチェック6項目
     renderHealthChecks(data);
 
     // ログリスト
     renderLogList(data);
+  }
+
+  // ══════════════════════════════════════════
+  // renderDDControls — DD管理 ON/OFF トグル
+  // ══════════════════════════════════════════
+
+  function renderDDControls(data) {
+    var panel = el('dd-control-panel');
+    if (!panel) return;
+
+    var ddEnabled = !!data.globalDDEnabled;
+    var ddStopped = !!data.ddStopped;
+
+    // DD有効時のSTOP状態を判定
+    var stopActive = ddEnabled && ddStopped;
+
+    var toggleId = 'dd-global-toggle';
+    var statusLabel = ddEnabled
+      ? (stopActive ? '<span style="color:var(--red);font-weight:700">● STOP中</span>' : '<span style="color:var(--green);font-weight:700">● 稼働中</span>')
+      : '<span style="color:var(--tertiary)">● 無効</span>';
+
+    var resumeBtn = stopActive
+      ? '<button class="dd-resume-btn" onclick="resumeSystem()">DD STOP 解除</button>'
+      : '';
+
+    panel.innerHTML =
+      '<div class="dd-ctrl-card">' +
+        '<div class="dd-ctrl-row">' +
+          '<div class="dd-ctrl-info">' +
+            '<div class="dd-ctrl-title">DD管理システム</div>' +
+            '<div class="dd-ctrl-status">' + statusLabel + '</div>' +
+            '<div class="dd-ctrl-desc">' + (ddEnabled
+              ? 'DD%が閾値を超えるとロットを縮小・停止します'
+              : '実弾導入前のテストモード。DD制限なし') + '</div>' +
+          '</div>' +
+          '<label class="ios-toggle" title="DD管理ON/OFF">' +
+            '<input type="checkbox" id="' + toggleId + '"' + (ddEnabled ? ' checked' : '') + ' onchange="onDDToggleChange(this.checked)">' +
+            '<span class="ios-toggle-track"><span class="ios-toggle-thumb"></span></span>' +
+          '</label>' +
+        '</div>' +
+        (resumeBtn ? '<div style="margin-top:12px">' + resumeBtn + '</div>' : '') +
+      '</div>';
   }
 
   function renderHealthChecks(data) {
@@ -3383,6 +3428,40 @@
         if (d.success) refresh();
       })
       .catch(function(e) { alert('通信エラー: ' + String(e)); });
+  };
+
+  // DD管理システム ON/OFF トグル
+  window.onDDToggleChange = function(enabled) {
+    var label = enabled ? 'ON（有効）' : 'OFF（無効 · テストモード）';
+    var warn = enabled
+      ? 'DD管理をONにします。\nDD%が閾値を超えると自動でロット縮小・停止します。'
+      : 'DD管理をOFFにします。\nDD制限なしで取引します（実弾導入前の確認用）。';
+    if (!confirm(warn + '\n\n' + label + ' に切り替えますか？')) {
+      // キャンセル: チェックボックスを元に戻す
+      var cb = document.getElementById('dd-global-toggle');
+      if (cb) cb.checked = !enabled;
+      return;
+    }
+    fetch('/api/dd-toggle', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ enabled: enabled }),
+    })
+      .then(function(r) { return r.json(); })
+      .then(function(d) {
+        if (d.success) {
+          refresh();
+        } else {
+          alert('切り替えに失敗: ' + (d.message || '不明'));
+          var cb = document.getElementById('dd-global-toggle');
+          if (cb) cb.checked = !enabled;
+        }
+      })
+      .catch(function(e) {
+        alert('通信エラー: ' + String(e));
+        var cb = document.getElementById('dd-global-toggle');
+        if (cb) cb.checked = !enabled;
+      });
   };
 
   document.addEventListener('click', function(e) {
