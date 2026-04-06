@@ -938,6 +938,38 @@ export async function runAnalysis(env: Env): Promise<void> {
           regimeContext = { text: weekendContext, prohibitions: '' };
         }
 
+        // Reversal Guard: 月曜ギャップのPriced-in警告をAIプロンプトに動的注入
+        // gap_signals は core-workflow.ts が月曜Phase-2で market_cache に保存する
+        try {
+          const gapRaw = await getCacheValue(env.DB, 'gap_signals');
+          if (gapRaw) {
+            const gapData = JSON.parse(gapRaw) as {
+              gaps: Array<{ pair: string; gapDirection: string; gapPercent: number; magnitude: string }>;
+            };
+            const significantGaps = (gapData.gaps ?? []).filter(g => g.magnitude !== 'SMALL');
+            if (significantGaps.length > 0) {
+              const gapLines = significantGaps.slice(0, 5)
+                .map(g => `  ${g.pair}: ${g.gapDirection}方向 ${Math.abs(g.gapPercent).toFixed(2)}%(${g.magnitude})`)
+                .join('\n');
+              const pricedInWarning = [
+                '【週末ギャップ・Priced-in警告（Reversal Guard）】',
+                '本日月曜オープンで以下の銘柄に窓開けが検出されました:',
+                gapLines,
+                '⚠️ ギャップ方向と同じ方向へのエントリーシグナルは「すでに市場が織り込んだ情報」の可能性あり。',
+                'MAGNITUDEがLARGEの銘柄については特に慎重に判断し、確信度が低い場合はHOLDを推奨します。',
+              ].join('\n');
+              if (regimeContext) {
+                regimeContext = {
+                  text: regimeContext.text + '\n\n' + pricedInWarning,
+                  prohibitions: regimeContext.prohibitions,
+                };
+              } else {
+                regimeContext = { text: pricedInWarning, prohibitions: '' };
+              }
+            }
+          }
+        } catch { /* Priced-in注入失敗は無視 — PathB続行 */ }
+
         const tPathB = Date.now();
         pathBResult = await runPathB(env, sharedNewsStore, indicators, openPairsForPathB, getAllApiKeys(env), {
           openaiApiKey: env.OPENAI_API_KEY,
