@@ -7,7 +7,7 @@ import { INSTRUMENTS } from './instruments';
 import { getSessionStats, getPairStats, type SessionStats, type PairStats } from './trade-journal';
 import { wilsonCI, sharpeWithSE, varCvar, kellyFraction, markovTransition, maxDrawdown, rollingReturns, pnlVolatility, profitFactor, bootstrapROI, aiAccuracy, randomBaselineComparison, pairCorrelation, logReturnStats, powerAnalysis, ewmaVolatility, engleGrangerCointegration, hierarchicalWinRate } from './stats';
 import { INITIAL_CAPITAL, RELIABILITY_TRUSTED, RELIABILITY_TENTATIVE } from './constants';
-import { isGlobalDDEnabled, setGlobalDDEnabled } from './risk-manager';
+import { isGlobalDDEnabled, setGlobalDDEnabled, clearDDStoppedFlag } from './risk-manager'; // ⚠️ INC-20260406-001: clearDDStoppedFlag は実弾投入前に削除
 
 export interface LatestDecision {
   id: number;
@@ -1546,7 +1546,12 @@ export async function toggleDDEnabled(
 ): Promise<{ success: boolean; globalDDEnabled: boolean; message: string }> {
   try {
     await setGlobalDDEnabled(db, enabled);
-    const label = enabled ? 'ON（有効）' : 'OFF（無効）';
+    // ⚠️ INC-20260406-001: DD OFFに切り替えた際、残留 dd_stopped フラグをリセット。
+    // これにより「DD OFF → しばらく後に ON に戻す」ときに即 STOP にならない。
+    if (!enabled) {
+      await clearDDStoppedFlag(db);
+    }
+    const label = enabled ? 'ON（有効）' : 'OFF（検証モード）';
     return { success: true, globalDDEnabled: enabled, message: `DD管理を${label}に切り替えました` };
   } catch (e) {
     return { success: false, globalDDEnabled: false, message: String(e) };
