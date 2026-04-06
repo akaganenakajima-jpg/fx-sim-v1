@@ -321,6 +321,14 @@ const MIGRATIONS: Array<{ version: number; description: string; sql: string }> =
     sql: `INSERT OR IGNORE INTO market_cache (key, value, updated_at)
           VALUES ('trend_keywords', 'トランプ,イラン,原油,関税,半導体', datetime('now'))`,
   },
+  // v243: news_temp_params に entry_score_min カラム追加（期間限定実験用）
+  // entry_score_min を一時上書きできるようにすることで、パラメーター実験を
+  // news_temp_params の既存 expiry 機構で安全に管理できる
+  {
+    version: 243,
+    description: 'news_temp_params に entry_score_min カラム追加（期間限定スコア実験対応）',
+    sql: 'ALTER TABLE news_temp_params ADD COLUMN entry_score_min REAL',
+  },
 ];
 
 export async function runMigrations(db: D1Database): Promise<void> {

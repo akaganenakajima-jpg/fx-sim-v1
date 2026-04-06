@@ -301,6 +301,8 @@ export async function runLogicDecisions(
           ...(tempParams.atr_tp_multiplier  != null && { atr_tp_multiplier: tempParams.atr_tp_multiplier }),
           ...(tempParams.atr_sl_multiplier  != null && { atr_sl_multiplier: tempParams.atr_sl_multiplier }),
           ...(tempParams.vix_max            != null && { vix_max:           tempParams.vix_max }),
+          // v243: 期間限定実験 — entry_score_min の一時上書き（news_temp_params に実験行を挿入して使用）
+          ...(tempParams.entry_score_min    != null && { entry_score_min:   tempParams.entry_score_min }),
         }
       : baseParams;
 
@@ -680,9 +682,12 @@ export async function runLogicDecisions(
     // ── Ph.7 RR比チェック（スケール適用後）──────────────────────────
     const tpDist = Math.abs(scaledTp - currentRate);
     const slDist = Math.abs(scaledSl - currentRate);
+    // ε=1e-4 を許容: parseFloat+toFixed(5) 経路で RR=2.0 が 1.9999... になる
+    // 浮動小数点ノイズ（例: rate=7890.5, atr=89.1 → RR=1.999999999999990）を除去
+    // 真に不合格なケース（1.9994 等）は ε より大きく離れているため正しく弾かれる
     const actualRR = slDist > 0 ? tpDist / slDist : 0;
 
-    if (actualRR < params.min_rr_ratio) {
+    if (actualRR < params.min_rr_ratio - 1e-4) {
       summary.skipped++;
       addSkip('RR_LOW');
       summary.signals.push({ pair, signal: 'SKIP',

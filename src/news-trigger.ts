@@ -36,6 +36,8 @@ export interface TempParamEntry {
   atr_tp_multiplier?: number;
   atr_sl_multiplier?: number;
   vix_max?:           number;
+  /** 期間限定実験用: entry_score_min の一時上書き。nullなら通常値を使用 */
+  entry_score_min?:   number;
 }
 
 export interface NewsTriggerResult {
@@ -285,6 +287,8 @@ export interface ActiveTempParams {
   atr_tp_multiplier?: number;
   atr_sl_multiplier?: number;
   vix_max?:           number;
+  /** v243: 期間限定スコア実験用。nullなら instrument_params の通常値を使用 */
+  entry_score_min?:   number;
   reason:             string;
   expires_at:         string;
 }
@@ -312,6 +316,7 @@ export async function getActiveTempParams(
       atr_tp_multiplier: number | null;
       atr_sl_multiplier: number | null;
       vix_max: number | null;
+      entry_score_min: number | null;  // v243: 期間限定実験用
       reason: string;
       expires_at: string;
     }>();
@@ -324,6 +329,7 @@ export async function getActiveTempParams(
     atr_tp_multiplier: row.atr_tp_multiplier  ?? undefined,
     atr_sl_multiplier: row.atr_sl_multiplier  ?? undefined,
     vix_max:           row.vix_max            ?? undefined,
+    entry_score_min:   row.entry_score_min    ?? undefined,  // v243
     reason:            row.reason,
     expires_at:        row.expires_at,
   };
