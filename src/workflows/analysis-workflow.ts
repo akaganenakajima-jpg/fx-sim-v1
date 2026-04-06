@@ -899,7 +899,15 @@ export async function runAnalysis(env: Env): Promise<void> {
     // Path A（AI常時監視）は Ph.6 にて廃止。ロジック判断はRunLogicDecisionsで実施済み。
     let newsMs: number;
 
-    if (shouldRunPathB) {
+    // 絶対タイムリミットガード: cronStart から45秒超過でPathBをスキップ
+    // Workers wall-clock 60秒制限への二重防衛（一次: newsStage1 slice(0,5)）
+    const ANALYSIS_HARD_LIMIT_MS = 45_000;
+    const elapsedBeforePathB = Date.now() - cronStart;
+    if (elapsedBeforePathB > ANALYSIS_HARD_LIMIT_MS) {
+      console.warn(`[fx-sim] analysis: 経過${Math.round(elapsedBeforePathB / 1000)}s > 45s → PathBスキップ（タイムリミットガード）`);
+      await insertSystemLog(env.DB, 'WARN', 'CRON', 'PathBスキップ（45秒タイムリミットガード）',
+        JSON.stringify({ elapsedMs: elapsedBeforePathB }));
+    } else if (shouldRunPathB) {
       // ═══════════════════════════════════════════════════════════════
       // Path B: ニュースハッシュ変化時のみ実行（緊急/トレンドニュース専用AI）
       // ═══════════════════════════════════════════════════════════════
