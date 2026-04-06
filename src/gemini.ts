@@ -616,7 +616,7 @@ export async function newsStage1(params: {
 }): Promise<NewsStage1Result> {
   const { news, indicators, instruments, apiKey, db, regimeText, regimeProhibitions, performanceSummary } = params;
 
-  const newsList = news.slice(0, 20).map((n, i) =>
+  const newsList = news.slice(0, 5).map((n, i) =>
     `[${i}] ${n.title_ja || n.title}${(n as any).source ? ` (${(n as any).source})` : ''}`
   ).join('\n');
 
@@ -977,7 +977,7 @@ async function newsStage1GPT(params: {
 }): Promise<NewsStage1Result> {
   const { news, indicators, instruments, apiKey, regimeText, regimeProhibitions, performanceSummary } = params;
 
-  const newsList = news.slice(0, 20).map((n, i) =>
+  const newsList = news.slice(0, 5).map((n, i) =>
     `[${i}] ${n.title_ja || n.title}${(n as any).source ? ` (${(n as any).source})` : ''}`
   ).join('\n');
 
@@ -1114,7 +1114,7 @@ async function newsStage1Claude(params: {
 }): Promise<NewsStage1Result> {
   const { news, indicators, instruments, apiKey, regimeText, regimeProhibitions, performanceSummary } = params;
 
-  const newsList = news.slice(0, 20).map((n, i) =>
+  const newsList = news.slice(0, 5).map((n, i) =>
     `[${i}] ${n.title_ja || n.title}${(n as any).source ? ` (${(n as any).source})` : ''}`
   ).join('\n');
 
