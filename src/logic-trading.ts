@@ -451,7 +451,10 @@ export async function runLogicDecisions(
     }
 
     // ── Ph.9 ER上限チェック（mean_reversion時の強トレンド逆張り禁止）──
-    if (params.strategy_primary === 'mean_reversion' && techSignal.er != null && params.er_upper_limit > 0) {
+    // Ph.10: BBスクイーズ・ブレイクアウト信号は順張り（isBBBreakout=true）のため免除する
+    //        強トレンド中のブレイクアウトは ER が高くて当然であり、ER上限で弾くべきでない
+    if (params.strategy_primary === 'mean_reversion' && !techSignal.isBBBreakout
+        && techSignal.er != null && params.er_upper_limit > 0) {
       if (techSignal.er > params.er_upper_limit) {
         summary.skipped++;
         summary.signals.push({ pair, signal: 'SKIP',
