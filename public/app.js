@@ -1004,7 +1004,17 @@
       if (t.news_title) {
         triggerMap[t.news_title] = t.trigger_type;
         if (t.news_score) triggerScoreMap[t.news_title] = t.news_score;
-        triggerDetailMap[t.news_title] = { relevance: t.relevance, sentiment: t.sentiment, composite: t.news_score };
+        triggerDetailMap[t.news_title] = { relevance: t.relevance, sentiment: t.sentiment, composite: t.news_score, detail: t.detail || null };
+      }
+    });
+
+    // news_temp_params からタイトル→パラメーター変更リストのマップを構築
+    var tempParamsMap = {};
+    (data.newsTempParams || []).forEach(function(tp) {
+      var key = tp.news_title;
+      if (key) {
+        if (!tempParamsMap[key]) tempParamsMap[key] = [];
+        tempParamsMap[key].push(tp);
       }
     });
 
@@ -1014,9 +1024,10 @@
     var acceptedAsAnalysis = accepted.filter(function(n) { return !analysisTitlesSet[n.title]; }).map(function(n) {
       var tt = triggerMap[n.title] || triggerMap[n.title_ja] || null;
       var td = triggerDetailMap[n.title] || triggerDetailMap[n.title_ja] || null;
-      return { title: n.title, title_ja: n.title_ja, desc_ja: n.desc_ja, description: n.desc_ja, attention: true, score: n.score || 0, source: n.source, pubDate: n.pub_date || n.fetched_at, affected_pairs: [], triggerType: tt, triggerDetail: td, scores: n.scores || null };
+      var tp = tempParamsMap[n.title] || tempParamsMap[n.title_ja] || null;
+      return { title: n.title, title_ja: n.title_ja, desc_ja: n.desc_ja, description: n.desc_ja, attention: true, score: n.score || 0, source: n.source, pubDate: n.pub_date || n.fetched_at, affected_pairs: [], triggerType: tt, triggerDetail: td, tempParams: tp, scores: n.scores || null };
     });
-    // analysisにもtriggerTypeを付与
+    // analysisにもtriggerType・tempParamsを付与
     analysis.forEach(function(a) {
       if (!a.triggerType) {
         a.triggerType = triggerMap[a.title] || triggerMap[a.title_ja] || null;
@@ -1026,6 +1037,9 @@
       }
       if (!a.score) {
         a.score = triggerScoreMap[a.title] || triggerScoreMap[a.title_ja] || null;
+      }
+      if (!a.tempParams) {
+        a.tempParams = tempParamsMap[a.title] || tempParamsMap[a.title_ja] || null;
       }
     });
     var mergedAnalysis = analysis.concat(acceptedAsAnalysis);
@@ -1180,6 +1194,34 @@
       crossHtml = '<div style="margin-top:8px"><span class="cross-link" onclick="switchTab(\'tab-portfolio\')">\u2192 今タブでポジション確認</span>' +
         '<span class="cross-link" style="margin-left:16px" onclick="switchTab(\'tab-ai\')">\u2192 AIタブで判定確認</span></div>';
     }
+    // トレンドパラメーター変更ボックス（TREND_INFLUENCEのみ表示）
+    var paramBoxHtml = '';
+    if (isTrend && n.tempParams && n.tempParams.length > 0) {
+      var now = Date.now();
+      var paramRows = n.tempParams.map(function(tp) {
+        var expAt = tp.expires_at ? new Date(tp.expires_at).getTime() : null;
+        var expMin = expAt != null ? Math.round((expAt - now) / 60000) : null;
+        var expStr = expMin != null ? (expMin > 0 ? '残' + expMin + '分' : '期限切れ') : '';
+        var expColor = (expMin != null && expMin > 0 && expMin <= 30) ? 'var(--red)' : expMin != null && expMin <= 0 ? 'var(--tertiary)' : 'var(--secondary)';
+        var changes = [];
+        if (tp.rsi_oversold != null) changes.push('売られ過ぎ→' + tp.rsi_oversold);
+        if (tp.rsi_overbought != null) changes.push('買われ過ぎ→' + tp.rsi_overbought);
+        if (tp.atr_tp_multiplier != null) changes.push('TP幅×' + tp.atr_tp_multiplier);
+        if (tp.atr_sl_multiplier != null) changes.push('SL幅×' + tp.atr_sl_multiplier);
+        if (tp.adx_min != null) changes.push('ADX≥' + tp.adx_min);
+        return '<div class="nf-param-row">' +
+          '<span class="nf-param-pair">' + escHtml(tp.pair) + '</span>' +
+          '<span class="nf-param-changes">' + escHtml(changes.join(' · ')) + '</span>' +
+          (expStr ? '<span class="nf-param-exp" style="color:' + expColor + '">' + expStr + '</span>' : '') +
+        '</div>';
+      }).join('');
+      var firstReason = (n.tempParams[0] && n.tempParams[0].reason) ? n.tempParams[0].reason : '';
+      paramBoxHtml = '<div class="nf-param-box">' +
+        '<div class="nf-param-label">\u2699 パラメーター変更中</div>' +
+        paramRows +
+        (firstReason ? '<div class="nf-param-reason">' + escHtml(firstReason.substring(0, 100)) + (firstReason.length > 100 ? '…' : '') + '</div>' : '') +
+      '</div>';
+    }
     // 取引行動表示
     var tradeActionHtml = '';
     if (n.trade_decisions && n.trade_decisions.length > 0) {
@@ -1215,9 +1257,12 @@
       var holdMsg = n.hold_reason ? ('見送り: ' + escHtml(n.hold_reason)) : '判断ログなし（旧データ）';
       var holdColor = n.hold_reason === '既存ポジションあり' ? 'var(--blue)' : 'var(--tertiary)';
       tradeActionHtml = '<div style="margin-top:6px;padding:6px 12px;font-size:11px;color:' + holdColor + ';background:rgba(255,255,255,0.03);border-radius:var(--rs)">' + holdMsg + '</div>';
+    } else if (isTrend && paramBoxHtml) {
+      // TREND_INFLUENCE: パラメーター変更ボックスが別途表示されるため、ここは省略
+      tradeActionHtml = '';
     } else {
       tradeActionHtml = '<div class="nf-action"><span style="font-size:12px;color:var(--tertiary)">\u2192</span>' +
-        '<span class="nf-action-text" style="color:var(--tertiary)">影響なし · パラメーター変更なし</span></div>';
+        '<span class="nf-action-text" style="color:var(--tertiary)">' + (isTrend ? 'パラメーター変更なし（期限切れまたは軽微）' : '影響なし · パラメーター変更なし') + '</span></div>';
     }
     // Workers AIバッジ: scoresにs_source='workers_ai'があれば表示
     var parsedScores = null;
@@ -1228,7 +1273,7 @@
       '<div class="nf-header"><span class="nf-badge ' + badgeCls + '">' + badgeText + '</span>' + waiIndicator + '<span class="nf-time">' + fmtTimeAgo(n.analyzed_at || n.pubDate || '') + '</span></div>' +
       '<div class="nf-headline">' + escHtml(n.title_ja || n.title || '') + '</div>' +
       (aiText ? '<div class="nf-ai"><span class="nf-ai-label">' + (isAttention ? 'AI判断' : 'AI') + '</span><span class="nf-ai-text">' + escHtml(aiText) + '</span></div>' : '') +
-      pairsHtml + tradeActionHtml +
+      pairsHtml + paramBoxHtml + tradeActionHtml +
       whyHtml + crossHtml +
     '</div>';
   }

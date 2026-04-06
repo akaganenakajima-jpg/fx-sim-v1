@@ -1398,6 +1398,22 @@ export interface NewsResponse {
     relevance: number | null;
     sentiment: number | null;
     created_at: string;
+    detail: string | null;
+  }>;
+  newsTempParams: Array<{
+    id: number;
+    pair: string;
+    event_type: string;
+    rsi_oversold: number | null;
+    rsi_overbought: number | null;
+    adx_min: number | null;
+    atr_tp_multiplier: number | null;
+    atr_sl_multiplier: number | null;
+    reason: string;
+    news_title: string | null;
+    news_score: number | null;
+    expires_at: string;
+    created_at: string;
   }>;
 }
 
@@ -1443,15 +1459,35 @@ export async function getApiNews(db: D1Database): Promise<NewsResponse> {
   latestNews.sort((a, b) => (new Date(b.pubDate).getTime() || 0) - (new Date(a.pubDate).getTime() || 0));
   if (latestNews.length > 30) latestNews.length = 30;
 
-  // newsTriggers
+  // newsTriggers: detail カラムも含めて取得
   let newsTriggers: NewsResponse['newsTriggers'] = [];
   try {
     const ntRaw = await db.prepare(
-      `SELECT trigger_type, news_title, news_score, relevance, sentiment, created_at FROM news_trigger_log
+      `SELECT trigger_type, news_title, news_score, relevance, sentiment, created_at, detail FROM news_trigger_log
        WHERE created_at > datetime('now', '-12 hours')
        ORDER BY created_at DESC LIMIT 10`
-    ).all<{ trigger_type: string; news_title: string; news_score: number; relevance: number | null; sentiment: number | null; created_at: string }>();
+    ).all<{ trigger_type: string; news_title: string; news_score: number; relevance: number | null; sentiment: number | null; created_at: string; detail: string | null }>();
     newsTriggers = ntRaw.results ?? [];
+  } catch { /* テーブル未存在時はnullのまま */ }
+
+  // newsTempParams: 有効期限内のトレンドパラメーター変更を取得
+  let newsTempParams: NewsResponse['newsTempParams'] = [];
+  try {
+    const ntpRaw = await db.prepare(
+      `SELECT id, pair, event_type, rsi_oversold, rsi_overbought, adx_min,
+              atr_tp_multiplier, atr_sl_multiplier, reason, news_title, news_score,
+              expires_at, created_at
+       FROM news_temp_params
+       WHERE expires_at > datetime('now')
+       ORDER BY created_at DESC LIMIT 20`
+    ).all<{
+      id: number; pair: string; event_type: string;
+      rsi_oversold: number | null; rsi_overbought: number | null; adx_min: number | null;
+      atr_tp_multiplier: number | null; atr_sl_multiplier: number | null;
+      reason: string; news_title: string | null; news_score: number | null;
+      expires_at: string; created_at: string;
+    }>();
+    newsTempParams = ntpRaw.results ?? [];
   } catch { /* テーブル未存在時はnullのまま */ }
 
   return {
@@ -1463,6 +1499,7 @@ export async function getApiNews(db: D1Database): Promise<NewsResponse> {
       score: r.score ?? null, filter_accepted: r.filter_accepted, scores: r.scores ?? null,
     })),
     newsTriggers,
+    newsTempParams,
   };
 }
 
