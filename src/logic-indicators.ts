@@ -23,6 +23,9 @@ export interface TechnicalSignal {
   reason: string;
   tp_rate: number | null;      // ATRベースTP（エントリーレートから計算）
   sl_rate: number | null;      // ATRベースSL
+  // Ph.10: BBスクイーズ・ブレイクアウト起点かどうか
+  // true の場合: ER上限チェックをスキップ（逆張りではなく順張りのため）
+  isBBBreakout?: boolean;
   // Ph.7: スコアリング詳細
   scores?: {
     rsi: number;
@@ -381,16 +384,21 @@ export function calcTechnicalSignal(
   // ── Ph.7: 重みつきエントリースコアリング計算 ──────────────────────────
   // BUY/SELL シグナル生成前にスコアを計算し、TechnicalSignal に付与する
   // スコアリング自体はフィルタリングを行わない（logic-trading.ts 側で閾値チェック）
-  const calcScores = (direction: 'BUY' | 'SELL') => {
+  //
+  // @param overrideTrendFollow  true = BBブレイクアウト起点の場合に trend_follow 型スコア計算を強制
+  //   mean_reversion 登録銘柄でも BBブレイクアウトは順張りなため、ER/BB スコア方向を反転する
+  const calcScores = (direction: 'BUY' | 'SELL', overrideTrendFollow = false) => {
+    const effectiveStrategy = overrideTrendFollow ? 'trend_follow' : params.strategy_primary;
+
     // 1. RSI スコア（0〜1）
     const rsiScore = direction === 'BUY'
       ? Math.max(0, Math.min(1, (params.rsi_oversold - rsi!) / Math.max(1, params.rsi_oversold)))
       : Math.max(0, Math.min(1, (rsi! - params.rsi_overbought) / Math.max(1, 100 - params.rsi_overbought)));
 
     // 2. ER スコア（0〜1）
-    const erScore = params.strategy_primary === 'trend_follow'
-      ? Math.min(1, er!)
-      : Math.min(1, Math.max(0, 1 - er!));  // mean_reversion: ERが低いほど高スコア
+    const erScore = effectiveStrategy === 'trend_follow'
+      ? Math.min(1, er!)                             // trend_follow: ERが高いほど高スコア
+      : Math.min(1, Math.max(0, 1 - er!));           // mean_reversion: ERが低いほど高スコア
 
     // 3. MTFスコア（0〜1）: SMAクロスと傾きによるトレンド整合性判定
     // 短期SMA > 長期SMA かつ短期SMAが上向き → BUY整合
@@ -431,9 +439,11 @@ export function calcTechnicalSignal(
     let bbScore = 0.5;
     if (bbData) {
       const ratio = bbData.avgWidth > 0 ? bbData.width / bbData.avgWidth : 1;
-      if (params.strategy_primary === 'mean_reversion') {
+      if (effectiveStrategy === 'mean_reversion') {
+        // mean_reversion: バンドが狭い（スクイーズ中）ほど高スコア
         bbScore = Math.max(0, Math.min(1, 1 - ratio));
       } else {
+        // trend_follow / sma_bb_breakout: バンドが広がっている（ブレイクアウト後）ほど高スコア
         bbScore = Math.max(0, Math.min(1, ratio));
       }
     }
@@ -483,8 +493,9 @@ export function calcTechnicalSignal(
         } else {
           const tp = parseFloat((currentRate + atr * atr_tp_multiplier).toFixed(5));
           const sl = parseFloat((currentRate - atr * atr_sl_multiplier).toFixed(5));
-          const scores = calcScores('BUY');
-          return { pair, rsi, atr, er, regime, signal: 'BUY',
+          // BBブレイクアウトは順張り戦略 → trend_follow 型スコア計算を強制
+          const scores = calcScores('BUY', true);
+          return { pair, rsi, atr, er, regime, signal: 'BUY', isBBBreakout: true,
                    reason: `BBスクイーズ・ブレイクアウト(+2σ上抜け) VR=${volatilityRatio.toFixed(2)} 幅比=${widthRatio.toFixed(2)} upper=${bbBreak.upperBand.toFixed(4)}${macdData ? ` MACD↑(H=${macdData.histogram.toFixed(4)})` : ''}`,
                    tp_rate: tp, sl_rate: sl, scores };
         }
@@ -495,8 +506,9 @@ export function calcTechnicalSignal(
         } else {
           const tp = parseFloat((currentRate - atr * atr_tp_multiplier).toFixed(5));
           const sl = parseFloat((currentRate + atr * atr_sl_multiplier).toFixed(5));
-          const scores = calcScores('SELL');
-          return { pair, rsi, atr, er, regime, signal: 'SELL',
+          // BBブレイクアウトは順張り戦略 → trend_follow 型スコア計算を強制
+          const scores = calcScores('SELL', true);
+          return { pair, rsi, atr, er, regime, signal: 'SELL', isBBBreakout: true,
                    reason: `BBスクイーズ・ブレイクアウト(-2σ下抜け) VR=${volatilityRatio.toFixed(2)} 幅比=${widthRatio.toFixed(2)} lower=${bbBreak.lowerBand.toFixed(4)}${macdData ? ` MACD↓(H=${macdData.histogram.toFixed(4)})` : ''}`,
                    tp_rate: tp, sl_rate: sl, scores };
         }
