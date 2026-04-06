@@ -86,7 +86,27 @@ export interface GeminiDecision {
 }
 
 /** プロンプトバージョン: プロンプトを変更したらこの値を更新する */
-export const PROMPT_VERSION = 'v18'; // v18: Priced-in（市場織り込み度）チェック追加 + newsSlice 5件化
+export const PROMPT_VERSION = 'v19'; // v19: Catalyst vs Market Wrap 分類追加 + 進化型トリアージ対応
+
+/**
+ * Catalyst vs Market Wrap 分類プロンプト — newsStage1 全バリアント共通
+ *
+ * 設計思想: ニュースを「新規事実（Catalyst）」と「事後解説（Market Wrap）」に
+ * 分類させることで「すでに動いた値動きを追いかける」誤エントリーを防ぐ。
+ * Market Wrap ニュースは impact フィールドに [Market Wrap] タグを付与し
+ * フロントエンド/監視ツールでフィルタリングできる状態にする。
+ */
+export const MARKET_WRAP_CLASSIFICATION_PROMPT =
+  '【最重要: ニュース分類 — Catalyst vs Market Wrap（必ず各ニュースを判定してから分析する）】\n' +
+  '各ニュースを以下の2種類に分類し、種別に応じた処理を行う:\n' +
+  '① Catalyst（新規触媒）: 新たに発生した事実・政策決定・指標発表・軍事行動・要人発言など。\n' +
+  '   → 通常通り分析し trade_signals を検討する\n' +
+  '② Market Wrap（事後解説）: 「〇〇を受けて相場が円安に動いた」「〇〇を背景に株高」等、\n' +
+  '   既に起きた値動きを説明・振り返る記事。価格はすでに動いており「織り込み済み（Priced-in）」。\n' +
+  '   → attention:false を設定し trade_signals に含めない\n' +
+  '   → impact フィールドの先頭に必ず [Market Wrap] タグを付ける（例: "[Market Wrap] 円安を受けた解説"）\n' +
+  '見分け方の目安: 「〜を受けて」「〜を背景に」「〜の影響で」「〜に反応し」「〜で相場が動いた」\n' +
+  '「〜は〜円台まで上昇した」「〜が〜%下落した」などの結果描写 = Market Wrap の可能性が高い\n\n';
 
 /** RR定義プロンプト — 全AI共通・全プロンプトの先頭に挿入（変更禁止） */
 export const RR_DEFINITION_PROMPT =
@@ -666,6 +686,7 @@ export async function newsStage1(params: {
     '以下のニュース一覧（日本語翻訳済み）と市場状況を分析し、次の2つのことを返してください。\n' +
     '1. 各ニュースの注目度評価（news_analysis）\n' +
     '2. ニュースに基づいた売買シグナル（trade_signals）\n\n' +
+    MARKET_WRAP_CLASSIFICATION_PROMPT +
     '必ず以下のJSON形式のみで返答してください:\n' +
     '{"news_analysis":[{"index":0,"attention":true,"impact_level":"S","impact":"円安・株安要因（50文字以内）","affected_pairs":["USD/JPY","Nikkei225"]}],' +
     '"trade_signals":[{"pair":"USD/JPY","decision":"BUY","tp_rate":160.50,"sl_rate":158.00,"reasoning":"日本語100文字以内"}]}\n\n' +
@@ -1021,6 +1042,7 @@ async function newsStage1GPT(params: {
     '以下のニュース一覧（日本語翻訳済み）と市場状況を分析し、次の2つのことを返してください。\n' +
     '1. 各ニュースの注目度評価（news_analysis）\n' +
     '2. ニュースに基づいた売買シグナル（trade_signals）\n\n' +
+    MARKET_WRAP_CLASSIFICATION_PROMPT +
     '必ず以下のJSON形式のみで返答してください:\n' +
     '{"news_analysis":[{"index":0,"attention":true,"impact_level":"S","impact":"円安・株安要因（50文字以内）","affected_pairs":["USD/JPY","Nikkei225"]}],' +
     '"trade_signals":[{"pair":"USD/JPY","decision":"BUY","tp_rate":160.50,"sl_rate":158.00,"reasoning":"日本語100文字以内"}]}\n\n' +
@@ -1157,6 +1179,7 @@ async function newsStage1Claude(params: {
     RR_DEFINITION_PROMPT + '\n' +
     'あなたはFX・株式指数・コモディティのマルチアセットトレーダーのAIアシスタントです。\n' +
     'ニュース一覧（日本語翻訳済み）と市場状況を分析し、news_analysisとtrade_signalsを返してください。\n' +
+    MARKET_WRAP_CLASSIFICATION_PROMPT +
     '必ずJSON形式で返答:\n' +
     '{"news_analysis":[{"index":0,"attention":true,"impact_level":"S","impact":"円安・株安要因（50文字以内）","affected_pairs":["USD/JPY","Nikkei225"]}],' +
     '"trade_signals":[{"pair":"USD/JPY","decision":"BUY","tp_rate":160.50,"sl_rate":158.00,"reasoning":"100文字以内"}]}\n\n' +

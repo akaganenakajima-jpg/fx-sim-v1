@@ -304,6 +304,23 @@ const MIGRATIONS: Array<{ version: number; description: string; sql: string }> =
     description: 'instrument_params に max_pyramiding_entries 追加（ピラミッディング上限）',
     sql: "ALTER TABLE instrument_params ADD COLUMN max_pyramiding_entries INTEGER DEFAULT 0",
   },
+  // v241: 進化型トリアージ — core_keywords 初期投入
+  // 普遍的な重要キーワード（地政学・中央銀行・主要指標）
+  // INSERT OR IGNORE で冪等: 運用中に手動更新された値を上書きしない
+  {
+    version: 241,
+    description: 'トリアージキーワード core_keywords を market_cache に初期投入',
+    sql: `INSERT OR IGNORE INTO market_cache (key, value, updated_at)
+          VALUES ('core_keywords', '緊急,戦争,攻撃,ミサイル,介入,日銀,BOJ,FRB,FOMC,利上げ,利下げ,CPI,雇用統計', datetime('now'))`,
+  },
+  // v242: 進化型トリアージ — trend_keywords 初期投入
+  // 相場テーマキーワード（定期更新で自己進化させる想定）
+  {
+    version: 242,
+    description: 'トリアージキーワード trend_keywords を market_cache に初期投入',
+    sql: `INSERT OR IGNORE INTO market_cache (key, value, updated_at)
+          VALUES ('trend_keywords', 'トランプ,イラン,原油,関税,半導体', datetime('now'))`,
+  },
 ];
 
 export async function runMigrations(db: D1Database): Promise<void> {
