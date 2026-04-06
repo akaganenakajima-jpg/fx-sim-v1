@@ -10,7 +10,8 @@ import { getApiStatus, getApiParams, getApiHistory, getApiLogs, getApiNews, resu
 import { decideRotation, getPendingRotations } from './rotation';
 import { runCore } from './workflows/core-workflow';
 import { runAnalysis } from './workflows/analysis-workflow';
-import { runDailyScoring, runWeeklyScreening, runDailyAll, generateAiReport } from './workflows/daily-workflow';
+import { runDailyScoring, runWeeklyScreening, runDailyAll } from './workflows/daily-workflow';
+import { buildAiReport } from './ai-report';
 
 /** 全レスポンスにセキュリティヘッダーを付与 */
 function withSec(res: Response): Response {
@@ -294,13 +295,16 @@ export default {
       }
       case '/api/ai-report': {
         try {
-          const md = await generateAiReport(env.DB);
-          return new Response(md, {
-            headers: { 'Content-Type': 'text/markdown; charset=utf-8', 'Cache-Control': 'no-cache' },
+          const viewParam = url.searchParams.get('view');
+          const view: 'summary' | 'full' = viewParam === 'full' ? 'full' : 'summary';
+          const report = await buildAiReport(env.DB, view);
+          const json = JSON.stringify(report).replace(/[\uD800-\uDFFF]/g, '');
+          return new Response(json, {
+            headers: { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-cache, no-store' },
           });
         } catch (e) {
-          return new Response(`# Error\n\n${String(e).slice(0, 200)}`, {
-            status: 500, headers: { 'Content-Type': 'text/markdown; charset=utf-8' },
+          return new Response(JSON.stringify({ error: String(e).slice(0, 300) }), {
+            status: 500, headers: { 'Content-Type': 'application/json; charset=utf-8' },
           });
         }
       }
