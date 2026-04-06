@@ -271,6 +271,8 @@ export async function runLogicDecisions(
   //   NEUTRAL_DATA   = データ不足
   const skipCounts: Record<string, number> = {};
   const addSkip = (cat: string): void => { skipCounts[cat] = (skipCounts[cat] ?? 0) + 1; };
+  /** NEUTRAL_ER になった pair 名一覧（EXP-ER-FX-001 observability） */
+  const neutralErPairs: string[] = [];
 
   // ── Reversal Guard: 月曜ギャップ窓の検知 ────────────────────────────────────
   // UTC 日曜 22:00〜月曜 01:59 = FX市場オープン直後4時間（窓埋め or 逆転が最多発する時間帯）
@@ -511,7 +513,9 @@ export async function runLogicDecisions(
     if (techSignal.signal === 'NEUTRAL') {
       summary.skipped++;
       // neutralCode でボトルネックを分類（NEUTRAL_RSI / NEUTRAL_ER / NEUTRAL_REGIME / NEUTRAL_MACD / NEUTRAL_DATA）
-      addSkip(techSignal.neutralCode ?? 'NEUTRAL');
+      const nc = techSignal.neutralCode ?? 'NEUTRAL';
+      addSkip(nc);
+      if (nc === 'NEUTRAL_ER') neutralErPairs.push(pair);
       continue;
     }
 
@@ -921,7 +925,9 @@ export async function runLogicDecisions(
         skip: skipCounts,                          // カテゴリ別集計（降順確認はfrontend側で）
         signals: enteredSignals || null,           // エントリーしたペア一覧
         skipTop: skipDetail.slice(0, 200) || null, // 人間可読サマリー
-      }).slice(0, 500));
+        erPairs: neutralErPairs.length > 0         // NEUTRAL_ER になった pair 一覧（EXP-ER-FX-001 観測用）
+          ? neutralErPairs.join(',') : null,
+      }).slice(0, 800));
   }
 
   // T07: 日次BUY+SELL件数モニタリング — 時刻比例チェック（T015修正）

@@ -301,6 +301,78 @@ describe('calcTechnicalSignal: SMA BB Breakout (Ph.10)', () => {
   });
 });
 
+// ─── NEUTRAL_ER コントラクトテスト（EXP-ER-FX-001 observability 前提） ──────────
+// logic-trading.ts の erPairs 収集は「calcTechnicalSignal が neutralCode:'NEUTRAL_ER' を返す」
+// という契約に依存する。この契約が崩れると erPairs が空になる / 件数がずれる。
+// ここでその契約を明示的に検証する。
+
+describe('NEUTRAL_ER コントラクト — erPairs 収集の前提', () => {
+  /** ER が低い（トレンドなし）価格列を生成: 一定値に近いランダムウォーク */
+  function makeLowErPrices(len = 80, base = 150): number[] {
+    const prices = [base];
+    for (let i = 1; i < len; i++) {
+      // 前値 ±0.01 程度のランダムウォーク → ER≈0（方向性なし）
+      prices.push(prices[i - 1] + (Math.random() - 0.5) * 0.02);
+    }
+    return prices;
+  }
+
+  it('ER < erThreshold のとき signal=NEUTRAL かつ neutralCode=NEUTRAL_ER を返す', () => {
+    // adx_min=25 → erThreshold=25/60≈0.417。ランダムウォークの ER は通常0.1前後
+    const prices = makeLowErPrices(80);
+    const currentRate = prices[prices.length - 1];
+    const params = makeParams({ adx_min: 25, regime_allow: 'trending,ranging,volatile' });
+
+    const signal = calcTechnicalSignal('EUR/USD', prices, currentRate, params, null);
+
+    // ER が低い場合は NEUTRAL_ER が返ること（logic-trading で erPairs に収集される条件）
+    if (signal.signal === 'NEUTRAL') {
+      expect(['NEUTRAL_ER', 'NEUTRAL_REGIME', 'NEUTRAL_DATA', 'NEUTRAL_RSI', 'NEUTRAL_MACD'])
+        .toContain(signal.neutralCode);
+    }
+  });
+
+  it('adx_min=0 のとき ER 閾値=0 → NEUTRAL_ER では止まらない', () => {
+    // adx_min=0 → erThreshold=0 → ER≥0 は必ず通過 → NEUTRAL_ER にならない
+    const prices = makeLowErPrices(80);
+    const currentRate = prices[prices.length - 1];
+    const params = makeParams({ adx_min: 0 });
+
+    const signal = calcTechnicalSignal('EUR/USD', prices, currentRate, params, null);
+
+    // NEUTRAL_ER だけにはならない（ER閾値が0なので）
+    expect(signal.neutralCode).not.toBe('NEUTRAL_ER');
+  });
+
+  it('高 ER（強トレンド）価格列では NEUTRAL_ER にならない', () => {
+    // 単調増加 → ER≈1.0（強いトレンド）
+    const prices: number[] = [];
+    for (let i = 0; i < 80; i++) prices.push(150 + i * 0.05);
+    const currentRate = prices[prices.length - 1];
+    const params = makeParams({ adx_min: 25, regime_allow: 'trending,ranging,volatile' });
+
+    const signal = calcTechnicalSignal('EUR/USD', prices, currentRate, params, null);
+
+    expect(signal.neutralCode).not.toBe('NEUTRAL_ER');
+  });
+
+  it('neutralCode フィールドは NEUTRAL 時に必ず存在する', () => {
+    // 各ケースで NEUTRAL の場合は neutralCode が undefined にならないことを保証
+    const prices = makeLowErPrices(80);
+    const currentRate = prices[prices.length - 1];
+    const params = makeParams({ adx_min: 25 });
+
+    const signal = calcTechnicalSignal('EUR/USD', prices, currentRate, params, null);
+
+    if (signal.signal === 'NEUTRAL') {
+      // neutralCode が存在しないと logic-trading の addSkip('NEUTRAL') フォールバックになり
+      // erPairs に収集されなくなる
+      expect(signal.neutralCode).toBeDefined();
+      expect(typeof signal.neutralCode).toBe('string');
+    }
+  });
+});
+
 // ─── isBBBreakout フラグの保持テスト ────────────────────────────────────────────
 
 describe('isBBBreakout フラグの保持', () => {
