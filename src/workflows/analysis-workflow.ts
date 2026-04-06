@@ -31,6 +31,7 @@ import { evaluateRecoveryIfNeeded, getDrawdownLevel, checkInstrumentDailyLoss } 
 import { runNewsTrigger, consumeEmergencyForceFlag } from '../news-trigger';
 import { logReturn } from '../stats';
 import { buildPricesMap, buildWeekendContext } from './core-workflow';
+import { loadTriageKeywords, triageNews } from '../news-triage';
 
 // ── サーキットブレーカー（3段階: CLOSED → OPEN → HALF_OPEN）──
 // 連続失敗時にAI呼び出しを一時停止し、無意味なリトライによる障害悪化を防止
@@ -611,12 +612,30 @@ export async function runAnalysis(env: Env): Promise<void> {
     const hasChanged = currentNewsHash !== (prevNewsHashRaw ?? '');
     await setCacheValue(env.DB, PREV_NEWS_HASH_KEY, currentNewsHash);
 
-    const sharedNewsStore: SharedNewsStore = { items: news, hash: currentNewsHash, hasChanged };
+    // ── 進化型トリアージ: VIPレーン + 選択的破棄 ────────────────────────────
+    // currentNewsHash はフルニュースリストから計算済み（変更検知はトリアージ前の全件を使う）
+    // AI に渡すのはトリアージ後のニュースに限定し、古い低優先ニュースによる渋滞を解消する
+    let triagedNews = news;
+    try {
+      const { coreKeywords, trendKeywords } = await loadTriageKeywords(env.DB);
+      const { items: triageItems, skippedCount } = triageNews(news, coreKeywords, trendKeywords);
+      triagedNews = triageItems;
+      if (skippedCount > 0) {
+        void insertSystemLog(env.DB, 'INFO', 'TRIAGE',
+          `ニューストリアージ: ${skippedCount}件の古い低優先ニュースをスキップ`,
+          JSON.stringify({ total: news.length, kept: triageItems.length, skipped: skippedCount }));
+      }
+    } catch (e) {
+      // トリアージ失敗は無視して全件を渡す（PathB継続を保証）
+      console.warn(`[fx-sim] triage error: ${String(e).slice(0, 80)}`);
+    }
+
+    const sharedNewsStore: SharedNewsStore = { items: triagedNews, hash: currentNewsHash, hasChanged };
     const openPairsForPathB = new Set((allOpenRawForPathB.results ?? []).map(p => p.pair));
 
     // news_summary: JSON形式で保存（titleのみ、切り詰めなし）
-    const newsSummary = news.length > 0
-      ? JSON.stringify(news.slice(0, 5).map((n) => ({
+    const newsSummary = triagedNews.length > 0
+      ? JSON.stringify(triagedNews.slice(0, 5).map((n) => ({
           title: n.title,
         })))
       : null;
