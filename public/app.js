@@ -2350,30 +2350,42 @@
     var ddStage = ddPctNum >= DD_STP ? 'STOP' : ddPctNum >= DD_HLT ? 'HALT' : ddPctNum >= DD_WARN ? 'WARNING' : ddPctNum >= DD_CAUT ? 'CAUTION' : 'NORMAL';
     var ddOk = ddPctNum < DD_WARN;
 
-    // ニュース採用率計算: NEWS_STATシステムログから直近バッチの採用率を取得
-    // latestNews（cacheスナップショット）とacceptedNews（DB累積）は時間窓が異なるため除算不可
+    // ニュース採用率計算
+    // 優先順位:
+    //   1. systemLogs (NEWS_STATログ) が利用可能 → バッチ単位の正確な採用率
+    //   2. newsData がロード済み → acceptedNews(2h以内)÷latestNews で近似採用率
+    //   3. どちらも未取得 → "--%" を表示（読込中扱い）
     var newsFetched = (data.latestNews || []).length;
     var newsStatLog = (data.systemLogs || []).find(function(l) { return l.category === 'NEWS_STAT'; });
-    var newsAdoptRate = 0;
-    if (newsStatLog && newsStatLog.detail) {
-      try {
-        var statDetail = JSON.parse(newsStatLog.detail);
-        newsAdoptRate = statDetail.rate || 0;
-      } catch(e) {}
-    }
-    var newsOk = newsFetched > 0;
-    var newsTotal = 0;
+    var newsAdoptRateNum = null; // null = "未取得" (--% 表示)
+    var newsTotal = newsFetched;
     var newsAttention = 0;
+
     if (newsStatLog && newsStatLog.detail) {
+      // ケース1: systemLogs から正確な値を取得
       try {
         var sd = JSON.parse(newsStatLog.detail);
+        newsAdoptRateNum = sd.rate != null ? sd.rate : 0;
         newsTotal = sd.total || newsFetched;
         newsAttention = sd.accepted || 0;
-      } catch(e2) { newsTotal = newsFetched; }
-    } else {
-      newsTotal = newsFetched;
-      newsAttention = (data.acceptedNews || []).length;
+      } catch(e) {}
+    } else if (data.latestNews != null) {
+      // ケース2: newsData がロード済み → 2時間以内に採用されたacceptedNewsで近似
+      var nowMs = Date.now();
+      var TWO_HOURS_MS = 2 * 60 * 60 * 1000;
+      var recentAccepted = (data.acceptedNews || []).filter(function(n) {
+        return n.fetched_at && (nowMs - new Date(n.fetched_at).getTime()) < TWO_HOURS_MS;
+      });
+      newsAttention = recentAccepted.length;
+      newsTotal = newsFetched || 1; // ゼロ除算防止
+      newsAdoptRateNum = newsFetched > 0
+        ? Math.round(recentAccepted.length / newsFetched * 100)
+        : 0;
     }
+    // ケース3: newsData も systemLogs も未ロード → newsAdoptRateNum = null のまま
+
+    var newsAdoptRateStr = newsAdoptRateNum !== null ? String(newsAdoptRateNum) + '%' : '--%';
+    var newsOk = newsFetched > 0;
 
     // Cron詳細
     var cronMs = data.cronTimings && data.cronTimings.totalMs;
@@ -2414,7 +2426,7 @@
       { name: 'レート取得',   ok: data.rate != null, value: data.rate != null ? INSTRUMENTS.length + '/' + INSTRUMENTS.length + ' 銘柄' : 'エラー', expandHtml: rateExpandHtml },
       { name: 'AI API',      ok: data.recentDecisions && data.recentDecisions.length > 0, value: '応答正常', expandHtml: aiExpandHtml },
       { name: 'D1 DB',       ok: true,             value: dbDisplayVal, expandHtml: dbExpandHtml },
-      { name: 'ニュース',     ok: newsOk,           value: newsOk ? '採用率 ' + newsAdoptRate + '%' : 'エラー', expandHtml: newsExpandHtml }
+      { name: 'ニュース',     ok: newsOk,           value: newsOk ? '採用率 ' + newsAdoptRateStr : 'エラー', expandHtml: newsExpandHtml }
     ];
     container.innerHTML = checks.map(function(c, idx) {
       var valCls = c.cls || (c.ok ? 'ok' : 'error');
