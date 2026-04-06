@@ -8,6 +8,7 @@
 
 import {
   calcTechnicalSignal,
+  calcBollingerBands,
   type InstrumentParamsRow,
 } from './logic-indicators';
 import { checkTpSlSanity } from './sanity';
@@ -20,7 +21,7 @@ import { getBroker, type BrokerEnv } from './broker';
 import { getActiveTempParams } from './news-trigger';
 import { isNakaneWindow, getCurrentSession, getSessionLotMultiplier, getSessionInstrumentMultiplier } from './session';
 import { MAX_OPEN_POSITIONS, CORRELATION_GROUP_COOLDOWN_MS, MARKET_START_HOUR_UTC, DAILY_SIGNAL_TARGET } from './constants';
-import { getWeekendStatus } from './weekend';
+import { getWeekendStatus, type GapSignal } from './weekend';
 import { fetchYahooCandles } from './candles';
 
 export interface LogicDecisionSummary {
@@ -241,6 +242,26 @@ export async function runLogicDecisions(
   }
 
   let logicNewEntries = 0; // このtickで新規開設したロジックポジション数
+
+  // ── Reversal Guard: 月曜ギャップ窓の検知 ────────────────────────────────────
+  // UTC 日曜 22:00〜月曜 01:59 = FX市場オープン直後4時間（窓埋め or 逆転が最多発する時間帯）
+  const gapWindowDay  = now.getUTCDay();
+  const gapWindowHour = now.getUTCHours();
+  const isMondayGapWindow =
+    (gapWindowDay === 1 && gapWindowHour < 2) ||    // 月曜 00:00〜01:59 UTC
+    (gapWindowDay === 0 && gapWindowHour >= 22);    // 日曜 22:00〜23:59 UTC（市場開始直後）
+
+  // ギャップシグナルをキャッシュから読み込み（core-workflow.ts が月曜Phase-2で保存済み）
+  let mondayGaps: GapSignal[] = [];
+  if (isMondayGapWindow) {
+    try {
+      const gapRaw = await getCacheValue(db, 'gap_signals');
+      if (gapRaw) {
+        const parsed = JSON.parse(gapRaw) as { gaps: GapSignal[] };
+        mondayGaps = parsed.gaps ?? [];
+      }
+    } catch { /* gap情報取得失敗は無視 — 通常エントリーを継続 */ }
+  }
 
   for (const instrument of INSTRUMENTS) {
     const { pair } = instrument;
@@ -515,6 +536,61 @@ export async function runLogicDecisions(
       continue;
     }
 
+    // ── Reversal Guard: 月曜ギャップ後の過熱エントリー制限 ──────────────────
+    // 設計思想: 週末ギャップで一方向に動き切った後、同方向のニュースが出ても
+    //   RSIやBBが極端な場合は「すでに織り込み済み」の逆転リスクが高い
+    //   一次防衛 → ロット半減（RSI75超 or BB±2σ超過）
+    //   二次防衛 → スキップ（RSI80超 or LARGE窓+BB超過）
+    let reversalGuardLotMult = 1.0;
+    if (isMondayGapWindow && mondayGaps.length > 0) {
+      const gapInfo = mondayGaps.find(g => g.pair === pair);
+      if (gapInfo && techSignal.rsi != null) {
+        // ギャップ方向と同じ方向へのエントリーのみ対象（逆方向は逆張りなので抑制不要）
+        const isGapAlignedEntry =
+          (techSignal.signal === 'BUY'  && gapInfo.gapDirection === 'UP') ||
+          (techSignal.signal === 'SELL' && gapInfo.gapDirection === 'DOWN');
+
+        if (isGapAlignedEntry) {
+          // BB±2σ超過チェック（現在レートが上下バンド外か）
+          const bbNow = calcBollingerBands(closes, params.bb_period);
+          const isBBOverextended = bbNow !== null && (
+            (techSignal.signal === 'BUY'  && currentRate >= bbNow.upperBand) ||
+            (techSignal.signal === 'SELL' && currentRate <= bbNow.lowerBand)
+          );
+          // RSI過熱判定
+          const rsiOverheat =
+            (techSignal.signal === 'BUY'  && techSignal.rsi > 75) ||
+            (techSignal.signal === 'SELL' && techSignal.rsi < 25);
+          const rsiVeryOverheat =
+            (techSignal.signal === 'BUY'  && techSignal.rsi > 80) ||
+            (techSignal.signal === 'SELL' && techSignal.rsi < 20);
+
+          if (rsiOverheat || isBBOverextended) {
+            const guardNote =
+              `ReversalGuard gap${gapInfo.gapDirection}${gapInfo.gapPercent.toFixed(2)}%` +
+              `(${gapInfo.magnitude}) RSI=${techSignal.rsi.toFixed(1)}` +
+              `${isBBOverextended ? ' BB±2σ超過' : ''}`;
+
+            if (rsiVeryOverheat || (isBBOverextended && gapInfo.magnitude === 'LARGE')) {
+              // 二次防衛: スキップ（逆転リスク極大）
+              summary.skipped++;
+              summary.signals.push({ pair, signal: 'SKIP', reason: `${guardNote} → スキップ` });
+              void insertSystemLog(db, 'INFO', 'REVERSAL_GUARD',
+                `${pair} エントリースキップ`, guardNote);
+              continue;
+            } else {
+              // 一次防衛: ロット半減（過熱警戒）
+              reversalGuardLotMult = 0.5;
+              const lastSig = summary.signals[summary.signals.length - 1];
+              if (lastSig && lastSig.pair === pair) {
+                lastSig.reason += ` [${guardNote} → ロット半減]`;
+              }
+            }
+          }
+        }
+      }
+    }
+
     // 3. VIX/マクロスケール適用（calcTechnicalSignal の base TP/SL を上書き）
     let scaledTp = techSignal.tp_rate;
     let scaledSl = techSignal.sl_rate;
@@ -667,7 +743,7 @@ export async function runLogicDecisions(
     const sessionInstrMult = getSessionInstrumentMultiplier(session, pair);
     const weekendEntryMult = weekendStatus.entryLotMultiplier;
     const requestedLot = 1 * ddLotMult * tierMult * consecutiveLossMult * globalLossMult * confidenceMult
-                           * sessionLotMult * sessionInstrMult * weekendEntryMult;
+                           * sessionLotMult * sessionInstrMult * weekendEntryMult * reversalGuardLotMult;
 
     if (requestedLot <= 0) {
       summary.skipped++;
