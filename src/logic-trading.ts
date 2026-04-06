@@ -260,9 +260,15 @@ export async function runLogicDecisions(
   // ── SKIP理由カテゴリ集計カウンタ ──────────────────────────────────────────
   // tick単位で1件のJSONログに集約（D1書き込みコスト: +0、可視情報: 大幅増）
   // カテゴリ一覧: PYRAMID/OPEN_LIM/VIX/SESSION/INST_CAP/SL_CD/CORR_CD/
-  //              DAILY_LIM/HIST/NEUTRAL/ER_LIM/SCORE/CONFIRM/NO_TPSL/
+  //              DAILY_LIM/HIST/ER_LIM/SCORE/CONFIRM/NO_TPSL/
   //              REVERSAL/RR_LOW/SANITY/PYRAMID2/CORR_GUARD
   //              LOT_ZERO_SESSION(TSE閉場等)/LOT_ZERO_WKND(週末)/LOT_ZERO(その他)
+  // NEUTRAL サブカテゴリ:
+  //   NEUTRAL_RSI    = RSIが中立ゾーン内（最多）
+  //   NEUTRAL_ER     = ER（ADX相当）が閾値未満
+  //   NEUTRAL_REGIME = レジーム不許可（volatile等）
+  //   NEUTRAL_MACD   = RSI/BBシグナルあるがMACDフィルターキャンセル
+  //   NEUTRAL_DATA   = データ不足
   const skipCounts: Record<string, number> = {};
   const addSkip = (cat: string): void => { skipCounts[cat] = (skipCounts[cat] ?? 0) + 1; };
 
@@ -504,7 +510,8 @@ export async function runLogicDecisions(
 
     if (techSignal.signal === 'NEUTRAL') {
       summary.skipped++;
-      addSkip('NEUTRAL');
+      // neutralCode でボトルネックを分類（NEUTRAL_RSI / NEUTRAL_ER / NEUTRAL_REGIME / NEUTRAL_MACD / NEUTRAL_DATA）
+      addSkip(techSignal.neutralCode ?? 'NEUTRAL');
       continue;
     }
 
